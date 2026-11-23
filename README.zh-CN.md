@@ -162,7 +162,7 @@ macOS 上命令完全一样，只是粘贴键换成 Cmd+V。那边的 `ssh-paste
 
 ### 校验下载的文件
 
-每个 release 都附带 `SHA256SUMS` 和 GitHub build attestation，覆盖 `install.ps1`、`ssh-paste.ps1` 和 `ssh-paste.cmd`（`main` 分支两者都没有）。
+每个 release 都附带 `SHA256SUMS` 和 GitHub build attestation，覆盖 `install.ps1`、`ssh-paste.ps1` 和 `ssh-paste.cmd`，以及 macOS 用的 `install.sh`、`ssh-paste-mac` 和 `ssh-paste.js`（`main` 分支两者都没有）。macOS 安装脚本会用 `SHA256SUMS` 校验它下载的文件。
 
 <details>
 <summary>运行前校验 install.ps1</summary>

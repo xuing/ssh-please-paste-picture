@@ -17,7 +17,7 @@
 #      exists and its own run releases it (and everything before it).
 #   2. A v0.1.N tag that already points at SHA is reused: that is a rerun. A tag is never
 #      moved, and one commit never gets two versions.
-#   3. Otherwise the commit is released only if src/ or install.ps1 differ from the last
+#   3. Otherwise the commit is released only if src/, install.ps1 or install.sh differ from the last
 #      published release (the highest v0.1.N whose release is not a draft). With no
 #      published release, everything counts as changed.
 #   4. The version is one above the highest v0.1.N tag, published or not, so a number is
@@ -54,9 +54,9 @@ fi
 
 last=$(published_tags | tail -n 1)
 if [ -n "$last" ]; then
-  changed=$(git diff --name-only "refs/tags/$last^{commit}" "$SHA" -- src install.ps1)
+  changed=$(git diff --name-only "refs/tags/$last^{commit}" "$SHA" -- src install.ps1 install.sh)
   if [ -z "$changed" ]; then
-    finish "" "src/ and install.ps1 are the same as in $last: nothing to release"
+    finish "" "src/, install.ps1 and install.sh are the same as in $last: nothing to release"
   fi
   echo "changed since $last:"; echo "$changed"
 fi

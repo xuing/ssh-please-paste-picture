@@ -20,7 +20,7 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 - [docs/code-standards.md](docs/code-standards.md) when you write or review a change. Its acceptance checks are the bar.
 - [SECURITY.md](SECURITY.md) before you touch `install.ps1`, anything under `.github/` (the release workflows and scripts), a download URL, the upload, or anything that sends data over the network.
 - [CONTRIBUTING.md](CONTRIBUTING.md) before you review a PR from outside, and for the commit convention.
-- [docs/RELEASING.md](docs/RELEASING.md) before you change how a release is made. Releases are automatic: a green commit on `main` that changes `src/` or `install.ps1` becomes `v0.1.<n>`, and its subject is the release note.
+- [docs/RELEASING.md](docs/RELEASING.md) before you change how a release is made. Releases are automatic: a green commit on `main` that changes `src/`, `install.ps1` or `install.sh` becomes `v0.1.<n>`, and its subject is the release note.
 
 ## Where things live
 
@@ -47,7 +47,7 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 | `tests/mac/jxa.sh`, `e2e.sh`, `footprint.sh` | tests | macOS only (CI): the pasteboard and the watcher in Terminal.app with a stand-in ssh; a throwaway `sshd` with ssh mode and wrapper mode; install and uninstall against the real home folder. `pb.js` writes the pasteboard as other apps do. |
 | `tests/lint.ps1`, `check.ps1` | tests, ci | The lint checks, and the one local entry point that runs them with Pester. |
 | `verify/watcher/` | watcher | A TLA+ model of the clipboard watcher and `check.sh`, which model-checks it with TLC. Run it for any change to the watcher or `PendingClipboard`: [.claude/skills/verify-clipboard-watcher/SKILL.md](.claude/skills/verify-clipboard-watcher/SKILL.md). |
-| `.github/workflows/ci.yml`, `publish.yml`, `.github/scripts/*.sh` | ci, release | CI on 5.1, 7 on Windows and 7 on Linux, node on Linux, and macOS 15 and 26. `ci.yml` releases a green push to `main` (or a manual run on `main`) through `publish.yml`, which tags, builds, attests and publishes. The scripts pick the version, write the notes and stamp the version. |
+| `.github/workflows/ci.yml`, `publish.yml`, `.github/scripts/*.sh` | ci, release | CI on 5.1, 7 on Windows and 7 on Linux, node on Linux, and macOS 15 and 26. `ci.yml` releases a green push to `main` (or a manual run on `main`) through `publish.yml`, which tags, builds, attests and publishes both clients. The scripts pick the version, write the notes and stamp the version. |
 
 ## Commands
 
@@ -60,7 +60,7 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 
 ## Docs travel with the code
 
-A change that a user can see updates both `README.md` and `README.zh-CN.md` in the same commit. There is no changelog: the commit subject is the release note, so it says what the user now sees (`area: user-visible effect`). `$script:Version` in `src/ssh-paste.ps1` stays `0.0.0-dev`; a release stamps its own version into the copy it publishes.
+A change that a user can see updates both `README.md` and `README.zh-CN.md` in the same commit. There is no changelog: the commit subject is the release note, so it says what the user now sees (`area: user-visible effect`). `$script:Version` in `src/ssh-paste.ps1` and `VERSION` in `src/ssh-paste.js` stay `0.0.0-dev`; a release stamps its own version into the copies it publishes.
 
 ## The maintenance loop
 

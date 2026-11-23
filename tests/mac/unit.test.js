@@ -1182,6 +1182,19 @@ test('repository guards', async (t) => {
         assert.equal(js.split('\n').filter((l) => /^var VERSION\b/.test(l)).join('|'), "var VERSION = '0.0.0-dev';");
         assert.equal(sh.split('\n').filter((l) => /^DEFAULT_REF=/.test(l)).join('|'), "DEFAULT_REF='main'");
     });
+    await t.test('a release stamps ssh-paste.js, bakes its tag into install.sh, and ships, sums and attests the macOS files', () => {
+        const publish = read('.github/workflows/publish.yml');
+        const stamp = read('.github/scripts/stamp-version.sh');
+        const release = read('.github/scripts/publish-release.sh');
+        assert.ok(stamp.includes(`from="var VERSION = '0.0.0-dev';"`), 'stamp-version.sh looks for the line in src/ssh-paste.js');
+        assert.ok(publish.includes('stamp-version.sh src/ssh-paste.js out/dist/ssh-paste.js "${TAG#v}"'));
+        assert.ok(publish.includes('cp src/ssh-paste-mac install.sh out/dist/'), 'the launcher and the installer are copied, the script is stamped');
+        assert.ok(publish.includes(`sed -i "s/^DEFAULT_REF='main'\\$/DEFAULT_REF='$TAG'/" out/dist/install.sh`));
+        assert.ok(publish.includes('sha256sum ssh-paste.ps1 ssh-paste.cmd install.ps1 ssh-paste.js ssh-paste-mac install.sh > SHA256SUMS'));
+        for (const f of ['install.sh', 'ssh-paste.js', 'ssh-paste-mac']) assert.ok(publish.includes('out/dist/' + f + '\n'), 'attested: ' + f);
+        assert.ok(release.includes('files="SHA256SUMS install.ps1 install.sh ssh-paste-mac ssh-paste.cmd ssh-paste.js ssh-paste.ps1"'));
+        assert.ok(read('.github/scripts/plan-release.sh').includes('-- src install.ps1 install.sh)'), 'a change to install.sh is released');
+    });
     await t.test('lists every command of the help text in both READMEs, and the launcher passes each on', () => {
         const commands = [...new Set(m.usage().match(/(?<![\w-])--[a-z][a-z-]*/g))].sort();
         assert.ok(commands.length > 3);

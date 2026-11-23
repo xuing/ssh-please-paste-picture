@@ -124,9 +124,9 @@ Parallel agents each work in their own `git worktree add --detach`.
 ## Releases
 
 Releases are automatic: [docs/RELEASING.md](RELEASING.md). Every green push to
-`main` that changes `src/` or `install.ps1` is tagged and released by the CI run
+`main` that changes `src/`, `install.ps1` or `install.sh` is tagged and released by the CI run
 that tested it, as the next `v0.1.<n>`. Nobody tags by hand for a normal release,
 and a tag is never moved or reused. A tag is not a release until the release
 on GitHub has every asset and the assets verify against `SHA256SUMS`; the run
 checks that, and you check it again before you name the version to anyone.
-`$script:Version` stays `0.0.0-dev` in the repository: the release stamps its own.
+`$script:Version` and `VERSION` in `src/ssh-paste.js` stay `0.0.0-dev` in the repository: the release stamps its own.

@@ -4,7 +4,7 @@ name: CI
 # entry: "Run workflow" on main runs everything below and then releases (job "release").
 #
 # A green run on main ends with the job "release" (publish.yml): the commit that was tested
-# is tagged v0.1.<n> and published, when it changes src/ or install.ps1 and is still the
+# is tagged v0.1.<n> and published, when it changes src/, install.ps1 or install.sh and is still the
 # newest commit of main. The job lives in this file, not in a workflow that CI triggers, so
 # the tag goes on exactly github.sha, the commit CI tested.
 #

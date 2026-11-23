@@ -36,9 +36,14 @@ if [ -n "$prev" ]; then
   printf 'All commits: https://github.com/%s/compare/%s...%s\n\n' "$repo" "$prev" "$tag"
 fi
 printf '### Install\n\n'
+printf 'Windows, in PowerShell:\n\n'
 printf '```powershell\n'
 printf 'irm https://github.com/%s/releases/download/%s/install.ps1 | iex\n' "$repo" "$tag"
 printf '```\n\n'
+printf 'macOS, in Terminal:\n\n'
+printf '```sh\n'
+printf 'curl -fsSL https://github.com/%s/releases/download/%s/install.sh | sh\n' "$repo" "$tag"
+printf '```\n\n'
 printf 'To update an installed ssh-paste: `ssh-paste --update`.\n\n'
-printf '`SHA256SUMS` lists the SHA-256 of `install.ps1`, `ssh-paste.ps1` and `ssh-paste.cmd`.\n'
+printf '`SHA256SUMS` lists the SHA-256 of `install.ps1`, `ssh-paste.ps1` and `ssh-paste.cmd` (Windows), and of `install.sh`, `ssh-paste-mac` and `ssh-paste.js` (macOS).\n'
 printf 'Each file also has a build provenance attestation: `gh attestation verify <file> -R %s`.\n' "$repo"

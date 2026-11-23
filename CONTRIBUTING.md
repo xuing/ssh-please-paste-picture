@@ -61,7 +61,7 @@ Windows, and PowerShell 7 on Linux.
 
 Write the subject as `area: user-visible effect`. The subject says what a user
 sees after the change, not what you fixed. It is the release note: every green
-commit that changes `src/` or `install.ps1` is released, and the release notes
+commit that changes `src/`, `install.ps1` or `install.sh` is released, and the release notes
 are the subjects of its commits. Use one of these areas: `proxy`,
 `watcher`, `upload`, `enable`, `install`, `docs`, `ci`, `release`, or `tests`.
 

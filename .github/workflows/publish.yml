@@ -9,15 +9,17 @@ name: Publish
 #
 # The jobs, in order:
 #   plan     stop unless origin/main is the tested commit; tag it v0.1.<n> (or reuse the tag
-#            it already has) unless src/ and install.ps1 are as in the last release
-#   build    stamp the version into ssh-paste.ps1, bake the tag into install.ps1, write
-#            SHA256SUMS and the release notes
-#   attest   sign a build provenance attestation for the four files
+#            it already has) unless src/, install.ps1 and install.sh are as in the last release
+#   build    stamp the version into ssh-paste.ps1 and ssh-paste.js, bake the tag into
+#            install.ps1 and install.sh, write SHA256SUMS and the release notes
+#   attest   sign a build provenance attestation for the seven files
 #   release  publish-release.sh: draft, download and check it, only then publish it
-# The install.ps1 attached to the release has its default ref set to the tag, so
+# The install.ps1 and install.sh attached to the release have their default ref set to the
+# tag, so
 #   irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
-# installs the stamped, attested files of exactly that release. The copy in the repository
-# keeps main and installs src/. The version in the repository is 0.0.0-dev.
+#   curl -fsSL https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.sh | sh
+# install the stamped, attested files of exactly that release. The copies in the repository
+# keep main and install src/. The version in the repository is 0.0.0-dev.
 # Every step can be run again ("Re-run failed jobs"): see docs/RELEASING.md.
 on:
   workflow_call:
@@ -109,7 +111,20 @@ jobs:
             exit 1
           }
           pwsh -NoProfile -Command '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD.Path "out/dist/install.ps1"), [ref]$null, [ref]$e); if ($e) { $e | ForEach-Object { Write-Host $_ }; exit 1 }'
-          (cd out/dist && sha256sum ssh-paste.ps1 ssh-paste.cmd install.ps1 > SHA256SUMS)
+          # The macOS client: the launcher as it is, ssh-paste.js stamped like ssh-paste.ps1, and
+          # install.sh with the tag as its DEFAULT_REF (main in the repository), checked the same way.
+          cp src/ssh-paste-mac install.sh out/dist/
+          bash .github/scripts/stamp-version.sh src/ssh-paste.js out/dist/ssh-paste.js "${TAG#v}"
+          sed -i "s/^DEFAULT_REF='main'\$/DEFAULT_REF='$TAG'/" out/dist/install.sh
+          baked=$(grep -cxF "DEFAULT_REF='$TAG'" out/dist/install.sh || true)
+          leftover=$(grep -c "'main'" out/dist/install.sh || true)
+          echo "install.sh: default ref lines set to $TAG: $baked; 'main' left: $leftover"
+          [ "$baked" = 1 ] && [ "$leftover" = 0 ] || {
+            echo "::error::could not set the default ref of out/dist/install.sh to $TAG"
+            exit 1
+          }
+          sh -n out/dist/install.sh
+          (cd out/dist && sha256sum ssh-paste.ps1 ssh-paste.cmd install.ps1 ssh-paste.js ssh-paste-mac install.sh > SHA256SUMS)
           cat out/dist/SHA256SUMS
 
       # The notes are the subjects of the commits since the previous release, then the
@@ -152,6 +167,9 @@ jobs:
             out/dist/install.ps1
             out/dist/ssh-paste.ps1
             out/dist/ssh-paste.cmd
+            out/dist/install.sh
+            out/dist/ssh-paste.js
+            out/dist/ssh-paste-mac
             out/dist/SHA256SUMS
 
   release:

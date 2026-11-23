@@ -3,19 +3,20 @@
 # Used by .github/workflows/publish.yml, inside its concurrency group "release".
 #
 #   publish-release.sh v0.1.N DIST NOTES
-#     DIST   the folder with the four built files: install.ps1 ssh-paste.cmd ssh-paste.ps1 SHA256SUMS
+#     DIST   the folder with the seven built files: install.ps1 ssh-paste.cmd ssh-paste.ps1 (Windows),
+#            install.sh ssh-paste-mac ssh-paste.js (macOS) and SHA256SUMS
 #     NOTES  the release notes file
 #
 # Environment: GITHUB_REPOSITORY and GH_TOKEN. ATTEST_WAIT: seconds between attestation
 # lookups (default 10).
 #
 # Every step can be run again after a failure; none is repeated blindly:
-#   1. No release for the tag: create it as a draft with the four files (--verify-tag: the
+#   1. No release for the tag: create it as a draft with the seven files (--verify-tag: the
 #      tag must exist). A draft of an earlier run is deleted and created again; nobody can
 #      see a draft. A published release is only checked.
-#   2. Download the files from the release and check them: exactly the four files, the sums
-#      match, they are the built files, ssh-paste.ps1 says the tag's version, and the build
-#      provenance attestations are valid.
+#   2. Download the files from the release and check them: exactly the seven files, the sums
+#      match, they are the built files, ssh-paste.ps1 and ssh-paste.js say the tag's version,
+#      and the build provenance attestations are valid.
 #   3. Publish it (--draft=false). It gets the Latest mark only when no published release has
 #      a higher version, and the Latest mark is checked afterwards.
 # A gh command that fails stops the script, so a half-known state is never published.
@@ -29,7 +30,7 @@ notes=${3:?usage: publish-release.sh v0.1.N DIST NOTES}
 [[ "$tag" =~ $TAG_RE ]] || { echo "::error::bad tag: $tag" >&2; exit 1; }
 fail() { echo "::error::$*" >&2; exit 1; }
 
-files="SHA256SUMS install.ps1 ssh-paste.cmd ssh-paste.ps1"
+files="SHA256SUMS install.ps1 install.sh ssh-paste-mac ssh-paste.cmd ssh-paste.js ssh-paste.ps1"
 
 state=$(release_states | awk -v t="$tag" '$1 == t { print ($2 == "true" ? "draft" : "published") }')
 if [ "$state" = draft ]; then
@@ -38,7 +39,8 @@ if [ "$state" = draft ]; then
   state=
 fi
 if [ -z "$state" ]; then
-  gh release create "$tag" "$dist/ssh-paste.ps1" "$dist/ssh-paste.cmd" "$dist/install.ps1" "$dist/SHA256SUMS" \
+  gh release create "$tag" "$dist/ssh-paste.ps1" "$dist/ssh-paste.cmd" "$dist/install.ps1" \
+    "$dist/ssh-paste.js" "$dist/ssh-paste-mac" "$dist/install.sh" "$dist/SHA256SUMS" \
     --draft --verify-tag --title "ssh-paste $tag" --notes-file "$notes"
 else
   echo "$tag is already published: checking it"
@@ -50,12 +52,15 @@ found=$(cd "$check" && ls | sort | tr '\n' ' ')
 [ "$found" = "$files " ] || fail "the release must have exactly: $files. It has: $found"
 (cd "$check" && sha256sum -c SHA256SUMS)
 listed=$(awk '{ print $2 }' "$check/SHA256SUMS" | sort | tr '\n' ' ')
-[ "$listed" = "install.ps1 ssh-paste.cmd ssh-paste.ps1 " ] || fail "SHA256SUMS must list install.ps1, ssh-paste.cmd and ssh-paste.ps1 only. It lists: $listed"
+[ "$listed" = "install.ps1 install.sh ssh-paste-mac ssh-paste.cmd ssh-paste.js ssh-paste.ps1 " ] ||
+  fail "SHA256SUMS must list the six program files only. It lists: $listed"
 for f in $files; do cmp "$check/$f" "$dist/$f" || fail "$f on the release is not the built file"; done
 # grep reads all of its input (no -q): with pipefail, a reader that stops early
 # would make tr fail on a broken pipe once the file is larger than the pipe buffer.
 tr -d '\r' < "$check/ssh-paste.ps1" | grep -xF "\$script:Version = '${tag#v}'" > /dev/null ||
   fail "ssh-paste.ps1 on the release does not say version ${tag#v}"
+grep -xF "var VERSION = '${tag#v}';" "$check/ssh-paste.js" > /dev/null ||
+  fail "ssh-paste.js on the release does not say version ${tag#v}"
 for f in $files; do
   ok=false
   for attempt in 1 2 3 4 5; do

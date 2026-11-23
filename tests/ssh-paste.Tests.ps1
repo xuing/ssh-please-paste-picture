@@ -3864,6 +3864,7 @@ esac
             [void][System.IO.Directory]::CreateDirectory((Join-Path $work 'src'))
             [System.IO.File]::WriteAllText((Join-Path $work 'src/ssh-paste.ps1'), "one`n")
             [System.IO.File]::WriteAllText((Join-Path $work 'install.ps1'), "installer`n")
+            [System.IO.File]::WriteAllText((Join-Path $work 'install.sh'), "mac installer`n")
             [System.IO.File]::WriteAllText((Join-Path $work 'README.md'), "readme`n")
             Invoke-GitIn $work @('add', '-A') | Out-Null
             Invoke-GitIn $work @('commit', '-q', '-m', 'install: first version') | Out-Null
@@ -3906,9 +3907,11 @@ esac
             $t = Invoke-GitIn $Work @('ls-remote', '--tags', '--refs', 'origin')
             return @($t -split "`n" | Where-Object { $_ } | ForEach-Object { ($_ -split 'refs/tags/')[1] })
         }
-        # The four release files of a version in a new folder, SHA256SUMS included.
+        # The seven release files of a version in a new folder, SHA256SUMS included.
+        # -JsVersion gives ssh-paste.js (the macOS client) another version than the script.
         function New-Dist {
-            param([string]$Version)
+            param([string]$Version, [string]$JsVersion)
+            if (-not $JsVersion) { $JsVersion = $Version }
             $d = Join-Path $script:Root ('dist-' + [guid]::NewGuid().ToString('N'))
             [void][System.IO.Directory]::CreateDirectory($d)
             # The version line comes early and the file is larger than a pipe buffer (64 KB),
@@ -3916,8 +3919,11 @@ esac
             [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste.ps1'), ("`$script:Version = '$Version'`n" + ("# body line`n" * 12000)))
             [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste.cmd'), "cmd`n")
             [System.IO.File]::WriteAllText((Join-Path $d 'install.ps1'), "installer`n")
+            [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste.js'), ("// macOS client`nvar VERSION = '$JsVersion';`n" + ("// body line`n" * 12000)))
+            [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste-mac'), "#!/bin/zsh`n")
+            [System.IO.File]::WriteAllText((Join-Path $d 'install.sh'), "#!/bin/sh`n")
             $sha = [System.Security.Cryptography.SHA256]::Create()
-            $sums = foreach ($n in @('ssh-paste.ps1', 'ssh-paste.cmd', 'install.ps1')) {
+            $sums = foreach ($n in @('ssh-paste.ps1', 'ssh-paste.cmd', 'install.ps1', 'ssh-paste.js', 'ssh-paste-mac', 'install.sh')) {
                 '{0}  {1}' -f (([System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes((Join-Path $d $n)))) -replace '-', '').ToLowerInvariant()), $n
             }
             [System.IO.File]::WriteAllText((Join-Path $d 'SHA256SUMS'), (($sums -join "`n") + "`n"))
@@ -3955,6 +3961,19 @@ esac
             ($b[$diff[0]] -replace "`r$", '') | Should -BeExactly '$script:Version = ''0.1.7'''
             # The line ending of the line stays what it was (CRLF in a Windows checkout).
             $a[$diff[0]].EndsWith("`r") | Should -Be $b[$diff[0]].EndsWith("`r")
+        }
+
+        It 'changes the version line of the macOS client and nothing else' {
+            $js = Join-Path $script:RepoRoot 'src/ssh-paste.js'
+            $out = Join-Path $script:Root 'stamped.js'
+            $r = Invoke-Process -FilePath $script:Bash -Arguments @((Join-Path $script:ScriptsDir 'stamp-version.sh'), $js, $out, '0.1.7')
+            $r.ExitCode | Should -Be 0 -Because ($r.Stdout + $r.Stderr)
+            $a = @([System.IO.File]::ReadAllText($js) -split "`n")
+            $b = @([System.IO.File]::ReadAllText($out) -split "`n")
+            $b.Count | Should -Be $a.Count
+            $diff = @(0..($a.Count - 1) | Where-Object { $a[$_] -cne $b[$_] })
+            $diff.Count | Should -Be 1
+            $b[$diff[0]] | Should -BeExactly "var VERSION = '0.1.7';"
         }
 
         It 'refuses a source without the exact line, and a version that is not v0.1.N' {
@@ -4039,7 +4058,7 @@ esac
             Invoke-GitIn $work @('rev-parse', 'v0.1.2^{commit}') | Should -BeExactly $docs
         }
 
-        It 'skips a commit that changes only docs, tests or workflows, and releases one that changes src/ or install.ps1' {
+        It 'skips a commit that changes only docs, tests or workflows, and releases one that changes src/, install.ps1 or install.sh' {
             $work = New-ScratchRepo
             $stub = New-Stub
             (Get-Plan $work (Invoke-GitIn $work @('rev-parse', 'HEAD')) $stub).Tag | Should -BeExactly 'v0.1.0'
@@ -4059,6 +4078,9 @@ esac
             (Get-Plan $work $docs2 $stub).Tag | Should -BeExactly ''
             $inst = Add-Commit $work 'install.ps1' 'install: a visible change'
             (Get-Plan $work $inst $stub).Tag | Should -BeExactly 'v0.1.2'
+            Set-Release $stub 'v0.1.2'
+            $mac = Add-Commit $work 'install.sh' 'install: a visible change on macOS'
+            (Get-Plan $work $mac $stub).Tag | Should -BeExactly 'v0.1.3'
         }
 
         It 'orders versions as numbers and ignores tags that are not v0.1.N: after v0.1.9 comes v0.1.10' {
@@ -4126,7 +4148,7 @@ esac
             $calls.IndexOf(@($calls | Where-Object { $_ -like 'release download *' })[0]) | Should -BeLessThan $calls.IndexOf($edit[0])
             Test-IsDraft $stub 'v0.1.7' | Should -BeFalse
             Get-Latest $stub | Should -BeExactly 'v0.1.7'
-            @(Get-ChildItem -LiteralPath (Join-Path $stub 'releases/v0.1.7/assets')).Count | Should -Be 4
+            @(Get-ChildItem -LiteralPath (Join-Path $stub 'releases/v0.1.7/assets')).Count | Should -Be 7
         }
 
         It 'resumes after an earlier run left a draft: the draft is created again and published' {
@@ -4137,7 +4159,7 @@ esac
             $r.ExitCode | Should -Be 0 -Because ($r.Stdout + $r.Stderr)
             @(Get-StubCalls $stub | Where-Object { $_ -like 'release delete v0.1.7*' }).Count | Should -Be 1
             Test-IsDraft $stub 'v0.1.7' | Should -BeFalse
-            @(Get-ChildItem -LiteralPath (Join-Path $stub 'releases/v0.1.7/assets') | ForEach-Object { $_.Name } | Sort-Object) -join ' ' | Should -BeExactly 'install.ps1 SHA256SUMS ssh-paste.cmd ssh-paste.ps1'
+            @(Get-ChildItem -LiteralPath (Join-Path $stub 'releases/v0.1.7/assets') | ForEach-Object { $_.Name } | Sort-Object) -join ' ' | Should -BeExactly ((@('install.ps1', 'install.sh', 'SHA256SUMS', 'ssh-paste.cmd', 'ssh-paste.js', 'ssh-paste.ps1', 'ssh-paste-mac') | Sort-Object) -join ' ')
         }
 
         It 'checks an already published release instead of failing on create' {
@@ -4182,6 +4204,14 @@ esac
             $r = Invoke-Publish $stub 'v0.1.7' (New-Dist '0.1.6')
             $r.ExitCode | Should -Not -Be 0
             ($r.Stdout + $r.Stderr) | Should -Match 'does not say version 0\.1\.7'
+            Test-IsDraft $stub 'v0.1.7' | Should -BeTrue
+        }
+
+        It 'leaves the draft unpublished when ssh-paste.js (the macOS client) does not say the tag version' {
+            $stub = New-Stub
+            $r = Invoke-Publish $stub 'v0.1.7' (New-Dist '0.1.7' -JsVersion '0.0.0-dev')
+            $r.ExitCode | Should -Not -Be 0
+            ($r.Stdout + $r.Stderr) | Should -Match 'ssh-paste\.js on the release does not say version 0\.1\.7'
             Test-IsDraft $stub 'v0.1.7' | Should -BeTrue
         }
 

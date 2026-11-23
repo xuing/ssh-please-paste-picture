@@ -162,7 +162,7 @@ The same commands work on macOS, with one difference in what you press: Cmd+V. `
 
 ### Verify the download
 
-Releases include `SHA256SUMS` and a GitHub build attestation for `install.ps1`, `ssh-paste.ps1`, and `ssh-paste.cmd` (`main` has neither).
+Releases include `SHA256SUMS` and a GitHub build attestation for `install.ps1`, `ssh-paste.ps1`, and `ssh-paste.cmd`, and for the macOS `install.sh`, `ssh-paste-mac`, and `ssh-paste.js` (`main` has neither). The macOS installer checks the files it downloads against `SHA256SUMS`.
 
 <details>
 <summary>Verify install.ps1 before running</summary>
