@@ -1,0 +1,20 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Windows-side files: CRLF (see .gitattributes). Keep .ps1 files ASCII-only:
+# Windows PowerShell 5.1 reads a BOM-less file as ANSI, not UTF-8.
+[*.{ps1,psd1,psm1,cmd,bat}]
+end_of_line = crlf
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false

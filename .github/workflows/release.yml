@@ -1,0 +1,76 @@
+name: Release
+
+# Push a tag such as v0.1.0 (it must match $script:Version in src/ssh-paste.ps1).
+# The tests run first; then a GitHub release is created with the files and their
+# SHA-256 sums. The install.ps1 attached to the release has its default ref set
+# to the tag, so that
+#   irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
+# installs the files of exactly that release (the copy in the repository keeps main).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    name: Create the release
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The tag matches the version in the script
+        run: |
+          # .gitattributes checks .ps1 out with CRLF, hence tr.
+          version=$(tr -d '\r' < src/ssh-paste.ps1 | sed -n "s/^\$script:Version = '\(.*\)'\$/\1/p")
+          echo "script version: ${version:-<not found>}, tag: $GITHUB_REF_NAME"
+          [ -n "$version" ] && [ "v$version" = "${GITHUB_REF_NAME%%-*}" ] || {
+            echo "::error::tag $GITHUB_REF_NAME does not match \$script:Version '$version' in src/ssh-paste.ps1"
+            exit 1
+          }
+
+      - name: Collect the files and their SHA-256 sums
+        run: |
+          mkdir dist
+          cp src/ssh-paste.ps1 src/ssh-paste.cmd install.ps1 dist/
+          # Bake the tag into the attached installer: its default ref ($DefaultRef,
+          # main in the repository) becomes the tag. The tag is checked first, so
+          # it is safe inside the sed replacement. CRLF checkouts: the match stops
+          # before the line ending.
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || {
+            echo "::error::tag $GITHUB_REF_NAME is not like v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          }
+          sed -i "s/^\( *[$]DefaultRef = \)'main'/\1'$GITHUB_REF_NAME'/" dist/install.ps1
+          baked=$(tr -d '\r' < dist/install.ps1 | grep -cxF "    \$DefaultRef = '$GITHUB_REF_NAME'" || true)
+          leftover=$(grep -c "'main'" dist/install.ps1 || true)
+          echo "install.ps1: default ref lines set to $GITHUB_REF_NAME: $baked; 'main' left: $leftover"
+          [ "$baked" = 1 ] && [ "$leftover" = 0 ] || {
+            echo "::error::could not set the default ref of dist/install.ps1 to $GITHUB_REF_NAME"
+            exit 1
+          }
+          pwsh -NoProfile -Command '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD.Path "dist/install.ps1"), [ref]$null, [ref]$e); if ($e) { $e | ForEach-Object { Write-Host $_ }; exit 1 }'
+          (cd dist && sha256sum ssh-paste.ps1 ssh-paste.cmd install.ps1 > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/ssh-paste.ps1 dist/ssh-paste.cmd dist/install.ps1 dist/SHA256SUMS \
+            --verify-tag --generate-notes --title "ssh-paste $GITHUB_REF_NAME" $prerelease

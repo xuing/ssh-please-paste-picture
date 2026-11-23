@@ -1,0 +1,16 @@
+# Pester and coverage output
+testResults.xml
+TestResults/
+coverage.xml
+
+# Build and release staging
+/dist/
+/out/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store

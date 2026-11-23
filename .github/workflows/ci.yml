@@ -1,0 +1,187 @@
+name: CI
+
+# Runs on pushes to main and on every pull request. release.yml calls it too
+# (workflow_call), so a tag is only released when everything below passes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  # Static checks: the files must stay ASCII and parse on Windows PowerShell 5.1,
+  # which is the only PowerShell a stock Windows computer has.
+  lint:
+    name: Lint
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Files are ASCII only
+        shell: pwsh
+        run: |
+          # Windows PowerShell 5.1 reads a file without a byte order mark as ANSI, so a
+          # single non-ASCII character in a script would be mis-decoded on user machines.
+          $failed = 0
+          foreach ($file in (git ls-files '*.ps1' '*.psd1' '*.cmd' '*.sh' '*.yml')) {
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $PWD.Path $file))
+            $line = 1
+            for ($i = 0; $i -lt $bytes.Length; $i++) {
+              $b = $bytes[$i]
+              if ($b -eq 10) { $line++; continue }
+              if ($b -gt 126 -or ($b -lt 32 -and $b -ne 9 -and $b -ne 13)) {
+                Write-Host "::error file=$file,line=$line::byte $b is not printable ASCII"
+                $failed++
+                break
+              }
+            }
+          }
+          if ($failed -gt 0) { exit 1 }
+          Write-Host 'All checked files are ASCII.'
+
+      - name: No command-line forms that antivirus heuristics flag
+        shell: pwsh
+        run: |
+          # Encoded commands, hidden windows and abbreviated parameters are what malware
+          # uses; security tools score them even in honest scripts. Tests and workflows
+          # mention them on purpose and are left out.
+          $pattern = '(?i)-EncodedCommand|-WindowStyle|\s-(ep|nop|noni|enc|w)\s'
+          $hits = git ls-files '*.ps1' '*.cmd' |
+            Where-Object { $_ -notlike 'tests/*' } |
+            ForEach-Object { Select-String -Path $_ -Pattern $pattern }
+          foreach ($h in $hits) { Write-Host "::error file=$($h.Path),line=$($h.LineNumber)::$($h.Line.Trim())" }
+          if ($hits) { exit 1 }
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force
+          }
+          Import-Module PSScriptAnalyzer
+          Write-Host ('PSScriptAnalyzer ' + (Get-Module PSScriptAnalyzer).Version)
+          # The Pester file is checked by running it, not by the analyzer: its
+          # BeforeDiscovery variables look unused to a static rule.
+          $files = git ls-files '*.ps1' '*.psd1' | Where-Object { $_ -notlike '*.Tests.ps1' }
+          $findings = foreach ($f in $files) {
+            Invoke-ScriptAnalyzer -Path $f -Settings ./PSScriptAnalyzerSettings.psd1
+          }
+          foreach ($r in $findings) {
+            $file = [System.IO.Path]::GetRelativePath($PWD.Path, $r.ScriptPath).Replace('\', '/')
+            Write-Host "::error file=$file,line=$($r.Line),col=$($r.Column)::$($r.RuleName): $($r.Message)"
+          }
+          Write-Host ("{0} file(s) analyzed, {1} finding(s)" -f @($files).Count, @($findings).Count)
+          if ($findings) { exit 1 }
+
+      - name: Parse every PowerShell file with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          Write-Host ('Windows PowerShell ' + $PSVersionTable.PSVersion)
+          $failed = 0
+          foreach ($file in (git ls-files '*.ps1' '*.psd1')) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD.Path $file), [ref]$null, [ref]$errors)
+            foreach ($e in $errors) {
+              Write-Host "::error file=$file,line=$($e.Extent.StartLineNumber)::$($e.Message)"
+              $failed++
+            }
+          }
+          if ($failed -gt 0) { exit 1 }
+          Write-Host 'Everything parses.'
+
+  # Pure functions and, where the OS allows, real clipboard and process tests.
+  # Windows has Pester 3.4 and 5.x side by side, so Pester 5 is imported explicitly.
+  unit:
+    name: Unit tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows PowerShell 5.1
+            os: windows-latest
+            shell: powershell
+          - name: PowerShell 7 on Windows
+            os: windows-latest
+            shell: pwsh
+          - name: PowerShell 7 on Linux
+            os: ubuntu-latest
+            shell: pwsh
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Pester
+        run: |
+          $minimum = [version]'5.5.0'
+          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -ge $minimum })) {
+            Install-Module -Name Pester -MinimumVersion $minimum -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -MinimumVersion $minimum
+          Write-Host ('PowerShell {0} ({1}), Pester {2}' -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition, (Get-Module Pester).Version)
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests/ssh-paste.Tests.ps1'
+          $config.Run.Exit = $true
+          $config.Filter.ExcludeTag = @('E2E')
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
+
+  # A throwaway sshd on the runner: real uploads, the server-side script through
+  # real shells, and --proxy relaying a binary file. See tests/e2e-linux.sh.
+  e2e:
+    name: End to end (ssh on Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shell script lint
+        run: |
+          bash -n tests/e2e-linux.sh
+          shellcheck tests/e2e-linux.sh
+
+      - name: Run the E2E tests
+        run: bash tests/e2e-linux.sh
+
+  # Install, enable, disable and uninstall must leave the profile exactly as it was.
+  # Both shells run it: the Windows PowerShell that every user has, and PowerShell 7.
+  footprint:
+    name: Footprint (${{ matrix.shell }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run tests/footprint.ps1
+        run: |
+          Write-Host ('PowerShell {0} ({1})' -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition)
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          & ./tests/footprint.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
