@@ -168,7 +168,8 @@ https://github.com/xuing/ssh-pls-paste-pic
         param([string]$Ref)
         $local = $null
         if ($ScriptDir) { $local = Join-Path $ScriptDir 'src' }
-        if ($null -eq $Ref -and $null -ne $local -and (Test-Path -LiteralPath (Join-Path $local 'ssh-paste.ps1'))) {
+        # A [string] parameter turns $null into '', so test for empty, not for $null.
+        if ([string]::IsNullOrEmpty($Ref) -and $null -ne $local -and (Test-Path -LiteralPath (Join-Path $local 'ssh-paste.ps1'))) {
             # Read the bytes rather than copying, so no Zone.Identifier (Mark of the
             # Web) from a browser download is carried into the install folder.
             return @{
@@ -177,7 +178,7 @@ https://github.com/xuing/ssh-pls-paste-pic
                 From = $local
             }
         }
-        if ($null -eq $Ref) { $Ref = $DefaultRef }
+        if ([string]::IsNullOrEmpty($Ref)) { $Ref = $DefaultRef }
         $base = '{0}/{1}/src/' -f $DownloadBase, $Ref
         $oldProtocol = [System.Net.ServicePointManager]::SecurityProtocol
         try {
