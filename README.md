@@ -1,13 +1,13 @@
-# ssh-pls-paste-pic
+# ssh-please-paste-picture
 
-[![CI](https://github.com/xuing/ssh-pls-paste-pic/actions/workflows/ci.yml/badge.svg)](https://github.com/xuing/ssh-pls-paste-pic/actions/workflows/ci.yml)
+[![CI](https://github.com/xuing/ssh-please-paste-picture/actions/workflows/ci.yml/badge.svg)](https://github.com/xuing/ssh-please-paste-picture/actions/workflows/ci.yml)
 
 English | [简体中文](README.zh-CN.md)
 
 Press Ctrl+V in Windows Terminal to paste a screenshot into remote Claude Code
 over SSH.
 
-The name reads "ssh, please paste pic". It installs `ssh-paste`, one PowerShell
+The name says what it does: "ssh, please paste picture". It installs `ssh-paste`, one PowerShell
 script on Windows. Nothing is installed on the server.
 
 ## What happens
@@ -30,7 +30,7 @@ open.
 Run this command in PowerShell, not cmd:
 
 ```powershell
-irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
+irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
 ```
 
 You do not need administrator rights. `ssh-paste` works in that window right
@@ -209,8 +209,8 @@ ssh-paste --uninstall
 If `ssh-paste` does not run, uninstall via the installer:
 
 ```powershell
-$env:SSH_PASTE_UNINSTALL = 1; irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
-& ([scriptblock]::Create((irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1))) -Uninstall
+$env:SSH_PASTE_UNINSTALL = 1; irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
+& ([scriptblock]::Create((irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1))) -Uninstall
 ```
 
 After the first line, run `Remove-Item Env:SSH_PASTE_UNINSTALL` before
@@ -326,7 +326,7 @@ the upload goes straight to the address the relay reached. See [SECURITY.md](SEC
 malware uses that pattern. Run these commands instead:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing -Uri https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing -Uri https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 -OutFile install.ps1
 notepad install.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 Remove-Item install.ps1
@@ -340,7 +340,7 @@ Remove-Item install.ps1
 install another tag, branch, or commit:
 
 ```powershell
-$env:SSH_PASTE_REF = 'v0.1.0'; irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
+$env:SSH_PASTE_REF = 'v0.1.0'; irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
 ```
 
 Files then download from `raw.githubusercontent.com` at that ref. From a
@@ -377,11 +377,11 @@ Here are details on terminals, CLI programs, `ssh.exe`, and security software:
 
 ## Alternatives
 
-Here is how `ssh-pls-paste-pic` compares with similar tools:
+Here is how `ssh-please-paste-picture` compares with similar tools:
 
 | Tool | On Windows | On the server | Runs in the background | Paste key |
 |---|---|---|---|---|
-| ssh-pls-paste-pic | one PowerShell script | nothing | nothing; only during a session | Ctrl+V |
+| ssh-please-paste-picture | one PowerShell script | nothing | nothing; only during a session | Ctrl+V |
 | [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control) (`/rc`) | nothing; use claude.ai/code or the Claude app | nothing extra | the Claude Code session | attach images in the browser or app |
 | [clipaste](https://github.com/hqhq1025/clipaste) | Rust daemon | xclip / wl-paste shim and `clipaste-paste` (need curl); `RemoteForward` in your ssh config | local daemon | Ctrl+V |
 | [cc-clip](https://github.com/ShunmeiCho/cc-clip) | Go binary; Windows support marked experimental | nothing for the Windows hotkey workflow (uploads with scp); the Ctrl+V shim and tunnel are experimental on Windows | hotkey process (optional autostart) | Alt+Shift+V |

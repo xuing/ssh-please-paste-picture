@@ -1,9 +1,9 @@
 <#
-ssh-paste installer - https://github.com/xuing/ssh-pls-paste-pic
+ssh-paste installer - https://github.com/xuing/ssh-please-paste-picture
 
 Install or upgrade (no administrator rights needed):
 
-    irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
+    irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
 
 From a clone or a downloaded copy of the repository (installs those files):
 
@@ -12,7 +12,7 @@ From a clone or a downloaded copy of the repository (installs those files):
 Remove ssh-paste and everything it changed, even when the installed copy is broken:
 
     powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
-    & ([scriptblock]::Create((irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1))) -Uninstall
+    & ([scriptblock]::Create((irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1))) -Uninstall
 
 Options
     -Ref <tag|branch|commit>   download that version instead of the default (env: SSH_PASTE_REF)
@@ -49,7 +49,7 @@ Keep this file ASCII and valid for Windows PowerShell 5.1.
     $BlockBegin = '# >>> ssh-paste (managed by ssh-paste --enable / --disable) >>>'
     $BlockEnd = '# <<< ssh-paste <<<'
     $BlockCreatedFile = '# ssh-paste created this file; it is deleted when the last host is disabled.'
-    $DownloadBase = 'https://raw.githubusercontent.com/xuing/ssh-pls-paste-pic'
+    $DownloadBase = 'https://raw.githubusercontent.com/xuing/ssh-please-paste-picture'
     # The ref that src/ is downloaded from. .github/workflows/release.yml replaces
     # main with the release tag in the copy it attaches to a release, so that
     # installer installs the files of its own release. Keep the next line as it is.
@@ -69,7 +69,7 @@ ssh-paste installer
   install.ps1 -Uninstall                   remove ssh-paste and everything it changed
 
 Under `irm ... | iex` use SSH_PASTE_REF / SSH_PASTE_UNINSTALL=1 instead.
-https://github.com/xuing/ssh-pls-paste-pic
+https://github.com/xuing/ssh-please-paste-picture
 '@
     }
 

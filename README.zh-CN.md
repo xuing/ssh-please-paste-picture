@@ -1,12 +1,12 @@
-# ssh-pls-paste-pic
+# ssh-please-paste-picture
 
-[![CI](https://github.com/xuing/ssh-pls-paste-pic/actions/workflows/ci.yml/badge.svg)](https://github.com/xuing/ssh-pls-paste-pic/actions/workflows/ci.yml)
+[![CI](https://github.com/xuing/ssh-please-paste-picture/actions/workflows/ci.yml/badge.svg)](https://github.com/xuing/ssh-please-paste-picture/actions/workflows/ci.yml)
 
 [English](README.md) | 简体中文
 
 在 Windows Terminal 里按 Ctrl+V，把截图粘贴到服务器上的 Claude Code。
 
-项目名读作 “ssh, please paste pic”，命令叫 `ssh-paste`。它只是 Windows 上的一个 PowerShell 脚本，服务器端不用装任何东西。
+项目名就是它做的事：“ssh, please paste picture”，命令叫 `ssh-paste`。它只是 Windows 上的一个 PowerShell 脚本，服务器端不用装任何东西。
 
 ## 效果
 
@@ -25,7 +25,7 @@ Windows Terminal 只粘贴文本，服务器上的程序读的是服务器剪贴
 打开 PowerShell（不是 cmd），运行：
 
 ```powershell
-irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
+irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
 ```
 
 不需要管理员权限。当前窗口马上可用 `ssh-paste`，其他窗口新开标签页即可。升级也是运行同一行命令。
@@ -156,8 +156,8 @@ ssh-paste --uninstall
 这会清掉 `--enable` 配置块、`PATH` 条目和安装目录。`ssh-paste` 用不了时，用安装脚本卸载（任选一行）：
 
 ```powershell
-$env:SSH_PASTE_UNINSTALL = 1; irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
-& ([scriptblock]::Create((irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1))) -Uninstall
+$env:SSH_PASTE_UNINSTALL = 1; irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
+& ([scriptblock]::Create((irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1))) -Uninstall
 ```
 
 用了第一行的话，在同一窗口重装前先执行 `Remove-Item Env:SSH_PASTE_UNINSTALL`。
@@ -228,7 +228,7 @@ ssh 模式下，`ssh` 以 `ProxyCommand` 启动 `ssh-paste` 建立 TCP 连接、
 **先下载、审阅、再运行。** 部分杀毒软件会拦截 `irm ... | iex`，因为恶意软件也常这么写：
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing -Uri https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing -Uri https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 -OutFile install.ps1
 notepad install.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 Remove-Item install.ps1
@@ -239,7 +239,7 @@ Remove-Item install.ps1
 **选择版本。** 每个 release 附带的 `install.ps1` 默认安装该 release 的文件，`releases/latest` 指最新版。用 `SSH_PASTE_REF` 或 `-Ref` 可指定其他 tag、branch 或 commit：
 
 ```powershell
-$env:SSH_PASTE_REF = 'v0.1.0'; irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
+$env:SSH_PASTE_REF = 'v0.1.0'; irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
 ```
 
 此时从 `raw.githubusercontent.com` 对应 ref 下载。在仓库 clone 里跑 `powershell -ExecutionPolicy Bypass -File install.ps1` 会安装该 clone 的 `src` 目录。
@@ -258,7 +258,7 @@ Group Policy 将 execution policy 设为 `AllSigned` 或 `Restricted`，或因 A
 
 | 工具 | Windows 端 | 服务器端 | 后台常驻 | 粘贴方式 |
 |---|---|---|---|---|
-| ssh-pls-paste-pic | 一个 PowerShell 脚本 | 无 | 无，只在会话期间运行 | Ctrl+V |
+| ssh-please-paste-picture | 一个 PowerShell 脚本 | 无 | 无，只在会话期间运行 | Ctrl+V |
 | [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control)（`/rc`） | 无，用 claude.ai/code 或 Claude app | 无需额外安装 | Claude Code 会话本身 | 在浏览器或 app 里附加图片 |
 | [clipaste](https://github.com/hqhq1025/clipaste) | Rust daemon | xclip / wl-paste shim 和 `clipaste-paste`（需要 curl），ssh config 里加 `RemoteForward` | 本地 daemon | Ctrl+V |
 | [cc-clip](https://github.com/ShunmeiCho/cc-clip) | Go 程序，作者标注 Windows 支持为 experimental | Windows 的 hotkey 方式不需要（用 scp 上传）；Ctrl+V 的 shim 加 tunnel 方式在 Windows 上是 experimental | hotkey 进程（可选开机自启） | Alt+Shift+V |

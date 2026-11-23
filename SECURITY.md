@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report security issues privately on GitHub via
-[Report a vulnerability](https://github.com/xuing/ssh-pls-paste-pic/security/advisories/new)
+[Report a vulnerability](https://github.com/xuing/ssh-please-paste-picture/security/advisories/new)
 under the **Security** tab. Do not open a public issue.
 
 Include what you did, what happened, and `ssh-paste --version` output.

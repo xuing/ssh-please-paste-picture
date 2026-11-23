@@ -8,7 +8,7 @@ While connected, copy a screenshot (Win+Shift+S), return to the terminal and
 press Ctrl+V: the image is uploaded to /tmp on the server and its path is pasted.
 
 Runs on the Windows PowerShell 5.1 that ships with Windows, and on PowerShell 7.
-Keep this file ASCII. https://github.com/xuing/ssh-pls-paste-pic
+Keep this file ASCII. https://github.com/xuing/ssh-please-paste-picture
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -1528,7 +1528,7 @@ function Get-Usage {
         '',
         'While connected: copy a screenshot (Win+Shift+S), come back to the terminal,',
         'press Ctrl+V. The image goes to /tmp/ssh-paste-<hash>.png on the server and that',
-        'path is pasted. Other apps still paste the image. https://github.com/xuing/ssh-pls-paste-pic'
+        'path is pasted. Other apps still paste the image. https://github.com/xuing/ssh-please-paste-picture'
     ) -join [Environment]::NewLine
 }
 

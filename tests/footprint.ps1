@@ -7,7 +7,7 @@ Each round starts from the same snapshot and must end with an identical one:
   round 2  install, --enable, install.ps1 -Uninstall
   round 3  install, --enable, install.ps1 through `irm | iex` with SSH_PASTE_UNINSTALL=1
            (also checks that iex leaves nothing in the calling session)
-  round 4  only on push builds of xuing/ssh-pls-paste-pic: `irm | iex` install from GitHub at
+  round 4  only on push builds of xuing/ssh-please-paste-picture: `irm | iex` install from GitHub at
            this commit (SSH_PASTE_REF), then the same uninstall through iex
   round 5  an ssh config that already exists survives --enable and install.ps1 -Uninstall
            byte for byte (it is deleted only when the block says ssh-paste created it)
@@ -436,7 +436,7 @@ try {
         Complete-Round 'round 5:'
     }
 
-    if ($env:GITHUB_REPOSITORY -eq 'xuing/ssh-pls-paste-pic' -and $env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_SHA) {
+    if ($env:GITHUB_REPOSITORY -eq 'xuing/ssh-please-paste-picture' -and $env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_SHA) {
         Write-Host 'round 4: irm | iex install from GitHub at this commit'
         $r = Invoke-IexDriver 'install' $env:GITHUB_SHA
         [void](Test-Check ($r.Code -eq 0) 'round 4: install through iex succeeds and leaks nothing into the session' $r.Text)
@@ -445,7 +445,7 @@ try {
         [void](Test-Check ($r.Code -eq 0) 'round 4: uninstall through iex succeeds' $r.Text)
         Complete-Round 'round 4:'
     } else {
-        Write-Host 'round 4: skipped (runs only on push builds of xuing/ssh-pls-paste-pic)'
+        Write-Host 'round 4: skipped (runs only on push builds of xuing/ssh-please-paste-picture)'
     }
 } catch {
     Write-Fail ('unexpected error: ' + $_.Exception.Message) ($_.ScriptStackTrace)

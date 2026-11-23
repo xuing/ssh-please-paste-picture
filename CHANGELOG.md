@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.1.0 - Unreleased
 
-First release of ssh-pls-paste-pic. The command is `ssh-paste`.
+First release of ssh-please-paste-picture. The command is `ssh-paste`.
 
 ### Added
 

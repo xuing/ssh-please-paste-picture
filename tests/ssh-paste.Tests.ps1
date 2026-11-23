@@ -1886,7 +1886,7 @@ Describe 'install.ps1' {
 
         It 'documents the release download as the way to install' {
             $text = [System.IO.File]::ReadAllText($script:InstallPath)
-            $text | Should -Match 'irm https://github\.com/xuing/ssh-pls-paste-pic/releases/latest/download/install\.ps1 \| iex'
+            $text | Should -Match 'irm https://github\.com/xuing/ssh-please-paste-picture/releases/latest/download/install\.ps1 \| iex'
         }
     }
 

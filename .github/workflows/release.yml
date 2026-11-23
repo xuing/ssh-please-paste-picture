@@ -4,7 +4,7 @@ name: Release
 # The tests run first; then a GitHub release is created with the files and their
 # SHA-256 sums. The install.ps1 attached to the release has its default ref set
 # to the tag, so that
-#   irm https://github.com/xuing/ssh-pls-paste-pic/releases/latest/download/install.ps1 | iex
+#   irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
 # installs the files of exactly that release (the copy in the repository keeps main).
 on:
   push:
