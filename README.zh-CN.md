@@ -1,6 +1,8 @@
 # ssh-please-paste-picture
 
 [![CI](https://github.com/xuing/ssh-please-paste-picture/actions/workflows/ci.yml/badge.svg)](https://github.com/xuing/ssh-please-paste-picture/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/xuing/ssh-please-paste-picture)](https://github.com/xuing/ssh-please-paste-picture/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/xuing/ssh-please-paste-picture)](LICENSE)
 
 [English](README.md) | 简体中文
 
@@ -30,7 +32,35 @@ irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/i
 
 不需要管理员权限。当前窗口马上可用 `ssh-paste`，其他窗口新开标签页即可。升级也是运行同一行命令。
 
+第一个 release 发布前 `releases/latest` 不存在，上面的命令会失败。这时从 `main` 分支安装：
+
+```powershell
+irm https://raw.githubusercontent.com/xuing/ssh-please-paste-picture/main/install.ps1 | iex
+```
+
+这行命令装的是 `main` 上最新的 commit，有 release 之后也一样。
+
 Windows 和 SSH 前提见[运行要求](#运行要求)，先下载再运行或装指定版本见[安装选项](#安装选项)。
+
+### 校验下载的文件
+
+每个 release 都附带 `SHA256SUMS` 和 GitHub build attestation，覆盖 `install.ps1`、`ssh-paste.ps1` 和 `ssh-paste.cmd`。从 `main` 装的文件两者都没有。想在运行前检查 release 里的 `install.ps1`，把它和 `SHA256SUMS` 一起下载下来比对哈希：
+
+```powershell
+$base = 'https://github.com/xuing/ssh-please-paste-picture/releases/latest/download'
+Invoke-WebRequest -UseBasicParsing -Uri "$base/install.ps1" -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile SHA256SUMS
+$want = (Select-String -Path SHA256SUMS -Pattern ' install\.ps1$').Line.Split(' ')[0]
+(Get-FileHash install.ps1 -Algorithm SHA256).Hash -eq $want
+```
+
+文件一致时最后一行输出 `True`。装了 [GitHub CLI](https://cli.github.com/) 的话，再确认文件是本仓库的 release workflow 构建的：
+
+```powershell
+gh attestation verify install.ps1 -R xuing/ssh-please-paste-picture
+```
+
+然后按[安装选项](#安装选项)里的方式运行检查过的文件。
 
 ## 使用
 
@@ -86,7 +116,7 @@ ssh-paste -t myhost claude
 ssh-paste --doctor myhost
 ```
 
-不加 `myhost` 时只查本机。输出示例：
+不加 `myhost` 时只查本机。每行以 `ok`、`FAIL` 或 `info` 开头。输出示例：
 
 ```
 ssh-paste 0.1.0
@@ -99,6 +129,21 @@ ssh-paste 0.1.0
   info  ssh mode is off for myhost. Turn it on: ssh-paste --enable myhost   (or use: ssh-paste myhost)
 ```
 
+### 粘贴不成功时
+
+按顺序排查：
+
+1. 运行 `ssh-paste --doctor myhost`，`FAIL` 行会指出问题。
+2. ssh 模式下，带 `SSH_PASTE_DEBUG=1` 连接。转发会在 stderr 输出 `ssh-paste debug:` 行，包括连上的地址、stdin 和 stdout 的打开方式，以及哪一端关闭了连接。
+
+   ```powershell
+   $env:SSH_PASTE_DEBUG = 1; ssh myhost
+   Remove-Item Env:SSH_PASTE_DEBUG
+   ```
+
+3. 运行 `ssh -v myhost`，看连接停在哪一步。比如卡在 `expecting SSH2_MSG_KEX_ECDH_REPLY`，说明转发停止了。
+4. 带上以上输出提交 [bug report](https://github.com/xuing/ssh-please-paste-picture/issues/new?template=bug_report.yml)。
+
 ### 全部命令
 
 ```
@@ -106,6 +151,7 @@ ssh-paste --enable HOST [HOST...]   make plain "ssh HOST" paste screenshots (edi
 ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)
 ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config
 ssh-paste --doctor [HOST]           check this computer and test an upload to HOST
+ssh-paste --update                  install the latest release
 ssh-paste --uninstall               remove ssh-paste and everything it changed
 ssh-paste --version | --help
 ```
@@ -234,7 +280,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 Remove-Item install.ps1
 ```
 
-`-ExecutionPolicy Bypass` 只对该进程有效。每个 release 附带 `SHA256SUMS`，包含 `install.ps1`、`ssh-paste.ps1` 和 `ssh-paste.cmd` 的校验和。
+`-ExecutionPolicy Bypass` 只对该进程有效。每个 release 附带 `SHA256SUMS`，包含 `install.ps1`、`ssh-paste.ps1` 和 `ssh-paste.cmd` 的校验和，见[校验下载的文件](#校验下载的文件)。
 
 **选择版本。** 每个 release 附带的 `install.ps1` 默认安装该 release 的文件，`releases/latest` 指最新版。用 `SSH_PASTE_REF` 或 `-Ref` 可指定其他 tag、branch 或 commit：
 
@@ -278,12 +324,18 @@ install.ps1                    installer and uninstaller
 tests/ssh-paste.Tests.ps1      Pester tests (tags: Unix, Windows, E2E)
 tests/e2e-linux.sh             starts a throwaway sshd and runs the E2E tests against it
 tests/footprint.ps1            Windows: install, enable, disable, uninstall leave no trace
+tests/lint.ps1                 lint checks that check.ps1 and CI share
+check.ps1                      runs the lint checks and unit tests; -E2E and -Footprint add the others
 PSScriptAnalyzerSettings.psd1  lint rules
 .github/workflows/ci.yml       lint, unit tests (5.1 and 7 on Windows, 7 on Linux), E2E, footprint
-.github/workflows/release.yml  on a v* tag: CI, then a release with the files and SHA256SUMS
+.github/workflows/ci.yml       ... and a release of every green push to main that changes src/ or install.ps1
+.github/workflows/publish.yml  builds, attests and publishes a release (SHA256SUMS, attestations)
+.github/scripts/               the shell steps of a release (next version, notes, version stamp)
 ```
 
 用 dot-source 加载核心脚本（`. ./src/ssh-paste.ps1`）只定义函数不执行，供测试加载。
+
+每次 commit 前运行 `pwsh ./check.ps1`，它会跑 lint 检查和单元测试。pull request 必须通过的全部检查见 [CONTRIBUTING.md](CONTRIBUTING.md)。单独跑某一组测试用下面的命令：
 
 ```powershell
 # 单元测试，需要 Pester 5.5 或更新版本。依赖 Windows 或 Unix shell 的测试在其他平台上会自动跳过。
@@ -301,7 +353,11 @@ bash tests/e2e-linux.sh
 powershell -ExecutionPolicy Bypass -File tests\footprint.ps1 -Force
 ```
 
-发布时推一个匹配 `src/ssh-paste.ps1` 里 `$script:Version` 的 `vX.Y.Z` tag。
+`main` 上每个绿色、且改动了 `src/` 或 `install.ps1` 的 commit 都会自动发布为 `v0.1.<n>`。如何查看 release、如何手动发布见 [docs/RELEASING.md](docs/RELEASING.md)。
+
+## 参与贡献
+
+报 bug 请用 [bug report 表单](https://github.com/xuing/ssh-please-paste-picture/issues/new?template=bug_report.yml)，并附上 `ssh-paste --doctor` 的输出。提 pull request 前先开 issue。pull request 必须通过的检查和 commit 规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题按 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## License
 

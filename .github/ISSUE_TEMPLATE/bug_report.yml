@@ -1,0 +1,113 @@
+name: Bug report
+description: ssh-paste does not paste, upload, install, or clean up as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search the [open bugs](https://github.com/xuing/ssh-please-paste-picture/issues?q=is%3Aissue+is%3Aopen+label%3Abug) first.
+        For a security problem, do not file here. Follow [SECURITY.md](https://github.com/xuing/ssh-please-paste-picture/blob/main/SECURITY.md).
+        Before you paste output, remove host names, user names, IP addresses, and key paths that you do not want public.
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run `winver`.
+      placeholder: Windows 11 24H2, build 26100.2161
+    validations:
+      required: true
+  - type: input
+    id: powershell
+    attributes:
+      label: PowerShell version
+      description: Run `$PSVersionTable.PSVersion` in the shell where you ran `ssh` or `ssh-paste`. Write `cmd` if you used cmd.
+      placeholder: 5.1.26100.2161
+    validations:
+      required: true
+  - type: input
+    id: ssh-version
+    attributes:
+      label: ssh -V
+      description: Run `ssh -V`. ssh-paste sets more options on OpenSSH 8.7 or newer.
+      placeholder: OpenSSH_for_Windows_9.5p1, LibreSSL 3.8.2
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal and its version
+      description: In Windows Terminal, open the menu and select **About**.
+      placeholder: Windows Terminal 1.21.3231.0
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      description: ssh mode is `ssh-paste --enable HOST`, then plain `ssh HOST`. Wrapper mode is `ssh-paste HOST`.
+      options:
+        - ssh mode
+        - wrapper mode
+        - not in a session (install, uninstall, --enable, --disable, --doctor)
+        - not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: copied
+    attributes:
+      label: What was on the clipboard
+      options:
+        - a screenshot or other image (Win+Shift+S, Snipping Tool, Copy image)
+        - image files copied in File Explorer
+        - nothing, the bug is not about pasting
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ssh-paste --doctor HOST output
+      description: Run `ssh-paste --doctor HOST` with the host from your report. Its first line is the ssh-paste version. If ssh-paste is not installed, paste the installer's output instead.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: debug
+    attributes:
+      label: Output with SSH_PASTE_DEBUG=1 (ssh mode)
+      description: |
+        In ssh mode, run these lines in PowerShell, reproduce the bug, and paste the `ssh-paste debug:` lines:
+
+            $env:SSH_PASTE_DEBUG = 1; ssh HOST
+            Remove-Item Env:SSH_PASTE_DEBUG
+      render: text
+  - type: textarea
+    id: ssh-verbose
+    attributes:
+      label: ssh -v excerpt
+      description: For connection or upload failures, run `ssh -v HOST` and paste the lines around the failure.
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ssh-paste --enable myhost
+        2. ssh myhost, then start claude
+        3. Win+Shift+S, select an area, switch back to the terminal
+        4. Ctrl+V
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      placeholder: The path /tmp/ssh-paste-<hash>.png is pasted.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: Paste any error text exactly as printed.
+    validations:
+      required: true

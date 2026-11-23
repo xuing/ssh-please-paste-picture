@@ -1,12 +1,35 @@
 # Security
 
+## Supported versions
+
+Only the newest release gets security fixes. A fix ships as a new release, and
+older releases get no backports. Before the first release, `main` is the only
+supported version.
+
+| Version | Supported |
+|---|---|
+| Newest release | Yes |
+| Older releases | No |
+| `main` before the first release | Yes |
+
 ## Reporting a vulnerability
 
-Report security issues privately on GitHub via
-[Report a vulnerability](https://github.com/xuing/ssh-please-paste-picture/security/advisories/new)
-under the **Security** tab. Do not open a public issue.
+Report security issues privately. Do not open a public issue, and do not post
+details in a discussion or pull request.
 
-Include what you did, what happened, and `ssh-paste --version` output.
+1. Open
+   [Report a vulnerability](https://github.com/xuing/ssh-please-paste-picture/security/advisories/new)
+   under the **Security** tab of the repository.
+2. Describe what you did and what happened.
+3. Include the `ssh-paste --version` output, your Windows version, and the
+   `ssh -V` output.
+
+If the **Report a vulnerability** button is missing, private reporting is
+turned off. Open a public issue that asks for a private contact and contains
+no details of the problem.
+
+The maintainer replies in the private advisory. With your consent, the advisory
+and the fix commit name you as the reporter.
 
 ## Security model
 
@@ -120,6 +143,7 @@ Windows integration works as follows:
   policy unchanged.
 - The installer checks that downloaded files are ASCII, parse as PowerShell,
   and look like `ssh-paste`, then runs `ssh-paste --version`. Releases publish
-  SHA-256 sums in `SHA256SUMS`.
+  SHA-256 sums in `SHA256SUMS` and GitHub build attestations. See
+  [Verify the download](README.md#verify-the-download).
 - See [What it changes on your computer](README.md#what-it-changes-on-your-computer)
   for all local changes.

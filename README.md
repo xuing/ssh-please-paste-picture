@@ -1,6 +1,8 @@
 # ssh-please-paste-picture
 
 [![CI](https://github.com/xuing/ssh-please-paste-picture/actions/workflows/ci.yml/badge.svg)](https://github.com/xuing/ssh-please-paste-picture/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/xuing/ssh-please-paste-picture)](https://github.com/xuing/ssh-please-paste-picture/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/xuing/ssh-please-paste-picture)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
 
@@ -36,8 +38,42 @@ irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/i
 You do not need administrator rights. `ssh-paste` works in that window right
 away. Open a new tab for other windows. Run the same command again to upgrade.
 
+Before the first release, `releases/latest` does not exist, and the command
+above fails. Install from the `main` branch instead:
+
+```powershell
+irm https://raw.githubusercontent.com/xuing/ssh-please-paste-picture/main/install.ps1 | iex
+```
+
+This command installs the newest commit on `main`, also after releases exist.
+
 See [Requirements](#requirements) for Windows and SSH prerequisites, and
 [Install options](#install-options) for download-then-run or specific versions.
+
+### Verify the download
+
+Each release has a `SHA256SUMS` file and a GitHub build attestation for
+`install.ps1`, `ssh-paste.ps1`, and `ssh-paste.cmd`. Files from `main` have
+neither. To check the release `install.ps1` before you run it, download it with
+`SHA256SUMS` and compare the hashes:
+
+```powershell
+$base = 'https://github.com/xuing/ssh-please-paste-picture/releases/latest/download'
+Invoke-WebRequest -UseBasicParsing -Uri "$base/install.ps1" -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile SHA256SUMS
+$want = (Select-String -Path SHA256SUMS -Pattern ' install\.ps1$').Line.Split(' ')[0]
+(Get-FileHash install.ps1 -Algorithm SHA256).Hash -eq $want
+```
+
+The last line prints `True` if the file matches. With the
+[GitHub CLI](https://cli.github.com/), also check that this repository's
+release workflow built the file:
+
+```powershell
+gh attestation verify install.ps1 -R xuing/ssh-please-paste-picture
+```
+
+Then run the checked file as [Install options](#install-options) shows.
 
 ## Use
 
@@ -107,7 +143,8 @@ terminal, then upload a small test image to `myhost`:
 ssh-paste --doctor myhost
 ```
 
-Omit `myhost` to check only this computer. Example output:
+Omit `myhost` to check only this computer. Each line starts with `ok`,
+`FAIL`, or `info`. Example output:
 
 ```
 ssh-paste 0.1.0
@@ -120,6 +157,25 @@ ssh-paste 0.1.0
   info  ssh mode is off for myhost. Turn it on: ssh-paste --enable myhost   (or use: ssh-paste myhost)
 ```
 
+### If the paste does not work
+
+Try these steps in order:
+
+1. Run `ssh-paste --doctor myhost`. A `FAIL` line names the problem.
+2. In ssh mode, run the session with `SSH_PASTE_DEBUG=1`. The relay then prints
+   `ssh-paste debug:` lines on stderr. They show the address it connected to,
+   how it opened stdin and stdout, and which side closed the connection.
+
+   ```powershell
+   $env:SSH_PASTE_DEBUG = 1; ssh myhost
+   Remove-Item Env:SSH_PASTE_DEBUG
+   ```
+
+3. Run `ssh -v myhost` to see where the connection stops. For example, a hang
+   at `expecting SSH2_MSG_KEX_ECDH_REPLY` means the relay stopped forwarding.
+4. File a [bug report](https://github.com/xuing/ssh-please-paste-picture/issues/new?template=bug_report.yml)
+   with the output of these steps.
+
 ### All commands
 
 ```
@@ -127,6 +183,7 @@ ssh-paste --enable HOST [HOST...]   make plain "ssh HOST" paste screenshots (edi
 ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)
 ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config
 ssh-paste --doctor [HOST]           check this computer and test an upload to HOST
+ssh-paste --update                  install the latest release
 ssh-paste --uninstall               remove ssh-paste and everything it changed
 ssh-paste --version | --help
 ```
@@ -333,7 +390,8 @@ Remove-Item install.ps1
 ```
 
 `-ExecutionPolicy Bypass` affects only that process. Each release provides
-`SHA256SUMS` for `install.ps1`, `ssh-paste.ps1`, and `ssh-paste.cmd`.
+`SHA256SUMS` for `install.ps1`, `ssh-paste.ps1`, and `ssh-paste.cmd`. See
+[Verify the download](#verify-the-download).
 
 **Pick a version.** Each release's `install.ps1` installs that release, and
 `releases/latest` is the newest one. Set `SSH_PASTE_REF` or pass `-Ref` to
@@ -405,13 +463,21 @@ install.ps1                    installer and uninstaller
 tests/ssh-paste.Tests.ps1      Pester tests (tags: Unix, Windows, E2E)
 tests/e2e-linux.sh             starts a throwaway sshd and runs the E2E tests against it
 tests/footprint.ps1            Windows: install, enable, disable, uninstall leave no trace
+tests/lint.ps1                 lint checks that check.ps1 and CI share
+check.ps1                      runs the lint checks and unit tests; -E2E and -Footprint add the others
 PSScriptAnalyzerSettings.psd1  lint rules
 .github/workflows/ci.yml       lint, unit tests (5.1 and 7 on Windows, 7 on Linux), E2E, footprint
-.github/workflows/release.yml  on a v* tag: CI, then a release with the files and SHA256SUMS
+.github/workflows/ci.yml       ... and a release of every green push to main that changes src/ or install.ps1
+.github/workflows/publish.yml  builds, attests and publishes a release (SHA256SUMS, attestations)
+.github/scripts/               the shell steps of a release (next version, notes, version stamp)
 ```
 
 Dot-sourcing `. ./src/ssh-paste.ps1` loads its functions without running
 anything for tests.
+
+Run `pwsh ./check.ps1` before each commit. It runs the lint checks and the unit
+tests. [CONTRIBUTING.md](CONTRIBUTING.md) lists every check a pull request must
+pass. To run one suite on its own, use these commands:
 
 ```powershell
 # Unit tests, Pester 5.5 or newer. Tests that need Windows or a Unix shell skip elsewhere.
@@ -429,8 +495,18 @@ bash tests/e2e-linux.sh
 powershell -ExecutionPolicy Bypass -File tests\footprint.ps1 -Force
 ```
 
-To release, push a tag `vX.Y.Z` matching `$script:Version` in
-`src/ssh-paste.ps1`.
+Every green commit on `main` that changes `src/` or `install.ps1` is released
+automatically as `v0.1.<n>`. [docs/RELEASING.md](docs/RELEASING.md) says how to
+see a release and how to make one by hand.
+
+## Contributing
+
+Report a bug with the
+[bug report form](https://github.com/xuing/ssh-please-paste-picture/issues/new?template=bug_report.yml),
+and include the `ssh-paste --doctor` output. Open an issue before you open a
+pull request. [CONTRIBUTING.md](CONTRIBUTING.md) lists the checks a pull
+request must pass and the commit convention. Report a security problem
+privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 
