@@ -14,6 +14,14 @@ Keep this file ASCII. https://github.com/xuing/ssh-please-paste-picture
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
+# Win32-OpenSSH hands a child it spawns (our --proxy process) its file
+# descriptor table in these variables. A posix program started further down,
+# such as the ssh.exe that uploads, would read them too and take the
+# interactive session's pipes as its own stdin and stdout (see the TODO in
+# PowerShell/openssh-portable contrib/win32/win32compat/w32fd.c). Drop them.
+$script:InheritedSshState = @('c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE', 'c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_CHROOT')
+foreach ($name in $script:InheritedSshState) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
+
 $script:Version = '0.0.0-dev'
 $script:MarkerFormat = 'SshPaste.Owner'
 $script:BlockBegin = '# >>> ssh-paste (managed by ssh-paste --enable / --disable) >>>'
