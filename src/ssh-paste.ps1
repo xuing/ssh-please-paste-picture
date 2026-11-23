@@ -28,6 +28,7 @@ foreach ($variable in @(Get-ChildItem -Path Env: | Where-Object { $_.Name.Starts
 
 $script:Version = '0.0.0-dev'
 $script:MarkerFormat = 'SshPaste.Owner'
+$script:Clipboard = $null   # the PendingClipboard that owns our entries (Initialize-Native)
 $script:BlockBegin = '# >>> ssh-paste (managed by ssh-paste --enable / --disable) >>>'
 $script:BlockEnd = '# <<< ssh-paste <<<'
 $script:BlockCreatedFile = '# ssh-paste created this file; it is deleted when the last host is disabled.'
@@ -455,6 +456,8 @@ function ConvertFrom-Dib {
 $script:NativeSource = @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 public static class SshPasteNative {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
@@ -524,8 +527,7 @@ public static class SshPasteNative {
                 if (s.HasFiles) s.Drop = Copy(15, 1 << 20);
                 if (s.HasPng) s.Png = Copy(pngFormat, maxBytes);
                 if (s.Png == null && s.HasDib) s.Dib = Copy(8, maxBytes);
-                s.Marker = Copy(markerFormat, 64);
-                if (s.Marker != null && s.HasText) s.Text = Copy(13, 1 << 16);
+                s.Marker = Copy(markerFormat, 4096);
             }
             s.Sequence = GetClipboardSequenceNumber();
             return s;
@@ -570,19 +572,234 @@ public static class SshPasteNative {
         return result;
     }
 }
+
+// Owns the clipboard entries ssh-paste writes. Image data, file lists, the
+// marker and the history flags are put on the clipboard at once. The text (the
+// remote path) can be promised instead (Win32 delayed rendering): Windows asks
+// for it only when something pastes, and the paste then waits until the upload
+// has finished, so a pasted path always names a file that exists.
+public sealed class PendingClipboard : IDisposable {
+    const int WM_RENDERFORMAT = 0x0305, WM_RENDERALLFORMATS = 0x0306, WM_DESTROYCLIPBOARD = 0x0307;
+    const int WM_CLOSE = 0x0010, WM_APP_PUBLISH = 0x8001;
+    const uint CF_DIB = 8, CF_UNICODETEXT = 13, CF_HDROP = 15, GMEM_MOVEABLE = 0x0002;
+    static readonly IntPtr HWND_MESSAGE = new IntPtr(-3);
+
+    delegate IntPtr WndProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WNDCLASS { public uint style; public WndProc lpfnWndProc; public int cbClsExtra, cbWndExtra; public IntPtr hInstance, hIcon, hCursor, hbrBackground; public string lpszMenuName, lpszClassName; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct MSG { public IntPtr hwnd; public int message; public IntPtr wParam, lParam; public uint time; public int x, y; }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClass(ref WNDCLASS c);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(int ex, string cls, string name, int style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern IntPtr DefWindowProc(IntPtr h, int m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint min, uint max);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern void PostQuitMessage(int code);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, int m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, int m, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool OpenClipboard(IntPtr owner);
+    [DllImport("user32.dll")] static extern bool CloseClipboard();
+    [DllImport("user32.dll")] static extern bool EmptyClipboard();
+    [DllImport("user32.dll")] static extern IntPtr GetClipboardOwner();
+    [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint format, IntPtr data);
+    [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterClipboardFormat(string name);
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr h);
+    [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr h);
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalFree(IntPtr h);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+
+    // One entry to put on the clipboard.
+    public sealed class Entry {
+        public byte[] Png;          // image entry: the PNG bytes
+        public byte[] Dib;          // image entry: the same image as CF_DIB, made by the caller
+        public string[] Files;      // file entry: the copied files (CF_HDROP)
+        public byte[] Marker;       // ssh-paste's marker: owner window, session, remote path
+        public string Text;         // remote path, written at once
+        public bool PromiseText;    // write the text later, when a paste asks for it
+    }
+
+    readonly Thread thread;
+    readonly ManualResetEvent started = new ManualResetEvent(false);
+    readonly WndProc proc;
+    IntPtr window;
+    Entry publishing;
+    bool publishResult;
+    uint publishSequence;
+
+    // State of the promised text: set by Resolve or Fail from the watcher thread.
+    readonly object gate = new object();
+    ManualResetEvent textReady = new ManualResetEvent(false);
+    string promisedText;
+    bool promiseOpen;
+
+    public int PromiseWaitMilliseconds = 30000;
+    public string LastError;
+    public uint LastSequence { get { return publishSequence; } }
+
+    public PendingClipboard() {
+        proc = WindowProc;
+        thread = new Thread(Run);
+        thread.IsBackground = true;
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        started.WaitOne(10000);
+        if (window == IntPtr.Zero) throw new InvalidOperationException("could not create the clipboard window: " + LastError);
+    }
+
+    void Run() {
+        try {
+            WNDCLASS c = new WNDCLASS();
+            c.lpfnWndProc = proc;
+            c.hInstance = GetModuleHandle(null);
+            c.lpszClassName = "SshPastePendingClipboard" + Guid.NewGuid().ToString("N");
+            if (RegisterClass(ref c) == 0) { LastError = "RegisterClass failed"; started.Set(); return; }
+            window = CreateWindowEx(0, c.lpszClassName, "ssh-paste", 0, 0, 0, 0, 0, HWND_MESSAGE, IntPtr.Zero, c.hInstance, IntPtr.Zero);
+            if (window == IntPtr.Zero) LastError = "CreateWindowEx failed";
+        } catch (Exception e) { LastError = e.Message; }
+        started.Set();
+        if (window == IntPtr.Zero) return;
+        MSG m;
+        while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref m); DispatchMessage(ref m); }
+    }
+
+    // Puts an entry on the clipboard from the window's thread. Returns the
+    // clipboard sequence number after the write, or 0 when it failed.
+    public uint Publish(Entry entry) {
+        lock (gate) {
+            if (promiseOpen) { promisedText = null; textReady.Set(); }   // an older promise can no longer be kept
+            textReady = new ManualResetEvent(false);
+            promisedText = null;
+            promiseOpen = entry.PromiseText;
+        }
+        publishing = entry;
+        publishResult = false;
+        IntPtr result;
+        IntPtr sent = SendMessageTimeout(window, WM_APP_PUBLISH, IntPtr.Zero, IntPtr.Zero, 0x0002 /* SMTO_ABORTIFHUNG */, 10000, out result);
+        if (sent == IntPtr.Zero || !publishResult) { lock (gate) { promiseOpen = false; } return 0; }
+        return publishSequence;
+    }
+
+    // The upload finished: a paste waiting for the text gets this path.
+    public void Resolve(string text) { lock (gate) { promisedText = text; textReady.Set(); } }
+
+    // The upload failed: a waiting paste gets nothing.
+    public void Fail() { lock (gate) { promisedText = null; textReady.Set(); } }
+
+    public bool IsOwner { get { return GetClipboardOwner() == window && window != IntPtr.Zero; } }
+
+    IntPtr WindowProc(IntPtr h, int msg, IntPtr w, IntPtr l) {
+        switch (msg) {
+            case WM_APP_PUBLISH:
+                publishResult = Write(publishing);
+                return IntPtr.Zero;
+            case WM_RENDERFORMAT:
+                if ((uint)w.ToInt64() == CF_UNICODETEXT) RenderText(false);
+                return IntPtr.Zero;
+            case WM_RENDERALLFORMATS:
+                if (OpenClipboard(h)) {
+                    if (GetClipboardOwner() == h) RenderText(true);
+                    CloseClipboard();
+                }
+                return IntPtr.Zero;
+            case WM_DESTROYCLIPBOARD:
+                lock (gate) { if (promiseOpen) { promisedText = null; textReady.Set(); promiseOpen = false; } }
+                return IntPtr.Zero;
+            case WM_CLOSE:
+                DestroyWindow(h);
+                PostQuitMessage(0);
+                return IntPtr.Zero;
+        }
+        return DefWindowProc(h, msg, w, l);
+    }
+
+    // Answers a paste that asks for the promised text. A paste during the upload
+    // waits here; when the upload fails or takes too long it gets nothing.
+    void RenderText(bool closing) {
+        ManualResetEvent ready;
+        lock (gate) { if (!promiseOpen) return; ready = textReady; }
+        ready.WaitOne(closing ? 0 : PromiseWaitMilliseconds);
+        string text;
+        lock (gate) { text = promisedText; }
+        if (!string.IsNullOrEmpty(text)) SetData(CF_UNICODETEXT, Encoding.Unicode.GetBytes(text + "\0"));
+    }
+
+    bool Write(Entry e) {
+        bool opened = false;
+        for (int i = 0; i < 20 && !opened; i++) { opened = OpenClipboard(window); if (!opened) Thread.Sleep(25); }
+        if (!opened) { LastError = "the clipboard is busy"; return false; }
+        try {
+            if (!EmptyClipboard()) { LastError = "EmptyClipboard failed"; return false; }
+            if (e.Files != null && e.Files.Length > 0) {
+                SetData(CF_HDROP, DropFiles(e.Files));
+            } else if (e.Png != null) {
+                SetData(RegisterClipboardFormat("PNG"), e.Png);
+                if (e.Dib != null) SetData(CF_DIB, e.Dib);
+            }
+            if (e.Marker != null) SetData(RegisterClipboardFormat("SshPaste.Owner"), e.Marker);
+            SetData(RegisterClipboardFormat("ExcludeClipboardContentFromMonitorProcessing"), BitConverter.GetBytes(1));
+            SetData(RegisterClipboardFormat("CanIncludeInClipboardHistory"), BitConverter.GetBytes(0));
+            SetData(RegisterClipboardFormat("CanUploadToCloudClipboard"), BitConverter.GetBytes(0));
+            if (e.PromiseText) SetClipboardData(CF_UNICODETEXT, IntPtr.Zero);
+            else if (!string.IsNullOrEmpty(e.Text)) SetData(CF_UNICODETEXT, Encoding.Unicode.GetBytes(e.Text + "\0"));
+            return true;
+        } finally {
+            CloseClipboard();
+            publishSequence = GetClipboardSequenceNumber();
+        }
+    }
+
+    static void SetData(uint format, byte[] bytes) {
+        IntPtr h = GlobalAlloc(GMEM_MOVEABLE, new UIntPtr((uint)bytes.Length));
+        if (h == IntPtr.Zero) return;
+        IntPtr p = GlobalLock(h);
+        if (p == IntPtr.Zero) { GlobalFree(h); return; }
+        try { Marshal.Copy(bytes, 0, p, bytes.Length); } finally { GlobalUnlock(h); }
+        if (SetClipboardData(format, h) == IntPtr.Zero) GlobalFree(h);   // on success the clipboard owns h
+    }
+
+    // DROPFILES header (20 bytes), then NUL-separated UTF-16 paths and a final NUL.
+    public static byte[] DropFiles(string[] files) {
+        byte[] names = Encoding.Unicode.GetBytes(string.Join("\0", files) + "\0\0");
+        byte[] all = new byte[20 + names.Length];
+        BitConverter.GetBytes(20).CopyTo(all, 0);
+        BitConverter.GetBytes(1).CopyTo(all, 16);   // fWide
+        names.CopyTo(all, 20);
+        return all;
+    }
+
+    public void Dispose() {
+        if (window != IntPtr.Zero) { PostMessage(window, WM_CLOSE, IntPtr.Zero, IntPtr.Zero); thread.Join(5000); window = IntPtr.Zero; }
+    }
+}
 '@
 
 function Initialize-Native {
     if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
         throw "PowerShell runs in $($ExecutionContext.SessionState.LanguageMode) mode here (AppLocker or App Control policy)"
     }
-    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
-        throw 'the clipboard needs an STA thread; run with Windows PowerShell (powershell.exe)'
-    }
-    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+    Add-Type -AssemblyName System.Drawing
     if (-not ('SshPasteNative' -as [type])) { Add-Type -TypeDefinition $script:NativeSource }
     $script:FormatPng = [SshPasteNative]::RegisterClipboardFormat('PNG')
     $script:FormatMarker = [SshPasteNative]::RegisterClipboardFormat($script:MarkerFormat)
+    if ($null -eq $script:Clipboard) { $script:Clipboard = New-Object PendingClipboard }
+}
+
+function Complete-ClipboardPromise {
+    # Gives a paste that waits for the promised text the path, or nothing.
+    param([string]$Text)
+    if ($null -eq $script:Clipboard) { return }
+    if ([string]::IsNullOrEmpty($Text)) { $script:Clipboard.Fail() } else { $script:Clipboard.Resolve($Text) }
+}
+
+function Close-Clipboard {
+    # Ends the clipboard window. A text still promised is then given if ready,
+    # or dropped; the image on the clipboard stays.
+    if ($null -ne $script:Clipboard) { try { $script:Clipboard.Dispose() } catch { }; $script:Clipboard = $null }
 }
 
 function Get-ProcessInfo {
@@ -638,7 +855,11 @@ function Read-ClipboardImage {
         $state.Owner = [BitConverter]::ToInt64($snap.Marker, 0)
         $state.Token = [BitConverter]::ToInt64($snap.Marker, 8)
     }
-    if ($null -ne $snap.Text) { $state.Text = ([System.Text.Encoding]::Unicode.GetString($snap.Text)).Split([char]0)[0] }
+    if ($null -ne $snap.Marker -and $snap.Marker.Length -gt 16 -and $snap.HasText) {
+        # Our entries carry their text in the marker, so we never ask for the
+        # text itself: it may be promised and would make us wait on ourselves.
+        $state.Text = ([System.Text.Encoding]::Unicode.GetString($snap.Marker, 16, $snap.Marker.Length - 16)).Split([char]0)[0]
+    }
     if ($null -ne $snap.Drop) {
         # Image files copied in Explorer: upload the files themselves.
         $items = Read-ImageFiles (ConvertFrom-DropFiles $snap.Drop)
@@ -684,48 +905,61 @@ function New-DwordStream {
     return (New-Object -TypeName System.IO.MemoryStream -ArgumentList (, [BitConverter]::GetBytes($Value)))
 }
 
-function Set-SshPasteClipboard {
-    # Image (bitmap + original PNG bytes), optionally the remote path as text, a
-    # marker naming the window and session it was written by, and the documented
-    # flags that keep our rewrites out of Win+V history and cloud clipboard sync.
-    param([byte[]]$Png, [string]$Text, [long]$Owner, [long]$Token, [string[]]$Files)
-    if ($null -ne $Files -and $Files.Count -gt 0) {
-        # Copied image files: keep the file list (Explorer still pastes the files)
-        # and add the remote paths as text, which Windows Terminal pastes first.
-        $marker = New-Object byte[] 16
-        [BitConverter]::GetBytes($Owner).CopyTo($marker, 0)
-        [BitConverter]::GetBytes($Token).CopyTo($marker, 8)
-        $list = New-Object System.Collections.Specialized.StringCollection
-        foreach ($f in $Files) { [void]$list.Add($f) }
-        $data = New-Object System.Windows.Forms.DataObject
-        $data.SetFileDropList($list)
-        if (-not [string]::IsNullOrEmpty($Text)) { $data.SetText($Text) }
-        $data.SetData($script:MarkerFormat, $false, (New-Object -TypeName System.IO.MemoryStream -ArgumentList (, $marker)))
-        $data.SetData('ExcludeClipboardContentFromMonitorProcessing', $false, (New-DwordStream 1))
-        $data.SetData('CanIncludeInClipboardHistory', $false, (New-DwordStream 0))
-        $data.SetData('CanUploadToCloudClipboard', $false, (New-DwordStream 0))
-        [System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 50)
-        return
-    }
+function New-DibBytes {
+    # The PNG as a bottom-up 32-bit device-independent bitmap (CF_DIB), for the
+    # apps that paste a bitmap; Windows makes CF_BITMAP and CF_DIBV5 from it.
+    param([byte[]]$Png)
     $source = New-Object -TypeName System.IO.MemoryStream -ArgumentList (, $Png)
-    $bitmap = [System.Drawing.Image]::FromStream($source)
     try {
-        $marker = New-Object byte[] 16
-        [BitConverter]::GetBytes($Owner).CopyTo($marker, 0)
-        [BitConverter]::GetBytes($Token).CopyTo($marker, 8)
-        $data = New-Object System.Windows.Forms.DataObject
-        $data.SetData([System.Windows.Forms.DataFormats]::Bitmap, $false, $bitmap)
-        $data.SetData('PNG', $false, (New-Object -TypeName System.IO.MemoryStream -ArgumentList (, $Png)))
-        if (-not [string]::IsNullOrEmpty($Text)) { $data.SetText($Text) }
-        $data.SetData($script:MarkerFormat, $false, (New-Object -TypeName System.IO.MemoryStream -ArgumentList (, $marker)))
-        $data.SetData('ExcludeClipboardContentFromMonitorProcessing', $false, (New-DwordStream 1))
-        $data.SetData('CanIncludeInClipboardHistory', $false, (New-DwordStream 0))
-        $data.SetData('CanUploadToCloudClipboard', $false, (New-DwordStream 0))
-        [System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 50)
-    } finally {
-        $bitmap.Dispose()
-        $source.Dispose()
+        $image = New-Object System.Drawing.Bitmap -ArgumentList $source
+        try {
+            $rect = New-Object System.Drawing.Rectangle -ArgumentList 0, 0, $image.Width, $image.Height
+            $bitmap = $image.Clone($rect, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            try {
+                $w = $bitmap.Width; $h = $bitmap.Height; $stride = $w * 4
+                $dib = New-Object byte[] (40 + $stride * $h)
+                [BitConverter]::GetBytes([int]40).CopyTo($dib, 0)
+                [BitConverter]::GetBytes([int]$w).CopyTo($dib, 4)
+                [BitConverter]::GetBytes([int]$h).CopyTo($dib, 8)
+                [BitConverter]::GetBytes([int16]1).CopyTo($dib, 12)
+                [BitConverter]::GetBytes([int16]32).CopyTo($dib, 14)
+                [BitConverter]::GetBytes([int]($stride * $h)).CopyTo($dib, 20)
+                $data = $bitmap.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+                try {
+                    for ($y = 0; $y -lt $h; $y++) {
+                        $row = [IntPtr]($data.Scan0.ToInt64() + [long]$y * $data.Stride)
+                        [System.Runtime.InteropServices.Marshal]::Copy($row, $dib, 40 + ($h - 1 - $y) * $stride, $stride)
+                    }
+                } finally { $bitmap.UnlockBits($data) }
+                return , $dib
+            } finally { $bitmap.Dispose() }
+        } finally { $image.Dispose() }
+    } finally { $source.Dispose() }
+}
+
+function Set-SshPasteClipboard {
+    # Puts our entry on the clipboard: the image (PNG and CF_DIB) or the copied
+    # file list, a marker with the owner window, the session and the text, the
+    # documented flags that keep it out of Win+V history and cloud sync, and the
+    # text. With -Promise the text is only promised: a paste waits for it until
+    # Resolve or Fail is called on $script:Clipboard.
+    param([byte[]]$Png, [string]$Text, [long]$Owner, [long]$Token, [string[]]$Files, [switch]$Promise)
+    $textBytes = [System.Text.Encoding]::Unicode.GetBytes([string]$Text)
+    $marker = New-Object byte[] (16 + $textBytes.Length)
+    [BitConverter]::GetBytes($Owner).CopyTo($marker, 0)
+    [BitConverter]::GetBytes($Token).CopyTo($marker, 8)
+    $textBytes.CopyTo($marker, 16)
+    $entry = New-Object PendingClipboard+Entry
+    $entry.Marker = $marker
+    $entry.Text = $Text
+    $entry.PromiseText = [bool]$Promise
+    if ($null -ne $Files -and $Files.Count -gt 0) {
+        $entry.Files = $Files
+    } else {
+        $entry.Png = $Png
+        $entry.Dib = New-DibBytes $Png
     }
+    if ($script:Clipboard.Publish($entry) -eq 0) { throw ('could not write the clipboard: ' + $script:Clipboard.LastError) }
 }
 
 function New-ChildStartInfo {
@@ -1044,13 +1278,17 @@ function Invoke-WatcherTick {
                 $W.LastSeq = -1
                 return
             }
-            Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $expected -Owner $fgKey -Token $W.Token
+            # Promise the path: a paste during the upload waits for it (delayed rendering).
+            Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $expected -Owner $fgKey -Token $W.Token -Promise
             $W.LastSeq = -1
             $wrote = $true
-            Write-WatchDebug ('wrote the expected path before the upload: ' + $expected)
+            Write-WatchDebug ('promised the path before the upload: ' + $expected)
         }
         $path = Get-UploadedPath $W $state
         Write-WatchDebug ('upload result: ' + $path)
+        if ($wrote) {
+            if ($null -ne $path -and $path -ceq $expected) { Complete-ClipboardPromise $path } else { Complete-ClipboardPromise $null }
+        }
         if ($null -eq $path) {
             # The upload failed: take the path back so Ctrl+V does not paste a missing file.
             Sync-ClipboardText $W $state.Hash $null $foreground

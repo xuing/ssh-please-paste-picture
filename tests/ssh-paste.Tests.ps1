@@ -4922,6 +4922,8 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
             if (-not $script:NativeReady) { $script:SkipReason = $script:NativeProblem }
             elseif (-not $script:ClipboardAllowed) { $script:SkipReason = 'the test overwrites the clipboard; set SSH_PASTE_TEST_CLIPBOARD=1 to allow it (always on in CI)' }
             if ($null -eq $script:SkipReason) {
+                # The core writes through PendingClipboard; the tests read back with WinForms.
+                Add-Type -AssemblyName System.Windows.Forms
                 $bitmap = New-Object System.Drawing.Bitmap -ArgumentList 24, 16
                 try {
                     for ($x = 0; $x -lt 24; $x++) { $bitmap.SetPixel($x, $x % 16, [System.Drawing.Color]::FromArgb(200, $x * 10, 30)) }
@@ -4989,13 +4991,78 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
             }
         }
 
-        It 'writes a 16-byte marker: the owner window, then the session token' {
+        It 'writes a marker: the owner window, the session token, then the text in UTF-16' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
             Set-SshPasteClipboard -Png $script:Png -Text '/tmp/x.png' -Owner 111 -Token 222
             $raw = Get-DataBytes ([System.Windows.Forms.Clipboard]::GetDataObject().GetData($script:MarkerFormat))
-            $raw.Length | Should -Be 16
             [BitConverter]::ToInt64($raw, 0) | Should -Be 111
             [BitConverter]::ToInt64($raw, 8) | Should -Be 222
+            [System.Text.Encoding]::Unicode.GetString($raw, 16, $raw.Length - 16).Split([char]0)[0] | Should -BeExactly '/tmp/x.png'
+        }
+
+        Context 'a promised text (delayed rendering)' {
+            BeforeAll {
+                function Start-TextReader {
+                    # Reads CF_UNICODETEXT on another thread, the way a paste does, and
+                    # reports how long the read waited.
+                    $ps = [powershell]::Create()
+                    [void]$ps.AddScript({
+                            $watch = [System.Diagnostics.Stopwatch]::StartNew()
+                            $bytes = ([SshPasteNative]::ReadFormats([uint32[]]@(13), 65536))[0]
+                            $text = $null
+                            if ($null -ne $bytes) { $text = [System.Text.Encoding]::Unicode.GetString($bytes).Split([char]0)[0] }
+                            [pscustomobject]@{ Text = $text; Ms = $watch.ElapsedMilliseconds }
+                        })
+                    return @{ Shell = $ps; Handle = $ps.BeginInvoke() }
+                }
+                function Wait-TextReader {
+                    param($Reader)
+                    try { return @($Reader.Shell.EndInvoke($Reader.Handle))[0] } finally { $Reader.Shell.Dispose() }
+                }
+            }
+
+            It 'makes a paste wait until the path is given, then pastes the path' {
+                if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
+                Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-promised.png' -Owner 5 -Token 6 -Promise
+                $reader = Start-TextReader
+                Start-Sleep -Milliseconds 900
+                $reader.Handle.IsCompleted | Should -BeFalse -Because 'the paste waits while the upload runs'
+                Complete-ClipboardPromise '/tmp/ssh-paste-promised.png'
+                $result = Wait-TextReader $reader
+                $result.Text | Should -BeExactly '/tmp/ssh-paste-promised.png'
+                $result.Ms | Should -BeGreaterOrEqual 800
+            }
+
+            It 'gives a waiting paste nothing when the upload fails' {
+                if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
+                Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-failed.png' -Owner 5 -Token 6 -Promise
+                $reader = Start-TextReader
+                Start-Sleep -Milliseconds 300
+                Complete-ClipboardPromise $null
+                (Wait-TextReader $reader).Text | Should -BeNullOrEmpty
+            }
+
+            It 'keeps the image and the marker readable at once while the text is promised' {
+                if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
+                Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-open.png' -Owner 5 -Token 6 -Promise
+                $watch = [System.Diagnostics.Stopwatch]::StartNew()
+                $state = Read-ClipboardImage
+                $watch.ElapsedMilliseconds | Should -BeLessThan 2000 -Because 'reading our own entry never asks for the promised text'
+                ($state.Png -join ',') | Should -BeExactly ($script:Png -join ',')
+                $state.HasText | Should -BeTrue
+                $state.Text | Should -BeExactly '/tmp/ssh-paste-open.png' -Because 'the text comes from the marker'
+                Complete-ClipboardPromise $null
+            }
+
+            It 'keeps the image on the clipboard after the clipboard window closes' {
+                if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
+                Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-closing.png' -Owner 5 -Token 6 -Promise
+                Close-Clipboard
+                try {
+                    $state = Read-ClipboardImage
+                    ($state.Png -join ',') | Should -BeExactly ($script:Png -join ',')
+                } finally { Initialize-Native }
+            }
         }
 
         It 'reads an image that only came as a bitmap (no PNG format, no marker)' {
