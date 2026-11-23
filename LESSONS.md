@@ -112,6 +112,19 @@ it (most linters ship a static binary) instead of leaving the check to CI.**
   release runs from a scratch folder.
 - Seen 1x (2026-11-24).
 
+**A test that checks that something did not happen also checks a sign that
+the code under test ran.** "No new log line" or "the list matches" passes just
+as well when the code never ran or the check reads the wrong field. Revert the
+fix once and watch the test fail.
+- The macOS client's first Codex review (on the branch that became the macOS
+  release) found two tests that could not fail: the ssh-mode test counted
+  watcher log lines without turning debug logging on, and the Finder restore
+  test matched the file list in our own marker instead of the file URLs other
+  apps read. Fixed in a27b62c; the ssh-mode test now also requires the
+  "not an interactive session" decision twice, and the ControlPersist test was
+  run once with its fix reverted (run 45227788340) to see it fail.
+- Seen 1x (2026-11-24).
+
 **Keep the install and uninstall footprint test in CI.** It compares the real
 user profile before and after a full install, enable, disable and uninstall
 cycle. It finds what unit tests cannot see: a leak in state that only Windows
