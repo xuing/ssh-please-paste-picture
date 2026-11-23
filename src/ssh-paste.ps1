@@ -812,7 +812,10 @@ function Send-Image {
         if ($null -ne $sendError -and -not $process.HasExited) { try { $process.Kill() } catch { } }
         if (-not $process.WaitForExit((& $remaining))) {
             try { $process.Kill() } catch { }
-            throw "ssh did not finish in $TimeoutSeconds seconds"
+            # Killing ssh closes its pipes, so what it wrote on stderr can be read now.
+            $tail = ''
+            if ($stderr.Wait(3000)) { $tail = (@($stderr.Result.Trim() -split "`r?`n") | Select-Object -Last 12) -join ' | ' }
+            throw ("ssh did not finish in {0} seconds (stdin sent: {1}); ssh said: {2}" -f $TimeoutSeconds, ($null -eq $sendError), $tail)
         }
         $err = ''
         if ($stderr.Wait((& $remaining))) { $err = $stderr.Result.Trim() }
@@ -938,7 +941,14 @@ function Get-UploadedItemPath {
     }
     try {
         $argv = Get-UploadSshArguments -Parsed $W.Parsed -Hash $Item.Hash -Size $Item.Bytes.Length -NoProxy:$W.NoProxy -SshVersion $W.SshVersion -Pin $W.Pin -Ext $Item.Ext
-        $path = Send-Image -SshPath $W.SshPath -Arguments $argv -Png $Item.Bytes -Hash $Item.Hash -Ext $Item.Ext
+        if ($env:SSH_PASTE_DEBUG) {
+            # -v makes ssh say on stderr how far it got; LogLevel=ERROR is ours, so drop it.
+            $argv = @('-v') + @($argv | Where-Object { $_ -cne 'LogLevel=ERROR' })
+            Write-WatchDebug ('upload command: ssh ' + (Join-NativeArguments ($argv[0..($argv.Count - 2)])) + ' <sh -c script> ')
+        }
+        # 30 s plus 1 s per 256 KB, at most 5 minutes: big images on slow links need longer.
+        $timeout = [int][Math]::Min(300, 30 + [Math]::Ceiling($Item.Bytes.Length / 262144))
+        $path = Send-Image -SshPath $W.SshPath -Arguments $argv -Png $Item.Bytes -Hash $Item.Hash -Ext $Item.Ext -TimeoutSeconds $timeout
         $W.Uploaded[$Item.Hash] = @{ Path = $path; At = $now }
         $W.Failed.Remove($Item.Hash)
         Set-WakeAt $W $now.AddHours($script:UploadCacheHours)
@@ -947,7 +957,7 @@ function Get-UploadedItemPath {
         $count = 1
         if ($null -ne $failed) { $count = $failed.Count + 1 }
         $W.Failed[$Item.Hash] = @{ Message = $_.Exception.Message; At = [DateTime]::UtcNow; Count = $count }
-        Write-WatchDebug ('upload failed ({0}x): {1}' -f $count, $_.Exception.Message)
+        Write-WatchDebug ('upload failed ({0}x, {1} bytes): {2}' -f $count, $Item.Bytes.Length, $_.Exception.Message)
         Set-WakeAt $W ([DateTime]::UtcNow.AddSeconds([Math]::Min(1800, $script:RetryFailedSeconds * [Math]::Pow(2, $count - 1))))
         if ($count -eq 1) { try { [System.Media.SystemSounds]::Hand.Play() } catch { } }
         return $null
