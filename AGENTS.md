@@ -35,6 +35,7 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 | `tests/e2e-linux.sh` | tests | Starts a throwaway `sshd` on 127.0.0.1 and runs the `E2E` tests against it. |
 | `tests/footprint.ps1` | tests | Windows only. Installs, enables, disables and uninstalls on the real profile, then compares snapshots. |
 | `tests/lint.ps1`, `check.ps1` | tests, ci | The lint checks, and the one local entry point that runs them with Pester. |
+| `verify/watcher/` | watcher | A TLA+ model of the clipboard watcher and `check.sh`, which model-checks it with TLC. Run it for any change to the watcher or `PendingClipboard`: [.claude/skills/verify-clipboard-watcher/SKILL.md](.claude/skills/verify-clipboard-watcher/SKILL.md). |
 | `.github/workflows/ci.yml`, `publish.yml`, `.github/scripts/*.sh` | ci, release | CI on 5.1, 7 on Windows and 7 on Linux. `ci.yml` releases a green push to `main` (or a manual run on `main`) through `publish.yml`, which tags, builds, attests and publishes. The scripts pick the version, write the notes and stamp the version. |
 
 ## Commands
@@ -42,6 +43,7 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 - `pwsh ./check.ps1` runs the lint checks and the Pester unit tests. Run it before every commit.
 - `pwsh ./check.ps1 -E2E` adds `tests/e2e-linux.sh` (Linux, needs `sshd`). `-Footprint` adds `tests/footprint.ps1` (Windows only, edits the real user profile and restores it).
 - `Invoke-Pester tests/ssh-paste.Tests.ps1 -ExcludeTagFilter E2E` runs only the unit tests. Run the whole file, not one `Describe`.
+- `bash verify/watcher/check.sh` model-checks the clipboard watcher (needs Java 11+, 2-3 minutes). Run it when you change the watcher, the clipboard writes or the promise.
 - Pester on Windows PowerShell 5.1 and the footprint rounds run in CI. Read the CI run on your commit for those.
 
 ## Docs travel with the code
