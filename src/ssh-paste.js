@@ -137,10 +137,10 @@ function sshOptionValue(value) {
 
 function destinationHost(destination) {
     // The host part of an ssh destination, as ssh expands it for %n: the text
-    // after the last @, or the host of an ssh:// URI.
+    // after the last @, or the host of an ssh:// URI (whose trailing dot ssh drops).
     var d = String(destination);
     var m = /^ssh:\/\/(?:[^\/]*@)?(\[[^\]]*\]|[^:\/]*)/.exec(d);
-    if (m) return m[1].replace(/^\[(.*)\]$/, '$1');
+    if (m) return m[1].replace(/^\[(.*)\]$/, '$1').replace(/\.$/, '');
     return d.replace(/^.*@/, '');
 }
 
@@ -1062,7 +1062,12 @@ function macPlatform(sessionDebug) {
     function hashData(data) {
         var size = Number(data.length);
         for (var i = 0; i < memo.length; i++) {
-            if (memo[i].size === size && memo[i].data.isEqualToData(data)) return memo[i];
+            if (memo[i].size === size && memo[i].data.isEqualToData(data)) {
+                // Most recently used first, so eviction never takes a file of the copy being read.
+                var hit = memo.splice(i, 1)[0];
+                memo.unshift(hit);
+                return hit;
+            }
         }
         var tmp = work + '/hash.tmp';
         if (!data.writeToFileAtomically(tmp, true)) throw new Error('could not write ' + tmp);
@@ -1270,13 +1275,14 @@ function macPlatform(sessionDebug) {
         var deadline = nowMs() + PROMISE_WAIT_SECONDS * 1000;
         while (!r.done && nowMs() < deadline && Number(pb.changeCount) === r.count && !(P.stopped && P.stopped())) {
             spinRunLoop(0.05);
+            if (P.stopped && P.stopped()) break;
             if (P.watcher) {
                 try { advanceInflight(P.watcher); } catch (e) { debugLog('upload during a paste: ' + e.message); }
             }
         }
         // The user may have switched windows while the paste waited: answer only
         // if the window the entry was written for is still in front.
-        if (r.done && r.result && Number(pb.changeCount) === r.count && frontWindow() === r.owner) {
+        if (r.done && r.result && Number(pb.changeCount) === r.count && frontWindow() === r.owner && !(P.stopped && P.stopped())) {
             item.setStringForType($(r.result), type);
             r.answered = true;
         } else {
@@ -1394,6 +1400,7 @@ function watchLoop(W, stop) {
     W.P.stopped = stop;
     while (!stop()) {
         spinRunLoop(TICK_SECONDS);
+        if (stop()) break;
         watcherStep(W);
     }
 }
@@ -1484,8 +1491,12 @@ function watchProxy(args) {
         warn('ssh-paste: screenshot paste is off: ' + e.message);
         return 0;
     }
-    if ($.getppid() !== parent) { endWatcher(W); return 0; }
-    watchLoop(W, function () { return $.getppid() !== parent; });
+    // The session ends when the relay goes away, or when the ssh that started it
+    // does: with ControlPersist, a background master keeps the relay alive after
+    // the user logs out, while the ssh in the terminal exits.
+    var ended = function () { return $.getppid() !== parent || $.kill(sshPid, 0) !== 0; };
+    if (ended()) { endWatcher(W); return 0; }
+    watchLoop(W, ended);
     endWatcher(W);
     var summary = failureSummary(W);
     if (summary) {

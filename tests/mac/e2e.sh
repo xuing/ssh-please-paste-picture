@@ -128,6 +128,18 @@ if wait_for 20 no_process 'ssh-paste.js --watch-proxy'; then pass 'the watcher s
 check "$(pbpaste)" '' 'after the session, pbpaste gets no path: the plain image is back'
 case $(pb dump) in *'"public.png"'*'"owner":0'*) pass 'the image is still on the pasteboard' ;; *) fail "pasteboard: $(pb dump)" ;; esac
 
+section 'ssh mode with ControlPersist: the watcher stops when the ssh in the terminal ends'
+# The master that ControlPersist leaves in the background keeps the relay (nc)
+# running after the session; the watcher must end with the ssh the user ran.
+cp=/tmp/ssh-paste-cm-%C
+before=$(watchers)
+terminal_run cpersist "export SSH_PASTE_DEBUG=1
+exec ssh -t -o ControlMaster=auto -o 'ControlPath=$cp' -o ControlPersist=120 ssh-paste-e2e sleep 8"
+if wait_for 40 more_watchers "$before"; then pass 'the relay started a watcher'; else fail 'no watcher'; tail -n 20 "$(debuglog)"; fi
+if wait_for 30 no_process 'ssh-paste.js --watch-proxy'; then pass 'the watcher stopped when the session ended'; else fail 'the watcher still runs after the session'; fi
+if ssh -o "ControlPath=$cp" -O check ssh-paste-e2e 2> /dev/null; then pass 'while the ControlPersist master still runs'; else fail 'no master left, so ControlPersist was not tested'; fi
+ssh -o "ControlPath=$cp" -O exit ssh-paste-e2e 2> /dev/null || true
+
 section 'wrapper mode: ssh-paste with ProxyCommand=none'
 before=$(watchers)
 terminal_run wrapper "export SSH_PASTE_DEBUG=1

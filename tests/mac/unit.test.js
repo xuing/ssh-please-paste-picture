@@ -322,7 +322,8 @@ test('the ProxyCommand passes a Host alias with [ ] to the launcher unchanged un
 
 test('destinationHost is the host ssh expands as %n', () => {
     // Measured with OpenSSH 10.2: ProxyCommand "echo %n" for each destination.
-    const seen = { 'Work[1]': 'Work[1]', 'u@Work': 'Work', 'ssh://u@Host:2222': 'Host', 'u@h@x': 'x', 'HOST': 'HOST', 'ssh://[::1]:22': '::1' };
+    const seen = { 'Work[1]': 'Work[1]', 'u@Work': 'Work', 'ssh://u@Host:2222': 'Host', 'u@h@x': 'x', 'HOST': 'HOST', 'ssh://[::1]:22': '::1',
+        'ssh://alice@ops.example.:2222': 'ops.example', 'ops.example.': 'ops.example.', 'alice@ops.example.': 'ops.example.' };
     for (const [d, n] of Object.entries(seen)) assert.equal(m.destinationHost(d), n, d);
     // ps joins arguments with spaces: -i "/Users/me/SSH Keys/id" host reads as -i /Users/me/SSH, destination Keys/id.
     const parsed = m.splitSshArguments('-t -i /Users/me/SSH Keys/id_ed25519 alice@host'.split(' '));
