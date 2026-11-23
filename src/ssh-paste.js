@@ -1456,7 +1456,10 @@ function watchProxy(args) {
     try {
         var r = runCapture('/bin/ps', ['-ww', '-o', 'args=', '-p', String(sshPid)], 20);
         var argv = splitPsArgs(r.out);
-        if (argv.length === 0 || argv[0].replace(/^.*\//, '') !== 'ssh') return 0;
+        if (argv.length === 0 || argv[0].replace(/^.*\//, '') !== 'ssh') {
+            debugLog('ssh mode: no watcher: the parent is not a running ssh (it may have ended already)');
+            return 0;
+        }
         var ssh = argv[0].indexOf('/') >= 0 ? argv[0] : (findInPath(argv[0]) || '/usr/bin/ssh');
         var rest = argv.slice(1);
         var parsed = splitSshArguments(rest);

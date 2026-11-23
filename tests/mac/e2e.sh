@@ -100,10 +100,13 @@ before=$(watchers)
 userlog=${usertmp%/}/ssh-paste-debug.log
 declined() { n=$(grep -c 'no watcher: not an interactive session' "$userlog" 2> /dev/null); echo "${n:-0}"; }
 was=$(declined)
-TMPDIR=$usertmp SSH_PASTE_DEBUG=1 ssh -o BatchMode=yes ssh-paste-e2e true
-TMPDIR=$usertmp SSH_PASTE_DEBUG=1 ssh -o BatchMode=yes -T ssh-paste-e2e true < /dev/null
-sleep 3
+# The remote command lasts a few seconds so ssh still runs when the watcher reads
+# its arguments with ps (a command that ends at once leaves nothing to read).
+TMPDIR=$usertmp SSH_PASTE_DEBUG=1 ssh -o BatchMode=yes ssh-paste-e2e sleep 3
+TMPDIR=$usertmp SSH_PASTE_DEBUG=1 ssh -o BatchMode=yes -T ssh-paste-e2e sleep 3 < /dev/null
+sleep 2
 check "$(declined)" "$((was + 2))" 'the relay decided twice: not interactive'
+[ "$(declined)" = "$((was + 2))" ] || { echo "        $userlog:"; tail -n 20 "$userlog" 2> /dev/null; }
 check "$(watchers)" "$before" 'no watcher for a command without -t, nor for -T'
 
 section 'ssh mode: plain ssh in Terminal.app'
