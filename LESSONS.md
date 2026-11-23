@@ -103,6 +103,15 @@ open and say so under "Not run:". Do not close it.
   it hung ssh on a real Windows computer.
 - Seen 1x (2026-11-23).
 
+**Run every check that CI runs before you push. If a tool is missing, fetch
+it (most linters ship a static binary) instead of leaving the check to CI.**
+- 0aa6e89: the model check added in fb836ff listed shellcheck under "Not run:"
+  because it was not installed. CI's shellcheck failed on `got=break`
+  (SC2209), the job stopped before TLC ran, and the watcher fix 6396fae was
+  not released until the next commit. shellcheck 0.10.0 from its GitHub
+  release runs from a scratch folder.
+- Seen 1x (2026-11-24).
+
 **Keep the install and uninstall footprint test in CI.** It compares the real
 user profile before and after a full install, enable, disable and uninstall
 cycle. It finds what unit tests cannot see: a leak in state that only Windows

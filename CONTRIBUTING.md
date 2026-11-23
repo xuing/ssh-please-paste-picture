@@ -37,11 +37,13 @@ Windows PowerShell, run this command:
 powershell -ExecutionPolicy Bypass -File .\check.ps1
 ```
 
-`check.ps1` runs the lint checks in `tests/lint.ps1` and the Pester unit tests.
+`check.ps1` runs the lint checks in `tests/lint.ps1` and the Pester unit tests
+(Pester 5.5 or newer: `Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser`).
 Add `-E2E` to run the end-to-end tests against a throwaway `sshd` on Linux.
 Add `-Footprint` on Windows to check that install, enable, disable, and
 uninstall leave nothing behind. The footprint test edits your real user
-profile and restores it.
+profile and restores it. A change to the clipboard watcher also needs
+`bash verify/watcher/check.sh` (Java 11 or later), which model-checks it.
 
 [docs/code-standards.md](docs/code-standards.md) lists the numbered acceptance
 checks. In the pull request description, name the checks you ran and their
