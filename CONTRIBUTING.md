@@ -1,7 +1,8 @@
 # Contributing
 
-ssh-paste is one PowerShell script with one maintainer. Bug reports help the
-most. Small pull requests are welcome after an issue.
+ssh-paste is one PowerShell script for Windows and one JavaScript for
+Automation script for macOS, with one maintainer. Bug reports help the most.
+Small pull requests are welcome after an issue.
 
 ## Report a bug or ask for a feature
 
@@ -23,7 +24,11 @@ Follow these rules for a pull request:
 - Make one change per pull request: one fix or one feature.
 - Add a test with a fix. The test must fail without the fix and pass with it.
 - Keep `src/ssh-paste.ps1` and `install.ps1` ASCII-only. Both must run on
-  Windows PowerShell 5.1 and PowerShell 7.
+  Windows PowerShell 5.1 and PowerShell 7. The macOS files (`src/ssh-paste.js`,
+  `src/ssh-paste-mac`, `install.sh`) are ASCII-only too.
+- A change to what both clients decide (the watcher, the upload, the ssh
+  arguments) goes into both clients, with a case in `tests/cases.json` where a
+  table fits.
 - If you change what a user sees, update `README.md` and `README.zh-CN.md`
   with the same sections. There is no changelog: the subject of your commit
   is the release note (see below).
@@ -41,7 +46,9 @@ powershell -ExecutionPolicy Bypass -File .\check.ps1
 (Pester 5.5 or newer: `Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser`).
 Add `-E2E` to run the end-to-end tests against a throwaway `sshd` on Linux.
 Add `-Footprint` on Windows to check that install, enable, disable, and
-uninstall leave nothing behind. The footprint test edits your real user
+uninstall leave nothing behind. `check.ps1` also runs the node tests of the
+macOS client when node is installed; the macOS tests that need a Mac
+(`tests/mac/*.sh`) run in CI. The footprint test edits your real user
 profile and restores it. A change to the clipboard watcher also needs
 `bash verify/watcher/check.sh` (Java 11 or later), which model-checks it.
 
@@ -83,12 +90,12 @@ it:
 
 - It changes anything under `.github/`, including the release workflows
   (`ci.yml`, `publish.yml`) and `.github/scripts/`.
-- It changes a download URL in `install.ps1`.
+- It changes a download URL in `install.ps1` or `install.sh`.
 - It adds a network address, a host name, or a URL that `ssh-paste` or the
   installer contacts.
 - It sends clipboard contents, files, or keys anywhere they did not go before.
-- It changes what `--enable` writes to `~/.ssh/config` or what the installer
-  writes to the registry.
+- It changes what `--enable` writes to `~/.ssh/config`, what the installer
+  writes to the registry, or what `install.sh` writes to the shell profiles.
 - It adds an encoded or minified blob, a binary, new C# code for `Add-Type`, or
   code built from a string at run time, such as `Invoke-Expression` or
   `[scriptblock]::Create`.

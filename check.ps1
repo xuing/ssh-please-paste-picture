@@ -1,7 +1,8 @@
 <#
 The one command that says whether a change is ready. Run it before every commit; CI
-runs the same stages (tests/lint.ps1, tests/run-pester.ps1, tests/e2e-linux.sh,
-tests/footprint.ps1), so a green check.ps1 means the same as a green CI.
+runs the same stages (tests/lint.ps1, tests/run-pester.ps1, tests/mac/unit.test.js,
+tests/e2e-linux.sh, tests/footprint.ps1), so a green check.ps1 means the same as a
+green CI. The macOS client's tests that need a Mac (tests/mac/*.sh) run in CI.
 
   ./check.ps1                 lint, then the unit tests
   ./check.ps1 -E2E            also tests/e2e-linux.sh: a throwaway sshd on Linux
@@ -71,6 +72,14 @@ if ($onWindows -and $PSVersionTable.PSEdition -eq 'Core' -and (Test-Path -Litera
 }
 
 Invoke-Stage 'unit tests' $thisShell (Get-HostArguments (Join-Path $repo 'tests/run-pester.ps1'))
+
+# The logic of the macOS client (src/ssh-paste.js) and the test tables both clients share.
+$node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $node) {
+    Add-Result 'unit tests (macOS client, node)' 'not run' 'node was not found; CI runs it'
+} else {
+    Invoke-Stage 'unit tests (macOS client, node)' $node.Source @('--test', (Join-Path $repo 'tests/mac/unit.test.js'))
+}
 
 if ($E2E) {
     $bash = Get-Command bash -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1

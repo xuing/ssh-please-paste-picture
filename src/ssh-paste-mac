@@ -1,0 +1,69 @@
+#!/bin/zsh
+# ssh-paste for macOS: the `ssh-paste` command. It only dispatches; the decisions
+# and the clipboard watcher are in ssh-paste.js (osascript -l JavaScript).
+#
+#   ssh-paste --proxy %h %p %n    ProxyCommand of ssh mode (written by --enable):
+#                                 start the watcher next to the relay, then
+#                                 become the relay (nc). stdout is the SSH stream.
+#   ssh-paste --uninstall         run the installed install.sh --uninstall
+#   ssh-paste [ssh options] HOST  wrapper mode: watcher, then ssh, then stop it
+#   ssh-paste --enable|--disable|--doctor|--update|--version|--help   ssh-paste.js
+#
+# Installed as ~/.local/share/ssh-paste/bin/ssh-paste next to ../ssh-paste.js and
+# ../install.sh; in a clone it is src/ssh-paste-mac next to src/ssh-paste.js.
+# Keep this file ASCII. https://github.com/xuing/ssh-please-paste-picture
+
+emulate -R zsh
+self=${0:A}
+root=${self:h:h}
+js=$root/ssh-paste.js
+[[ -f $js ]] || js=${self:h}/ssh-paste.js
+osascript=/usr/bin/osascript
+
+case ${1-} in
+  --proxy)
+    if (( $# < 4 )); then
+      print -u2 'ssh-paste: --proxy needs %h %p %n'
+      exit 2
+    fi
+    # The watcher must not hold ssh's pipes (stdin and stdout are the session),
+    # and ignores SIGHUP so that it can put the plain image back when the
+    # terminal closes. It ends when its parent, the relay below, goes away.
+    ( trap '' HUP; exec "$osascript" -l JavaScript "$js" --watch-proxy "$2" "$3" "$4" "$PPID" "$$" ) < /dev/null > /dev/null &
+    [[ -n ${SSH_PASTE_DEBUG-} ]] && print -u2 "ssh-paste debug: relaying to $2 port $3 with nc; watcher pid $!"
+    exec /usr/bin/nc "$2" "$3"
+    ;;
+  --uninstall)
+    if [[ ! -f "$root/install.sh" ]]; then
+      print -u2 "ssh-paste: $root/install.sh is missing. Remove ssh-paste with:"
+      print -u2 '  curl -fsSL https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.sh | sh -s -- --uninstall'
+      exit 1
+    fi
+    cd ~ || exit 1
+    exec /bin/sh "$root/install.sh" --uninstall
+    ;;
+  ''|--enable|--disable|--doctor|--update|--version|--help|-h|--watch-*)
+    # --enable writes this path into the ProxyCommand line.
+    export SSH_PASTE_LAUNCHER=$self
+    exec "$osascript" -l JavaScript "$js" "$@"
+    ;;
+esac
+
+# Wrapper mode: the watcher decides whether this is an interactive session and
+# says so, then ssh runs in the foreground, then the watcher puts the plain
+# image back and stops.
+ssh_bin=${SSH_PASTE_SSH:-$(whence -p ssh)}
+if [[ -z $ssh_bin ]]; then
+  print -u2 'ssh-paste: ssh was not found'
+  exit 1
+fi
+dir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/ssh-paste.XXXXXXXX") || exit 1
+"$osascript" -l JavaScript "$js" --watch-wrapper "$dir" "$$" "$ssh_bin" "$@" < /dev/null &
+watcher=$!
+while [[ ! -e "$dir/ready" ]] && kill -0 "$watcher" 2> /dev/null; do sleep 0.05; done
+"$ssh_bin" "$@"
+code=$?
+: > "$dir/stop"
+wait "$watcher" 2> /dev/null
+/bin/rm -rf "$dir"
+exit $code

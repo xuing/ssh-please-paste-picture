@@ -11,7 +11,8 @@ name: CI
 # The checks are scripts in the repository, so a person can run what CI runs:
 #   ./check.ps1 [-E2E] [-Footprint]
 # lint -> tests/lint.ps1, unit -> tests/run-pester.ps1, e2e -> tests/e2e-linux.sh,
-# footprint -> tests/footprint.ps1, proxy-windows -> tests/proxy-windows.ps1.
+# footprint -> tests/footprint.ps1, proxy-windows -> tests/proxy-windows.ps1,
+# mac-logic -> tests/mac/unit.test.js, macos -> tests/mac/*.sh (on a Mac).
 #
 # "CI ok" is the one job to require in branch protection (Settings > Branches): it
 # passes only when every other job passed, however the matrix is shaped.
@@ -228,11 +229,98 @@ jobs:
           path: ${{ runner.temp }}/tlc/
           if-no-files-found: ignore
 
+  # The macOS client's logic (src/ssh-paste.js) with node: the test tables it shares with
+  # the Pester tests (tests/cases.json), the watcher against a simulated pasteboard, and
+  # the guards that keep both clients' server script, option tables and markers equal.
+  mac-logic:
+    name: Unit tests (macOS client, node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shell script lint
+        run: |
+          sh -n install.sh
+          for f in tests/mac/*.sh; do bash -n "$f"; done
+          shellcheck install.sh tests/mac/*.sh
+
+      - name: Run the node tests
+        run: |
+          node --version
+          node --test tests/mac/unit.test.js
+
+  # The macOS client on a real Mac with a GUI session: the pasteboard, Terminal.app windows,
+  # a user-level sshd and the real profile of the runner. tests/mac/jxa.sh uses a stand-in
+  # for ssh; tests/mac/e2e.sh uploads to a throwaway sshd on 127.0.0.1; tests/mac/footprint.sh
+  # installs and uninstalls and compares the home folder. Each step runs even when an
+  # earlier one failed, so one run shows every result.
+  macos:
+    name: macOS client (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-15]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Versions and parse checks
+        run: |
+          sw_vers
+          ssh -V
+          zsh --version
+          zsh -n src/ssh-paste-mac
+          sh -n install.sh
+          osacompile -l JavaScript -o "$RUNNER_TEMP/ssh-paste.scpt" src/ssh-paste.js
+          osacompile -l JavaScript -o "$RUNNER_TEMP/pb.scpt" tests/mac/pb.js
+          node --test tests/mac/unit.test.js
+
+      - name: Pasteboard and watcher in Terminal.app (tests/mac/jxa.sh)
+        if: success() || failure()
+        timeout-minutes: 10
+        run: bash tests/mac/jxa.sh
+
+      - name: End to end with a throwaway sshd (tests/mac/e2e.sh)
+        if: success() || failure()
+        timeout-minutes: 10
+        run: bash tests/mac/e2e.sh
+
+      - name: Install and uninstall footprint (tests/mac/footprint.sh)
+        if: success() || failure()
+        timeout-minutes: 10
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: bash tests/mac/footprint.sh
+
+      - name: Screenshot of the screen
+        if: failure()
+        run: |
+          mkdir -p TestResults
+          screencapture -x TestResults/screen.png || true
+          cp "$(getconf DARWIN_USER_TEMP_DIR)ssh-paste-debug.log" TestResults/ 2> /dev/null || true
+
+      - name: Upload the screenshot and the debug log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-${{ matrix.os }}
+          path: TestResults/
+          if-no-files-found: ignore
+
   # The single required check. Skipped, cancelled and failed jobs all count as failure.
   ci-ok:
     name: CI ok
     if: always()
-    needs: [lint, unit, e2e, footprint, proxy-windows, model]
+    needs: [lint, unit, e2e, footprint, proxy-windows, model, mac-logic, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

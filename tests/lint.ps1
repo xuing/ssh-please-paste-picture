@@ -5,7 +5,8 @@ local pass means the same thing as a CI pass.
   ./tests/lint.ps1                  all four checks (PowerShell 7, or 5.1 for a quick look)
   ./tests/lint.ps1 -Check Parse     only the parse check; CI runs it under Windows PowerShell 5.1
 
-  Ascii     scripts, manifests, .cmd, .sh and workflow files hold only printable ASCII
+  Ascii     scripts, manifests, .cmd, .sh, .js, .json, the macOS launcher and workflow files
+            hold only printable ASCII
   Forms     no command-line forms that antivirus heuristics flag
   Spawn     src/ starts programs only through New-ChildStartInfo
   Analyzer  PSScriptAnalyzer with ./PSScriptAnalyzerSettings.psd1
@@ -57,7 +58,7 @@ try {
         Write-Host '== Ascii: files hold only printable ASCII'
         # Windows PowerShell 5.1 reads a file without a byte order mark as ANSI, so a
         # single non-ASCII character in a script would be mis-decoded on user machines.
-        $files = Get-RepoFile '*.ps1', '*.psd1', '*.cmd', '*.sh', '*.yml'
+        $files = Get-RepoFile '*.ps1', '*.psd1', '*.cmd', '*.sh', '*.yml', '*.js', '*.json', 'src/ssh-paste-mac'
         foreach ($file in $files) {
             $bytes = [System.IO.File]::ReadAllBytes((Join-Path $repo $file))
             $line = 1

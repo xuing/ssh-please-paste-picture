@@ -87,6 +87,9 @@ A check that was not run is listed under "Not run:", never left out.
    the clipboard, the watcher, window detection or process handling. Unit
    tests replace the pipes and the clipboard, so they cannot show what
    Win32-OpenSSH and Windows Terminal do. Say what you ran and what you saw.
+   For the macOS client, the macOS CI jobs (`tests/mac/*.sh` on macOS 15 and
+   26) are the run; a Mac that a person uses and terminals other than
+   Terminal.app go under "Not run:".
 7. **The docs match.** A change a user can see updates `README.md` and
    `README.zh-CN.md` in the same commit. The commit subject is the release
    note (see Commits), so it names the effect the user sees.
