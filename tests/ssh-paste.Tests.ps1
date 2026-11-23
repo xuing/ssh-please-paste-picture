@@ -5037,7 +5037,8 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
                 if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
                 Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-failed.png' -Owner 5 -Token 6 -Promise
                 $reader = Start-TextReader
-                Start-Sleep -Milliseconds 300
+                Start-Sleep -Milliseconds 500
+                $reader.Handle.IsCompleted | Should -BeFalse -Because 'the paste waits until the upload ends, here in failure'
                 Complete-ClipboardPromise $null
                 (Wait-TextReader $reader).Text | Should -BeNullOrEmpty
             }

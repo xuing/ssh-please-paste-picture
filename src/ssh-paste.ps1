@@ -671,16 +671,13 @@ public sealed class PendingClipboard : IDisposable {
     // clipboard sequence number after the write, or 0 when it failed.
     public uint Publish(Entry entry) {
         lock (gate) {
-            if (promiseOpen) { promisedText = null; textReady.Set(); }   // an older promise can no longer be kept
-            textReady = new ManualResetEvent(false);
-            promisedText = null;
-            promiseOpen = entry.PromiseText;
+            if (promiseOpen) { promisedText = null; textReady.Set(); promiseOpen = false; }   // an older promise can no longer be kept
         }
         publishing = entry;
         publishResult = false;
         IntPtr result;
         IntPtr sent = SendMessageTimeout(window, WM_APP_PUBLISH, IntPtr.Zero, IntPtr.Zero, 0x0002 /* SMTO_ABORTIFHUNG */, 10000, out result);
-        if (sent == IntPtr.Zero || !publishResult) { lock (gate) { promiseOpen = false; } return 0; }
+        if (sent == IntPtr.Zero || !publishResult) return 0;
         return publishSequence;
     }
 
@@ -733,7 +730,14 @@ public sealed class PendingClipboard : IDisposable {
         for (int i = 0; i < 20 && !opened; i++) { opened = OpenClipboard(window); if (!opened) Thread.Sleep(25); }
         if (!opened) { LastError = "the clipboard is busy"; return false; }
         try {
+            // EmptyClipboard tells the old owner (often this window) that its entry
+            // is gone, which withdraws the old promise; only then is the new one set.
             if (!EmptyClipboard()) { LastError = "EmptyClipboard failed"; return false; }
+            lock (gate) {
+                textReady = new ManualResetEvent(false);
+                promisedText = null;
+                promiseOpen = e.PromiseText;
+            }
             if (e.Files != null && e.Files.Length > 0) {
                 SetData(CF_HDROP, DropFiles(e.Files));
             } else if (e.Png != null) {
