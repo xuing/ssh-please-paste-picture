@@ -302,17 +302,36 @@ test('testHostAlias (Test-HostAlias)', async (t) => {
 });
 
 test('proxyCommandLine (the macOS ProxyCommand)', () => {
-    assert.equal(m.proxyCommandLine('/Users/me/.local/share/ssh-paste/bin/ssh-paste'), "'/Users/me/.local/share/ssh-paste/bin/ssh-paste' --proxy %h %p %n");
+    const tail = " --proxy '%h' %p '%n'";
+    assert.equal(m.proxyCommandLine('/Users/me/.local/share/ssh-paste/bin/ssh-paste'), "'/Users/me/.local/share/ssh-paste/bin/ssh-paste'" + tail);
     // ssh expands % first; the shell then reads one single-quoted word.
-    assert.equal(m.proxyCommandLine('/Users/Jo Doe/50%off/ssh-paste'), "'/Users/Jo Doe/50%%off/ssh-paste' --proxy %h %p %n");
-    assert.equal(m.proxyCommandLine("/Users/o'neil/ssh-paste"), "'/Users/o'\\''neil/ssh-paste' --proxy %h %p %n");
+    assert.equal(m.proxyCommandLine('/Users/Jo Doe/50%off/ssh-paste'), "'/Users/Jo Doe/50%%off/ssh-paste'" + tail);
+    assert.equal(m.proxyCommandLine("/Users/o'neil/ssh-paste"), "'/Users/o'\\''neil/ssh-paste'" + tail);
     assert.throws(() => m.proxyCommandLine('relative/ssh-paste'), /not absolute/);
     assert.throws(() => m.proxyCommandLine('/a\nb'), /line break/);
 });
 
+test('the ProxyCommand passes a Host alias with [ ] to the launcher unchanged under zsh', { skip: !require('node:fs').existsSync('/bin/zsh') && 'no zsh' }, () => {
+    // ssh expands %h %p %n, then runs the line with the login shell. Unquoted,
+    // zsh takes work[1] for a file pattern and stops with "no matches found".
+    const line = m.proxyCommandLine('/bin/echo').replace(/%h/g, 'work[1]').replace(/%p/g, '22').replace(/%n/g, 'work[1]');
+    const r = require('node:child_process').spawnSync('/bin/zsh', ['-c', 'exec ' + line], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, '--proxy work[1] 22 work[1]\n');
+});
+
+test('destinationHost is the host ssh expands as %n', () => {
+    // Measured with OpenSSH 10.2: ProxyCommand "echo %n" for each destination.
+    const seen = { 'Work[1]': 'Work[1]', 'u@Work': 'Work', 'ssh://u@Host:2222': 'Host', 'u@h@x': 'x', 'HOST': 'HOST', 'ssh://[::1]:22': '::1' };
+    for (const [d, n] of Object.entries(seen)) assert.equal(m.destinationHost(d), n, d);
+    // ps joins arguments with spaces: -i "/Users/me/SSH Keys/id" host reads as -i /Users/me/SSH, destination Keys/id.
+    const parsed = m.splitSshArguments('-t -i /Users/me/SSH Keys/id_ed25519 alice@host'.split(' '));
+    assert.notEqual(m.destinationHost(parsed.Destination), 'host');
+});
+
 test('the managed block (Get-ManagedBlock, Set-ManagedBlock)', async (t) => {
     const B = m.BLOCK_BEGIN, E = m.BLOCK_END, C = m.BLOCK_CREATED_FILE;
-    const proxy = "'/Users/me/.local/share/ssh-paste/bin/ssh-paste' --proxy %h %p %n";
+    const proxy = m.proxyCommandLine('/Users/me/.local/share/ssh-paste/bin/ssh-paste');
     const add = (text, hosts, created) => m.setManagedBlock(text, hosts, proxy, created);
     const remove = (text) => m.setManagedBlock(text, [], proxy);
     await t.test('writes the documented block into an empty config, with and without the created-file line', () => {

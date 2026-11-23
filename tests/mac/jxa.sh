@@ -126,6 +126,40 @@ paste_timed "$work/p5"
 check "$(cat "$work/p5")" "$want" 'back in Terminal, pbpaste gets the path'
 check "$(grep -c "$(sha16 "$work/third.png")" "$work/uploads")" 1 'uploaded once'
 
+section 'a paste that waits gets nothing when another app comes to the front meanwhile'
+echo 'ok 6' > "$work/mode"
+cp "$work/shot.png" "$work/fourth.png"
+printf 'w' >> "$work/fourth.png"
+before=$(uploads)
+pb png "$work/fourth.png"
+wait_for 20 more_uploads "$before" || fail 'no upload started'
+paste_timed "$work/p8" &
+paster=$!
+sleep 1
+activate Calculator com.apple.calculator
+wait "$paster"
+check "$(cat "$work/p8")" '' 'the paste started in Terminal got nothing: Calculator was in front when the upload ended'
+waited=$(cat "$work/p8.ms")
+if [ "$waited" -ge 2500 ]; then pass "it waited for the upload first ($waited ms)"; else fail "it did not wait for the upload ($waited ms)"; fi
+activate Terminal com.apple.Terminal
+want=/tmp/ssh-paste-$(sha16 "$work/fourth.png").png
+wait_for 10 entry_is "$want" || fail "the watcher did not write the path again: $(pb dump)"
+paste_timed "$work/p9"
+check "$(cat "$work/p9")" "$want" 'back in Terminal, pbpaste gets the path'
+check "$(grep -c "$(sha16 "$work/fourth.png")" "$work/uploads")" 1 'uploaded once'
+
+section 'a TIFF-only image is uploaded as PNG'
+activate Terminal com.apple.Terminal
+pb tiff "$work/shot.tiff"
+wait_for 20 entry_like '/tmp/ssh-paste-*.png' || fail "no entry for the TIFF: $(pb dump)"
+paste_timed "$work/p7"
+case $(cat "$work/p7") in
+    /tmp/ssh-paste-*.png)
+        f=$work/server/$(basename "$(cat "$work/p7")")
+        if [ "$(head -c 8 "$f" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ]; then pass 'pbpaste got a .png path and the server got PNG bytes'; else fail 'the server did not get a PNG'; fi ;;
+    *) fail "unexpected paste: $(cat "$work/p7")" ;;
+esac
+
 section 'image files copied in Finder'
 echo 'ok 1' > "$work/mode"
 # Copied while another app is in front, so the copy can be read before the watcher acts.
@@ -151,25 +185,20 @@ d=$(pb dump)
 case $d in *'public.file-url'*) fail "a file URL is on the pasteboard while the path is offered: $d" ;; *) pass 'no file URL while the path is offered' ;; esac
 case $d in *'"public.png"'*) pass 'the first image is offered as PNG' ;; *) fail "no PNG: $d" ;; esac
 activate Calculator com.apple.calculator
-if wait_for 10 sh -c "osascript -l JavaScript '$pbjs' dump | grep -qF '\"files\":$files_json'"; then
+if wait_for 10 files_are "$files_json"; then
     pass 'with Calculator in front the file URLs are back'
 else
     fail "the files are not back: $(pb dump)"
 fi
 activate Terminal com.apple.Terminal
 
-section 'a TIFF-only image is uploaded as PNG'
-pb tiff "$work/shot.tiff"
-wait_for 20 entry_like '/tmp/ssh-paste-*.png' || fail "no entry for the TIFF: $(pb dump)"
-paste_timed "$work/p7"
-case $(cat "$work/p7") in
-    /tmp/ssh-paste-*.png)
-        f=$work/server/$(basename "$(cat "$work/p7")")
-        if [ "$(head -c 8 "$f" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ]; then pass 'pbpaste got a .png path and the server got PNG bytes'; else fail 'the server did not get a PNG'; fi ;;
-    *) fail "unexpected paste: $(cat "$work/p7")" ;;
-esac
+# The copied files move away while the path is on the pasteboard. On exit the
+# watcher reads the pasteboard again and cannot read the files any more; it must
+# still take the path back, using the image its entry carries.
+wait_for 20 entry_is "$want" || fail "no entry with every path before the files move: $(pb dump)"
+while IFS= read -r f; do mv "$f" "$f.moved"; done < "$work/held"
 
-section 'the session ends: the plain image comes back and the watcher stops'
+section 'the session ends after the copied files moved: the path comes off and the watcher stops'
 kill "$(cat "$work/session.pid")"
 if wait_for 20 sh -c "! pgrep -f 'ssh-paste.js --watch-wrapper' > /dev/null"; then pass 'the watcher stopped'; else fail 'the watcher still runs'; fi
 d=$(pb dump)

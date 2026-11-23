@@ -76,6 +76,18 @@ function run(argv) {
         }
         out(JSON.stringify({ changeCount: Number(pb.changeCount), types: types, marker: marker.isNil() ? null : JSON.parse(marker.js),
             files: paths, png: png.isNil() ? 0 : Number(png.length) }));
+    } else if (cmd === 'files') {
+        // Only the paths of real public.file-url items; our marker also lists the
+        // files, so a test of what other apps see must not read it.
+        var fl = [];
+        var fit = pb.pasteboardItems;
+        for (var q = 0; q < Number(fit.count); q++) {
+            var fs = fit.objectAtIndex(q).stringForType('public.file-url');
+            if (fs.isNil()) continue;
+            var fu2 = $.NSURL.URLWithString(fs), fp2 = fu2.filePathURL;
+            fl.push((fp2.isNil() ? fu2 : fp2).path.js);
+        }
+        out(JSON.stringify(fl));
     } else if (cmd === 'items') {
         var list = [];
         var its = pb.pasteboardItems;

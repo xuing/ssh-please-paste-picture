@@ -37,6 +37,8 @@ wait_for() {
 # entry_is TEXT / entry_like PATTERN: our entry on the pasteboard carries this text.
 # A user presses Cmd+V a moment after a copy; a test waits for the watcher's write.
 entry_is() { [ "$(pb marker-text)" = "$1" ]; }
+# files_are JSON: the pasteboard's file URLs (not our marker) are exactly these paths.
+files_are() { [ "$(pb files)" = "$1" ]; }
 # shellcheck disable=SC2254 # the pattern is a glob on purpose
 entry_like() { case $(pb marker-text) in $1) return 0 ;; esac; return 1; }
 

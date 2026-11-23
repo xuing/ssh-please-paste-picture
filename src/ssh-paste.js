@@ -135,6 +135,15 @@ function sshOptionValue(value) {
     return (m ? s.substring(m.index + m[0].length) : s).trim().toLowerCase();
 }
 
+function destinationHost(destination) {
+    // The host part of an ssh destination, as ssh expands it for %n: the text
+    // after the last @, or the host of an ssh:// URI.
+    var d = String(destination);
+    var m = /^ssh:\/\/(?:[^\/]*@)?(\[[^\]]*\]|[^:\/]*)/.exec(d);
+    if (m) return m[1].replace(/^\[(.*)\]$/, '$1');
+    return d.replace(/^.*@/, '');
+}
+
 function testInteractiveSsh(parsed, effective) {
     // Only interactive sessions get the clipboard watcher. scp/sftp/git, VS Code
     // Remote-SSH (-T), port forwards (-N), stdio forwards (-W) stay plain relays.
@@ -304,7 +313,9 @@ function proxyCommandLine(launcher) {
     if (!/^\//.test(launcher)) throw new Error('the ssh-paste command path is not absolute: ' + launcher);
     if (/[\r\n]/.test(launcher)) throw new Error('the ssh-paste command path contains a line break');
     var quoted = "'" + launcher.replace(/%/g, '%%').replace(/'/g, "'\\''") + "'";
-    return quoted + ' --proxy %h %p %n';
+    // %h and %n are quoted: a Host alias may contain [ and ], which zsh would
+    // take for a file pattern. ssh refuses quotes in a host name.
+    return quoted + " --proxy '%h' %p '%n'";
 }
 
 function getManagedBlock(configText) {
@@ -1063,7 +1074,9 @@ function macPlatform(sessionDebug) {
         fm.removeItemAtPathError(entry.file, null);
         if (!fm.moveItemAtPathToPathError(tmp, entry.file, null)) throw new Error('could not keep ' + entry.file);
         memo.unshift(entry);
-        while (memo.length > 8) {
+        // Keep every file of one copy (up to MAX_COPIED_FILES) plus a few recent
+        // images: an upload reads the file of each item it has not started yet.
+        while (memo.length > MAX_COPIED_FILES + 8) {
             var old = memo.pop();
             if (!keep[old.file] && !memo.some(function (x) { return x.file === old.file; })) fm.removeItemAtPathError(old.file, null);
         }
@@ -1158,8 +1171,11 @@ function macPlatform(sessionDebug) {
                 state.Items = items;
                 state.Hash = items.map(function (x) { return x.Hash; }).join(' ');
                 if (!marker) state.HasText = false;
+                return state;
             }
-            return state;
+            // Our entry, but a copied file was moved or deleted since: go on with
+            // the image the entry carries, so the path can still be taken back.
+            if (!marker) return state;
         }
         var png = null;
         if (has('public.png')) png = pb.dataForType('public.png');
@@ -1218,6 +1234,10 @@ function macPlatform(sessionDebug) {
         }
         // An older promise can no longer be kept.
         if (rec && rec.open && !rec.done) { rec.done = true; rec.result = null; }
+        // macOS has no clipboard lock (Windows checks the sequence number while it
+        // holds the clipboard open), so a copy that lands between this check and
+        // clearContents is lost. Everything is built before the check to keep
+        // that gap as short as two calls.
         if (Number(pb.changeCount) !== e.basis) throw new Error('could not write the clipboard: the clipboard changed since it was read');
         var count = Number(pb.clearContents);
         rec = { count: count, open: !!(e.text && e.promise), done: false, result: null, owner: e.owner, text: e.text || null,
@@ -1248,13 +1268,15 @@ function macPlatform(sessionDebug) {
         if (!r || !r.open || Number(pb.changeCount) !== r.count) return;
         if (frontWindow() !== r.owner) { r.dead = true; debugLog('a paste in another window gets nothing'); return; }
         var deadline = nowMs() + PROMISE_WAIT_SECONDS * 1000;
-        while (!r.done && nowMs() < deadline && Number(pb.changeCount) === r.count) {
+        while (!r.done && nowMs() < deadline && Number(pb.changeCount) === r.count && !(P.stopped && P.stopped())) {
             spinRunLoop(0.05);
             if (P.watcher) {
                 try { advanceInflight(P.watcher); } catch (e) { debugLog('upload during a paste: ' + e.message); }
             }
         }
-        if (r.done && r.result && Number(pb.changeCount) === r.count) {
+        // The user may have switched windows while the paste waited: answer only
+        // if the window the entry was written for is still in front.
+        if (r.done && r.result && Number(pb.changeCount) === r.count && frontWindow() === r.owner) {
             item.setStringForType($(r.result), type);
             r.answered = true;
         } else {
@@ -1337,13 +1359,27 @@ function providerObject() {
 // Commands
 // ---------------------------------------------------------------------------
 
+function bindTerminal(startPid) {
+    // The terminal app and its window in front, read first thing: ps and ssh -G
+    // take a moment, and the user may bring another window forward meanwhile.
+    // Returns { terminal, window } or { error }.
+    try {
+        var terminal = findTerminal(startPid);
+        var window = firstWindowOf(terminal.pid);
+        if (!window) return { error: 'the terminal app ' + terminal.bundle + ' has no window on screen' };
+        return { terminal: terminal, window: window };
+    } catch (e) {
+        return { error: e.message };
+    }
+}
+
 function startWatcher(o) {
-    // A watcher for this session's terminal window. Throws with the reason when
-    // screenshot paste cannot work here.
+    // A watcher for the terminal window that bindTerminal found. Throws with the
+    // reason when screenshot paste cannot work here.
     var debug = !!env('SSH_PASTE_DEBUG');
-    var terminal = findTerminal(o.startPid);
-    var window = firstWindowOf(terminal.pid);
-    if (!window) throw new Error('the terminal app ' + terminal.bundle + ' has no window on screen');
+    if (o.bound.error) throw new Error(o.bound.error);
+    var terminal = o.bound.terminal;
+    var window = o.bound.window;
     var P = macPlatform(debug);
     var W = newWatcher(P, { sshPath: o.sshPath, sshVersion: sshVersionOf(o.sshPath), parsed: o.parsed, noProxy: o.noProxy, pin: o.pin,
         window: window, token: randomHex(16), debug: debug });
@@ -1353,6 +1389,9 @@ function startWatcher(o) {
 }
 
 function watchLoop(W, stop) {
+    // A paste that waits for an upload spins its own run loop; it ends too when
+    // the session does.
+    W.P.stopped = stop;
     while (!stop()) {
         spinRunLoop(TICK_SECONDS);
         watcherStep(W);
@@ -1374,6 +1413,7 @@ function watchWrapper(args) {
     var fm = $.NSFileManager.defaultManager;
     var W = null;
     var parsed = null;
+    var bound = bindTerminal(parent);
     try { parsed = splitSshArguments(sshArgs); } catch (e) { parsed = null; }
     if (parsed && parsed.Destination) {
         var effective = effectiveSshConfig(ssh, sshArgs);
@@ -1382,7 +1422,7 @@ function watchWrapper(args) {
             // ssh mode already serves this connection; a second watcher would upload twice.
         } else if (testInteractiveSsh(parsed, effective)) {
             try {
-                W = startWatcher({ startPid: parent, sshPath: ssh, parsed: parsed });
+                W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed });
                 warn('ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Cmd+V.');
             } catch (e) {
                 warn('ssh-paste: screenshot paste is off: ' + e.message);
@@ -1412,6 +1452,7 @@ function watchProxy(args) {
     var sshPid = Number(args[3]);
     var parent = Number(args[4]);
     var W = null;
+    var bound = bindTerminal(sshPid);
     try {
         var r = runCapture('/bin/ps', ['-ww', '-o', 'args=', '-p', String(sshPid)], 20);
         var argv = splitPsArgs(r.out);
@@ -1419,13 +1460,23 @@ function watchProxy(args) {
         var ssh = argv[0].indexOf('/') >= 0 ? argv[0] : (findInPath(argv[0]) || '/usr/bin/ssh');
         var rest = argv.slice(1);
         var parsed = splitSshArguments(rest);
+        // ps joins the arguments with spaces, so an argument that contains one
+        // splits in two. The destination must then still be the host ssh named
+        // as %n; if not, these are not ssh's real arguments.
+        if (!parsed.Destination || destinationHost(parsed.Destination) !== alias) {
+            debugLog('ssh mode: no watcher: cannot read the ssh arguments of this session (an argument with a space?)');
+            return 0;
+        }
         var effective = effectiveSshConfig(ssh, rest);
-        if (!testInteractiveSsh(parsed, effective)) return 0;
+        if (!testInteractiveSsh(parsed, effective)) {
+            debugLog('ssh mode: no watcher: not an interactive session');
+            return 0;
+        }
         // Upload to the host and port this relay reached, checking the host key
         // under the name the session itself used.
         var keyAlias = port !== '22' ? '[' + host + ']:' + port : host;
         if (effective && effective.hostkeyalias) keyAlias = effective.hostkeyalias;
-        W = startWatcher({ startPid: sshPid, sshPath: ssh, parsed: parsed, noProxy: true, pin: { HostName: host, Port: port, HostKeyAlias: keyAlias } });
+        W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed, noProxy: true, pin: { HostName: host, Port: port, HostKeyAlias: keyAlias } });
     } catch (e) {
         warn('ssh-paste: screenshot paste is off: ' + e.message);
         return 0;
@@ -1724,7 +1775,7 @@ if (typeof module !== 'undefined' && module.exports) {
         RETRY_FAILED_SECONDS: RETRY_FAILED_SECONDS, UPLOAD_CACHE_HOURS: UPLOAD_CACHE_HOURS, PROMISE_WAIT_SECONDS: PROMISE_WAIT_SECONDS,
         SSH_FLAGS_NO_ARG: SSH_FLAGS_NO_ARG, SSH_FLAGS_WITH_ARG: SSH_FLAGS_WITH_ARG, SSH_KEEP_NO_ARG: SSH_KEEP_NO_ARG,
         SSH_KEEP_WITH_ARG: SSH_KEEP_WITH_ARG, SSH_DROP_OPTIONS: SSH_DROP_OPTIONS, TERM_PROGRAM_BUNDLES: TERM_PROGRAM_BUNDLES,
-        splitSshArguments: splitSshArguments, sshOptionKey: sshOptionKey, testInteractiveSsh: testInteractiveSsh, parseSshG: parseSshG,
+        splitSshArguments: splitSshArguments, destinationHost: destinationHost, sshOptionKey: sshOptionKey, testInteractiveSsh: testInteractiveSsh, parseSshG: parseSshG,
         parseSshVersion: parseSshVersion, uploadSshArguments: uploadSshArguments, readUploadReply: readUploadReply, uploadOutcome: uploadOutcome,
         testHostAlias: testHostAlias, imageFileExtension: imageFileExtension, proxyCommandLine: proxyCommandLine,
         getManagedBlock: getManagedBlock, setManagedBlock: setManagedBlock, checkReleaseChecksum: checkReleaseChecksum,

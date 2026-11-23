@@ -89,15 +89,21 @@ sh "$repo/install.sh" > "$work/install.out" 2>&1 || { fail 'install.sh'; cat "$w
 check "$("$cmd" --version)" 0.0.0-dev 'ssh-paste --version'
 "$cmd" --enable ssh-paste-e2e > "$work/enable.out" 2>&1 || { fail '--enable'; cat "$work/enable.out"; }
 if head -n 1 "$HOME/.ssh/config" | grep -qF '# >>> ssh-paste'; then pass 'the block is at the top of ~/.ssh/config'; else fail "no block: $(cat "$HOME/.ssh/config")"; fi
-if grep -qF "    ProxyCommand '$HOME/.local/share/ssh-paste/bin/ssh-paste' --proxy %h %p %n" "$HOME/.ssh/config"; then pass 'the ProxyCommand runs the installed command'; else fail "ProxyCommand: $(grep ProxyCommand "$HOME/.ssh/config")"; fi
+if grep -qF "    ProxyCommand '$HOME/.local/share/ssh-paste/bin/ssh-paste' --proxy '%h' %p '%n'" "$HOME/.ssh/config"; then pass 'the ProxyCommand runs the installed command'; else fail "ProxyCommand: $(grep ProxyCommand "$HOME/.ssh/config")"; fi
 "$cmd" --doctor ssh-paste-e2e > "$work/doctor.out" 2>&1
 if grep -q '^  ok    upload to ssh-paste-e2e: /tmp/ssh-paste-[0-9a-f]\{32\}\.png' "$work/doctor.out"; then pass '--doctor uploads'; else fail "--doctor: $(cat "$work/doctor.out")"; fi
 if grep -q 'ssh mode: enabled' "$work/doctor.out"; then pass '--doctor sees ssh mode'; else fail '--doctor does not see ssh mode'; fi
 check "$(ssh -o BatchMode=yes ssh-paste-e2e echo relayed)" relayed 'a command through the ssh mode relay'
+# With debug on, the relay's watcher logs its decision, so this fails both when a
+# watcher starts and when the decision is never made.
 before=$(watchers)
-ssh -o BatchMode=yes ssh-paste-e2e true
-ssh -o BatchMode=yes -T ssh-paste-e2e true < /dev/null
+userlog=${usertmp%/}/ssh-paste-debug.log
+declined() { n=$(grep -c 'no watcher: not an interactive session' "$userlog" 2> /dev/null); echo "${n:-0}"; }
+was=$(declined)
+TMPDIR=$usertmp SSH_PASTE_DEBUG=1 ssh -o BatchMode=yes ssh-paste-e2e true
+TMPDIR=$usertmp SSH_PASTE_DEBUG=1 ssh -o BatchMode=yes -T ssh-paste-e2e true < /dev/null
 sleep 3
+check "$(declined)" "$((was + 2))" 'the relay decided twice: not interactive'
 check "$(watchers)" "$before" 'no watcher for a command without -t, nor for -T'
 
 section 'ssh mode: plain ssh in Terminal.app'
