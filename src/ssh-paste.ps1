@@ -1419,10 +1419,19 @@ function Remove-UserPathEntry {
 }
 
 function Send-EnvironmentChange {
-    # Setting and clearing a variable through .NET broadcasts WM_SETTINGCHANGE.
+    # Setting a variable through .NET broadcasts WM_SETTINGCHANGE, so new Explorer
+    # and Windows Terminal windows see the new PATH. The variable is then deleted
+    # in the registry: PowerShell 7 passes $null to .NET as an empty string, which
+    # .NET keeps instead of deleting. Leftovers from earlier runs are removed too.
     $name = 'ssh_paste_' + [guid]::NewGuid().ToString('N')
     [Environment]::SetEnvironmentVariable($name, '1', 'User')
-    [Environment]::SetEnvironmentVariable($name, $null, 'User')
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    if ($null -eq $key) { return }
+    try {
+        foreach ($value in $key.GetValueNames()) {
+            if ($value -cmatch '^ssh_paste_[0-9a-f]{32}\z') { $key.DeleteValue($value, $false) }
+        }
+    } finally { $key.Close() }
 }
 
 function Invoke-Uninstall {
@@ -1431,7 +1440,8 @@ function Invoke-Uninstall {
     }
     $dir = Get-InstallDirectory
     $changedPath = Remove-UserPathEntry $dir
-    if ($changedPath) { Send-EnvironmentChange; Write-Info ('Removed from your PATH: ' + $dir) 'Green' }
+    Send-EnvironmentChange   # also removes values that older versions left behind
+    if ($changedPath) { Write-Info ('Removed from your PATH: ' + $dir) 'Green' }
     if (Test-Path -LiteralPath $dir) {
         Set-Location -LiteralPath $env:USERPROFILE
         [Environment]::CurrentDirectory = $env:USERPROFILE

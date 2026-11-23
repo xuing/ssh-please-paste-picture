@@ -311,11 +311,19 @@ https://github.com/xuing/ssh-pls-paste-pic
     }
 
     function Send-EnvironmentChange {
-        # Setting and clearing a variable through .NET broadcasts WM_SETTINGCHANGE,
-        # so new Explorer and Windows Terminal windows see the new PATH.
+        # Setting a variable through .NET broadcasts WM_SETTINGCHANGE, so new Explorer
+        # and Windows Terminal windows see the new PATH. The variable is then deleted
+        # in the registry: PowerShell 7 passes $null to .NET as an empty string, which
+        # .NET keeps instead of deleting. Leftovers from earlier runs are removed too.
         $name = 'ssh_paste_' + [guid]::NewGuid().ToString('N')
         [Environment]::SetEnvironmentVariable($name, '1', 'User')
-        [Environment]::SetEnvironmentVariable($name, $null, 'User')
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        if ($null -eq $key) { return }
+        try {
+            foreach ($value in $key.GetValueNames()) {
+                if ($value -cmatch '^ssh_paste_[0-9a-f]{32}\z') { $key.DeleteValue($value, $false) }
+            }
+        } finally { $key.Close() }
     }
 
     # --- ssh config -----------------------------------------------------------
@@ -426,8 +434,8 @@ https://github.com/xuing/ssh-pls-paste-pic
         Write-Line '  files: ssh-paste.ps1, ssh-paste.cmd'
 
         $pathAdded = Add-UserPathEntry $dir
+        Send-EnvironmentChange   # also removes values that older versions left behind
         if ($pathAdded) {
-            Send-EnvironmentChange
             Write-Line '  added the folder to your user PATH (HKCU\Environment\Path)'
         } else {
             Write-Line '  the folder is already on your user PATH'
@@ -475,10 +483,10 @@ https://github.com/xuing/ssh-pls-paste-pic
 
         $dir = Get-InstallDirectory
         if (Remove-UserPathEntry $dir) {
-            Send-EnvironmentChange
             Write-Line ('Removed from your PATH: ' + $dir) 'Green'
             $did = $true
         }
+        Send-EnvironmentChange   # also removes values that older versions left behind
         if ($env:Path -and (Test-PathListHas $env:Path $dir)) { $env:Path = Get-PathWithoutEntry $env:Path $dir }
 
         if (Test-Path -LiteralPath $dir) {
