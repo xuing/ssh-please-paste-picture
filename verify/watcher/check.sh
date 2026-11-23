@@ -135,11 +135,11 @@ for run in "${runs[@]}"; do
     set -e
     out="$work/$name.out"
     if grep -q '^Model checking completed. No error has been found' "$out"; then
-        got=hold
+        got='hold'
     elif grep -qE '^Error: (Invariant [A-Za-z]+ is violated|Temporal properties were violated)' "$out"; then
-        got=break
+        got='break'
     else
-        got=error
+        got='error'
     fi
     states=$(grep -oE '[0-9]+ distinct states found' "$out" | tail -n 1 | cut -d' ' -f1 || true)
     which=$(grep -oE '^Error: Invariant [A-Za-z]+' "$out" | head -n 1 | cut -d' ' -f3 || true)
