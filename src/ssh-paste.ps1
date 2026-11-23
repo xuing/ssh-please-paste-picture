@@ -606,6 +606,7 @@ public sealed class PendingClipboard : IDisposable {
     [DllImport("user32.dll")] static extern IntPtr GetClipboardOwner();
     [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint format, IntPtr data);
     [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterClipboardFormat(string name);
     [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
     [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr h);
@@ -621,6 +622,7 @@ public sealed class PendingClipboard : IDisposable {
         public byte[] Marker;       // ssh-paste's marker: owner window, session, remote path
         public string Text;         // remote path, written at once
         public bool PromiseText;    // write the text later, when a paste asks for it
+        public long Basis;          // the clipboard sequence number the caller read; Write refuses when it moved
     }
 
     readonly Thread thread;
@@ -636,6 +638,9 @@ public sealed class PendingClipboard : IDisposable {
     ManualResetEvent textReady = new ManualResetEvent(false);
     string promisedText;
     bool promiseOpen;
+    long promiseOwner;      // the terminal window the entry was written for (from the marker)
+    string entryText;       // the text of this window's entry
+    bool textWritten;       // that text was written at once, not promised
 
     public int PromiseWaitMilliseconds = 30000;
     public string LastError;
@@ -689,6 +694,16 @@ public sealed class PendingClipboard : IDisposable {
 
     public bool IsOwner { get { return GetClipboardOwner() == window && window != IntPtr.Zero; } }
 
+    // True when the clipboard holds this window's entry with this text, and a
+    // paste of it gets the text: written at once, or promised and not failed.
+    public bool CanAnswer(string text) {
+        lock (gate) {
+            if (!IsOwner || entryText != text) return false;
+            if (textWritten) return true;
+            return promiseOpen && !(textReady.WaitOne(0) && promisedText == null);
+        }
+    }
+
     IntPtr WindowProc(IntPtr h, int msg, IntPtr w, IntPtr l) {
         switch (msg) {
             case WM_APP_PUBLISH:
@@ -718,7 +733,11 @@ public sealed class PendingClipboard : IDisposable {
     // waits here; when the upload fails or takes too long it gets nothing.
     void RenderText(bool closing) {
         ManualResetEvent ready;
-        lock (gate) { if (!promiseOpen) return; ready = textReady; }
+        long owner;
+        lock (gate) { if (!promiseOpen) return; ready = textReady; owner = promiseOwner; }
+        // Only the terminal window the path was written for gets it: a paste in
+        // another window must not get a path on this session's server.
+        if (!closing && GetForegroundWindow().ToInt64() != owner) return;
         ready.WaitOne(closing ? 0 : PromiseWaitMilliseconds);
         string text;
         lock (gate) { text = promisedText; }
@@ -730,6 +749,8 @@ public sealed class PendingClipboard : IDisposable {
         for (int i = 0; i < 20 && !opened; i++) { opened = OpenClipboard(window); if (!opened) Thread.Sleep(25); }
         if (!opened) { LastError = "the clipboard is busy"; return false; }
         try {
+            // Write only over what the caller read: a copy the user made since then stays.
+            if ((long)GetClipboardSequenceNumber() != e.Basis) { LastError = "the clipboard changed since it was read"; return false; }
             // EmptyClipboard tells the old owner (often this window) that its entry
             // is gone, which withdraws the old promise; only then is the new one set.
             if (!EmptyClipboard()) { LastError = "EmptyClipboard failed"; return false; }
@@ -737,6 +758,9 @@ public sealed class PendingClipboard : IDisposable {
                 textReady = new ManualResetEvent(false);
                 promisedText = null;
                 promiseOpen = e.PromiseText;
+                promiseOwner = (e.Marker != null && e.Marker.Length >= 8) ? BitConverter.ToInt64(e.Marker, 0) : 0;
+                entryText = e.Text;
+                textWritten = !e.PromiseText && !string.IsNullOrEmpty(e.Text);
             }
             if (e.Files != null && e.Files.Length > 0) {
                 SetData(CF_HDROP, DropFiles(e.Files));
@@ -798,6 +822,14 @@ function Complete-ClipboardPromise {
     param([string]$Text)
     if ($null -eq $script:Clipboard) { return }
     if ([string]::IsNullOrEmpty($Text)) { $script:Clipboard.Fail() } else { $script:Clipboard.Resolve($Text) }
+}
+
+function Test-ClipboardAnswers {
+    # True when the clipboard holds this session's entry and a paste of it gets
+    # $Text. False when its promise failed or was withdrawn: the entry must be
+    # written again.
+    param([string]$Text)
+    return ($null -ne $script:Clipboard -and $script:Clipboard.CanAnswer($Text))
 }
 
 function Close-Clipboard {
@@ -946,8 +978,11 @@ function Set-SshPasteClipboard {
     # file list, a marker with the owner window, the session and the text, the
     # documented flags that keep it out of Win+V history and cloud sync, and the
     # text. With -Promise the text is only promised: a paste waits for it until
-    # Resolve or Fail is called on $script:Clipboard.
-    param([byte[]]$Png, [string]$Text, [long]$Owner, [long]$Token, [string[]]$Files, [switch]$Promise)
+    # Resolve or Fail is called on $script:Clipboard. -Basis is the clipboard
+    # sequence number the caller decided on; if the clipboard changed since, the
+    # write is refused (it throws) and the newer copy stays.
+    param([byte[]]$Png, [string]$Text, [long]$Owner, [long]$Token, [string[]]$Files, [switch]$Promise,
+        [Parameter(Mandatory)][long]$Basis)
     $textBytes = [System.Text.Encoding]::Unicode.GetBytes([string]$Text)
     $marker = New-Object byte[] (16 + $textBytes.Length)
     [BitConverter]::GetBytes($Owner).CopyTo($marker, 0)
@@ -957,6 +992,7 @@ function Set-SshPasteClipboard {
     $entry.Marker = $marker
     $entry.Text = $Text
     $entry.PromiseText = [bool]$Promise
+    $entry.Basis = $Basis
     if ($null -ne $Files -and $Files.Count -gt 0) {
         $entry.Files = $Files
     } else {
@@ -1185,7 +1221,7 @@ function Sync-ClipboardText {
     $ours = ($null -ne $cur.Owner)
     if (-not [string]::IsNullOrEmpty($Text)) {
         if (-not $ours -and ($cur.HasText -or ($cur['HasFiles'] -and $null -eq $cur['Files']))) { return }
-        if ($ours -and $cur.HasText -and $cur.Text -ceq $Text) { return }
+        if ($ours -and $cur.HasText -and $cur.Text -ceq $Text -and $cur.Token -eq $W.Token -and (Test-ClipboardAnswers $Text)) { return }
         if ($ours -and $cur.HasText -and $cur.Owner -eq $fgKey -and $cur.Token -ne $W.Token) { return }
         $owner = $fgKey
     } else {
@@ -1193,7 +1229,7 @@ function Sync-ClipboardText {
         $owner = 0
     }
     if ([long][SshPasteNative]::GetClipboardSequenceNumber() -ne $cur.Seq -or [SshPasteNative]::GetForegroundWindow() -ne $Foreground) { return }
-    Set-SshPasteClipboard -Png $cur.Png -Files $cur['Files'] -Text $Text -Owner $owner -Token $W.Token
+    Set-SshPasteClipboard -Png $cur.Png -Files $cur['Files'] -Text $Text -Owner $owner -Token $W.Token -Basis $cur.Seq
 }
 
 function Get-UploadedItemPath {
@@ -1275,7 +1311,8 @@ function Invoke-WatcherTick {
         # pressed during the upload already pastes the path, not a local one.
         $expected = Get-ExpectedText $W $state
         $otherSession = ($ours -and $state.HasText -and $state.Owner -eq $fgKey -and $state.Token -ne $W.Token)
-        $shown = ($ours -and $state.HasText -and $state.Text -ceq $expected)
+        # Already shown: this session's entry carries the path and a paste still gets it.
+        $shown = ($ours -and $state.HasText -and $state.Text -ceq $expected -and $state.Token -eq $W.Token -and (Test-ClipboardAnswers $expected))
         $wrote = $false
         if (-not $shown -and -not $otherSession -and -not (Test-UploadFailing $W $state)) {
             if ([long][SshPasteNative]::GetClipboardSequenceNumber() -ne $state.Seq -or [SshPasteNative]::GetForegroundWindow() -ne $foreground) {
@@ -1283,7 +1320,7 @@ function Invoke-WatcherTick {
                 return
             }
             # Promise the path: a paste during the upload waits for it (delayed rendering).
-            Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $expected -Owner $fgKey -Token $W.Token -Promise
+            Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $expected -Owner $fgKey -Token $W.Token -Promise -Basis $state.Seq
             $W.LastSeq = -1
             $wrote = $true
             Write-WatchDebug ('promised the path before the upload: ' + $expected)
@@ -1316,8 +1353,18 @@ function Invoke-WatcherTick {
     }
     $owner = $fgKey
     if ($null -eq $text) { $owner = 0 }
-    Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $text -Owner $owner -Token $W.Token
+    Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $text -Owner $owner -Token $W.Token -Basis $state.Seq
     $W.LastSeq = -1   # read our own write back on the next tick
+}
+
+function Invoke-WatcherStep {
+    # One tick of the watch loop. A tick that fails (the clipboard was busy, or
+    # changed under a write) reads the clipboard again on the next one.
+    param($W)
+    try { Invoke-WatcherTick $W } catch {
+        $W.LastSeq = -1
+        Write-WatchDebug ('tick error: ' + $_.Exception.Message + ' at ' + $_.InvocationInfo.PositionMessage)
+    }
 }
 
 function Restore-Clipboard {
@@ -1328,7 +1375,7 @@ function Restore-Clipboard {
         $state = Read-ClipboardImage
         if (($null -ne $state.Png -or $null -ne $state['Files']) -and $null -ne $state.Owner -and $state.HasText -and $state.Token -eq $W.Token -and
             [long][SshPasteNative]::GetClipboardSequenceNumber() -eq $state.Seq) {
-            Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $null -Owner 0 -Token $W.Token
+            Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $null -Owner 0 -Token $W.Token -Basis $state.Seq
         }
     } catch { }
 }
@@ -1383,7 +1430,7 @@ function Invoke-Wrapper {
     $process = [System.Diagnostics.Process]::Start((New-ChildStartInfo -FilePath $ssh -Arguments $SshArgs))
     try {
         while (-not $process.WaitForExit(250)) {
-            if ($null -ne $watcher) { try { Invoke-WatcherTick $watcher } catch { $watcher.LastSeq = -1; Write-WatchDebug ('tick error: ' + $_.Exception.Message + ' at ' + $_.InvocationInfo.PositionMessage) } }
+            if ($null -ne $watcher) { Invoke-WatcherStep $watcher }
         }
         $process.WaitForExit()
     } finally {
@@ -1580,7 +1627,7 @@ function Invoke-Proxy {
                 break
             }
             if ($done -eq 1) { Write-ProxyDebug ('the server closed its side (faulted: {0})' -f $down.IsFaulted); break }
-            if ($null -ne $watcher) { try { Invoke-WatcherTick $watcher } catch { $watcher.LastSeq = -1; Write-WatchDebug ('tick error: ' + $_.Exception.Message + ' at ' + $_.InvocationInfo.PositionMessage) } }
+            if ($null -ne $watcher) { Invoke-WatcherStep $watcher }
         }
         foreach ($t in @($up, $down)) {
             if ($t.IsFaulted) {

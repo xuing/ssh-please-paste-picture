@@ -35,8 +35,8 @@ and first mirror the change into the model (see "When the code changes on purpos
 ## Run
 
 ```sh
-verify/watcher/check.sh              # the gate: 13 TLC runs, 2-3 minutes
-verify/watcher/check.sh --mutants    # also the 6 broken variants: each must still fail
+verify/watcher/check.sh              # the gate: 5 TLC runs, about 1 minute
+verify/watcher/check.sh --mutants    # also the 10 broken variants: each must still fail
 verify/watcher/check.sh --keep DIR   # keep configs and TLC output (traces) in DIR
 ```
 
@@ -45,14 +45,14 @@ It needs Java 11 or later (`JAVA`, or `java` on PATH). The first run downloads
 the script) and caches it in `SSH_PASTE_TLA_CACHE` (default
 `~/.cache/ssh-paste-tla`, or under `XDG_CACHE_HOME`). On Windows, run it from Git
 Bash or WSL. CI runs `check.sh --mutants` in the job "Model check (clipboard
-watcher)"; all 19 runs took 3 minutes on 4 cores.
+watcher)"; all 15 runs took 2 minutes on 4 cores.
 
 The script runs a table of TLC runs (layout, budget, variants, properties,
 expected result) and exits 1 when any result differs from the table: a property
 that should hold breaks, a known finding no longer shows, or a broken variant
-passes. Three runs check the code with the three candidate fixes from the
-findings below, where every invariant holds: while a property is a known finding
-in the code, those runs are what catch a new break of it. Exit 2 means TLC did
+passes. A run can also be listed as `finding`: a real bug the check found and
+the code still has; it then turns the check red once the bug is gone, so its row
+moves to `hold` with the fix. None is listed today. Exit 2 means TLC did
 not finish (a syntax or model error: read the output).
 `verify/watcher/ClipboardWatcher.cfg` is a single config with every invariant on
 the one-session layout, for reading with `/statechart` or a manual TLC run.
@@ -83,11 +83,11 @@ saw no `$otherSession` and no failing upload, so it either promised the path or
 found its expected path already there. A retry after a failure, and a copy that
 another tab of the same window handles, are not covered by design.
 
-The bound 5 in BoundedWrites: a write decided just before the user acted can land
-after it (1), then the promise and `Sync-ClipboardText` of another name (2), and a
-late write of the other session can undo that entry twice, one more promise each
-(2). TLC finds no more within these bounds, and 3 with `fix_seq_in_write`. A loop
-between sessions exceeds any bound.
+The bound 3 in BoundedWrites: a session's promise and `Sync-ClipboardText` of
+another name (2), plus one write that repairs an entry the other session changed
+(1). `Write` refuses a write decided before the user acted; without that
+(`write_ignores_seq`) late writes reach 5. A loop between sessions exceeds any
+bound.
 
 ## Layouts, bounds and assumptions
 
@@ -131,19 +131,19 @@ these bounds and assumptions only.
 
 ## Coverage record
 
-Sync commit: **34c1759** (`watcher: a new promise survives the clipboard being
-emptied for it`). At this commit the model was confirmed against the code below.
+Sync commit: the commit `watcher: a paste never loses a newer copy or gets
+another window's path` (the fixes of the first findings; before it, 34c1759). At this commit the model was confirmed against the code below.
 
 | Model action | Code in `src/ssh-paste.ps1` |
 | --- | --- |
-| `Tick` | `Invoke-WatcherTick` up to the first write: `GetForegroundWindow`, `GetClipboardSequenceNumber` vs `$W.LastSeq`, `Read-ClipboardImage` (`SshPasteNative.ReadSnapshot`, marker text), `$W.LastForeground` / `$W.WakeAt`, `Get-ExpectedText`, `$otherSession`, `$shown`, `Test-UploadFailing`, the branch for another window in front, and the sequence/foreground check before `Set-SshPasteClipboard` |
+| `Tick` | `Invoke-WatcherTick` up to the first write: `GetForegroundWindow`, `GetClipboardSequenceNumber` vs `$W.LastSeq`, `Read-ClipboardImage` (`SshPasteNative.ReadSnapshot`, marker text), `$W.LastForeground` / `$W.WakeAt`, `Get-ExpectedText`, `$otherSession`, `$shown` (with `Test-ClipboardAnswers`), `Test-UploadFailing`, the branch for another window in front, and the sequence/foreground check before `Set-SshPasteClipboard` |
 | `Send` (inside `Tick`, `Sync`, `Restore`) | `Set-SshPasteClipboard` (`New-DibBytes`, marker) and `PendingClipboard.Publish`: withdraw an open promise, then `SendMessageTimeout(WM_APP_PUBLISH)` |
-| `WriteOk` / `WriteFails` | `PendingClipboard.Write` on the window thread: 20 x `OpenClipboard`, `EmptyClipboard` (the old owner's `WM_DESTROYCLIPBOARD` handler withdraws its promise), then the new promise state, `SetClipboardData`, `CloseClipboard`. On failure `Publish` returns 0, `Set-SshPasteClipboard` throws, the loop's catch sets `LastSeq = -1` |
+| `WriteOk` / `WriteFails` | `PendingClipboard.Write` on the window thread: 20 x `OpenClipboard`, the sequence number against the entry's `Basis` (refuse if it moved), `EmptyClipboard` (the old owner's `WM_DESTROYCLIPBOARD` handler withdraws its promise), then the new promise state, `SetClipboardData`, `CloseClipboard`. On failure `Publish` returns 0, `Set-SshPasteClipboard` throws, the loop's catch sets `LastSeq = -1` |
 | `GetPath` | `Get-UploadedPath` / `Get-UploadedItemPath`: cached path, backoff `$null`, or start `Send-Image` |
 | `UploadEnds` | `Send-Image` returns (`Read-UploadReply`: plain or per-user name) or throws; `$W.Uploaded` / `$W.Failed`; `Complete-ClipboardPromise` (`Resolve` / `Fail`); the `$path -cne $expected -or -not ($wrote -or $shown -or $otherSession)` test |
 | `Sync` | `Sync-ClipboardText`, including its own sequence/foreground check |
 | `Restore` | `Restore-Clipboard` (wrapper mode, `Invoke-Wrapper`'s `finally`) |
-| `UserPastes`, `Render` | Windows Terminal's paste; `WM_RENDERFORMAT` -> `RenderText` |
+| `UserPastes`, `Render` | Windows Terminal's paste; `WM_RENDERFORMAT` -> `RenderText`, which answers only when `GetForegroundWindow` is the marker's owner |
 | `UserCopies`, `UserSwitches`, `OtherApp*`, `Session*`, `RetryTimeComes` | the environment: other apps' copies, focus, another program holding the clipboard, ssh exiting (wrapper or `--proxy`), the retry backoff |
 
 Move the sync commit forward only after you have confirmed that every row still
@@ -171,66 +171,27 @@ must still break, which shows the property can still fail. If the change removes
 the code a variant breaks, replace the variant with one that breaks the new code.
 Update the coverage record and the sync commit.
 
-## Findings at the sync commit
+## Findings, fixed
 
-The check passes on the code only because these runs are listed as `finding`.
-Each is a real behavior of 34c1759 within the assumptions above.
+The first run of this check, on 34c1759, found four ways the code broke a rule.
+The commit that moved the sync commit fixed them; each old behavior is now a
+broken variant below, so the check fails if it comes back.
 
-1. **A copy made while the watcher writes is erased** (NoLostCopy, all layouts).
-   The user copies a screenshot and switches to the terminal.
-   `Invoke-WatcherTick` checks that `GetClipboardSequenceNumber()` still equals
-   `$state.Seq`, then calls `Set-SshPasteClipboard`, which runs `New-DibBytes` (a
-   PowerShell loop over every row of the image) and `Publish`. The user copies
-   text now. The window thread's `Write` calls `EmptyClipboard`, which erases the
-   text, and writes the old image with the promised path. The same gap is in the
-   branch for another window in front, `Sync-ClipboardText` and
-   `Restore-Clipboard`. In two tabs it also lets the later session replace the
-   entry the other tab already wrote, against the README ("A session leaves alone
-   an entry that another session in the same window already updated"); when that
-   session's upload fails, Ctrl+V gets nothing (NoLocalPathDuringUpload, `tabs`).
-   Candidate fix, checked as `fix_seq_in_write`: pass the expected sequence number
-   in the `Entry` and compare it in `Write` after `OpenClipboard`, before
-   `EmptyClipboard`.
-2. **A Ctrl+V in another window during the upload pastes this session's path**
-   (PastedPathOnThisHost, layout `one`). Session A promises the path and
-   starts `Send-Image`. The user switches to terminal t2 and presses Ctrl+V.
-   Windows asks A's window; `RenderText` waits for the upload and gives A's path
-   (host X) to t2. A cannot put the plain image back: its tick is inside
-   `Send-Image`. In two windows, session B also sees A's marker text equal to its
-   own `$expected` (the name is the content hash on every server), so `$shown` is
-   true and B relies on A's promise. Candidate fixes: `RenderText` gives the path
-   only when the window in front at `WM_RENDERFORMAT` is the marker's owner window
-   (`fix_render_in_owner_window`), and `$shown` counts only this session's own
-   entry (`fix_shown_live`).
-3. **A promise that can no longer answer stays, and Ctrl+V pastes nothing**
-   (ReadyPathPastes, layout `one`). The shortest path TLC finds: the user copies
-   image files and switches to the terminal; the tick promises the path and
-   uploads; the user switches to another window; the upload fails,
-   `Complete-ClipboardPromise` fails the promise, and `Sync-ClipboardText` leaves
-   the path because the window in front changed since the tick began; the user
-   comes back before the next tick puts the plain image back. After the backoff
-   the retry succeeds, but the tick sees its marker text equal to `$expected`
-   (`$shown`) and writes nothing. Every Ctrl+V in the terminal then gets nothing
-   from `RenderText` until the user switches away and back or copies again.
-   Other paths to the same state: `Publish` withdraws a resolved promise to put
-   the plain image back, then `Write` fails because another program holds the
-   clipboard; or the upload fails while another program holds the clipboard, so
-   `Sync-ClipboardText` cannot read it.
-   Candidate fix, checked as `fix_shown_live`: `$shown` and the matching early
-   return in `Sync-ClipboardText` count an entry as done only if this session
-   wrote it and its PendingClipboard can still give the text.
-4. **In two windows, a session relies on the other's promise during its upload**
-   (NoLocalPathDuringUpload, layout `windows`). A promises the path in t1; the
-   user switches to t2; B finds A's marker text equal to its own `$expected`, so
-   `$shown` is true and B uploads without writing. Ctrl+V in t2 asks A's window;
-   A's upload fails, so the paste gets nothing while B's upload still runs (and
-   had A's succeeded, t2 would get a path on A's host, as in finding 2). Fixed
-   in the model by `fix_shown_live` together with `fix_seq_in_write`.
-
-With all three candidate fixes (the last three runs of `check.sh`) every
-invariant holds on all three layouts.
-
-## Variants (`Mutants` in the model, `--mutants` in the script)
+1. NoLostCopy (`write_ignores_seq`): the tick checked the sequence number, then
+   spent time in `New-DibBytes` and `Publish` before `Write` called
+   `EmptyClipboard`, erasing a copy the user made in between. Now each write
+   carries `-Basis` and `Write` compares it after `OpenClipboard`.
+2. PastedPathOnThisHost (`render_in_any_window`): a Ctrl+V in another terminal
+   during the upload waited and got this session's path. Now `RenderText` answers
+   only when the window in front is the marker's owner, and at once otherwise.
+3. ReadyPathPastes (`shown_any_entry`): a failed promise left on the clipboard
+   (the user was in another window when the upload failed) counted as shown, so a
+   successful retry wrote nothing and every Ctrl+V got nothing. Now `$shown` and
+   `Sync-ClipboardText`'s early return need this session's token and
+   `Test-ClipboardAnswers` (`PendingClipboard.CanAnswer`).
+4. NoLocalPathDuringUpload in two windows (`shown_any_entry`, layout `windows`):
+   a session relied on another window's session's promise of the same name. Fixed
+   by the same `$shown` change.
 
 Broken variants, each a change to the code that a property must catch:
 
@@ -239,9 +200,9 @@ Broken variants, each a change to the code that a property must catch:
 | `write_path_before_upload` | `Set-SshPasteClipboard` without `-Promise` before the upload (the code of b1b0085) | PastedPathExists: Ctrl+V during the upload pastes a path that is not on the server yet (what ac31bcd fixed) |
 | `resolve_on_failure` | `Complete-ClipboardPromise $expected` whatever the upload returned | PastedPathExists |
 | `upload_before_write` | upload first, write the path afterwards (before b1b0085) | NoLocalPathDuringUpload: Ctrl+V during the upload pastes the local Explorer path |
-| `promise_before_empty` (with `fix_shown_live`) | `Publish` sets the new promise before `Write`'s `EmptyClipboard` (before 34c1759) | ReadyPathPastes: back in the terminal, the re-promised cached path is withdrawn by our own `EmptyClipboard`; Ctrl+V gets nothing |
+| `promise_before_empty` | `Publish` sets the new promise before `Write`'s `EmptyClipboard` (before 34c1759) | ReadyPathPastes: back in the terminal, the re-promised cached path is withdrawn by our own `EmptyClipboard`; Ctrl+V gets nothing |
 | `complete_only_on_success` | `Complete-ClipboardPromise` only when the upload succeeded | PasteAnswered: a paste waits forever (until the 30 s limit) on a failed upload |
 | `strip_any_owner` | the branch for another window in front drops `-and $state.Owner -ne $fgKey` | BoundedWrites: two windows' sessions rewrite each other without end |
-
-Candidate fixes (must hold): `fix_seq_in_write`, `fix_shown_live`,
-`fix_render_in_owner_window`, described in the findings.
+| `write_ignores_seq` | `Write` does not compare the sequence number with `Basis` (before the fixes) | NoLostCopy: a copy made while the watcher writes is erased |
+| `render_in_any_window` | `RenderText` answers a paste in any window (before the fixes) | PastedPathOnThisHost: a paste in another terminal gets this session's path |
+| `shown_any_entry` | `$shown` and `Sync-ClipboardText` trust any entry whose marker text matches (before the fixes) | ReadyPathPastes (`one`) and NoLocalPathDuringUpload (`windows`) |

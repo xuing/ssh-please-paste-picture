@@ -310,8 +310,8 @@ runs `ssh` directly to avoid uploading twice.
 
 `ssh-paste` checks the clipboard every 250 ms. It uploads an image up to 64 MB
 when the session window is in front. The upload happens when you switch back to
-the window, not on Ctrl+V. On a slow link, wait a moment, or press Ctrl+V again
-if nothing pastes.
+the window, not on Ctrl+V. A Ctrl+V during the upload waits for it, up to 30
+seconds, then pastes the path; if the upload fails, it pastes nothing.
 
 Each image uploads once per session. Returning to an image after 6 hours
 uploads it again so day-old server cleanup never deletes a needed path.

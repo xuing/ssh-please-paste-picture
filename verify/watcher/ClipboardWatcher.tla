@@ -159,7 +159,7 @@ AfterEmpty ==
     THEN [prom EXCEPT ![cb.by] = Withdrawn]
     ELSE prom
 
-\* Only for the fix_shown_live variant: this session wrote the clipboard
+\* $shown and Sync-ClipboardText (unless shown_any_entry): this session wrote the clipboard
 \* entry, and its window can still give the text (it is concrete, or the
 \* promise is open and not failed).
 CanStillPaste(w, s) ==
@@ -292,11 +292,11 @@ UserSwitches(x) ==
 \* RenderText of session w's window, once it need not wait: promisedText if
 \* the promise is open, else nothing. A path it gives stays on the clipboard
 \* as concrete text; SetClipboardData may or may not move the sequence number.
-\* win: the window in front when WM_RENDERFORMAT came. The variant
-\* fix_render_in_owner_window gives the path only to the marker's window.
+\* win: the window in front when WM_RENDERFORMAT came; only the marker's
+\* window gets the path (any window with the variant render_in_any_window).
 Rendered(w, win) ==
     IF /\ prom[w].open /\ prom[w].val # None
-       /\ Has("fix_render_in_owner_window") => win = cb.owner
+       /\ ~Has("render_in_any_window") => win = cb.owner
     THEN prom[w].val ELSE "nothing"
 KeepRendered(res) ==
     IF res # "nothing"
@@ -404,7 +404,7 @@ Tick(w) ==
                    e == IF i \in Images THEN Expected(w, i) ELSE None
                    otherSession == s.marked /\ s.hasText /\ s.owner = fg /\ s.by # w
                    shown == /\ s.marked /\ s.hasText /\ s.val = e
-                            /\ Has("fix_shown_live") => CanStillPaste(w, s)
+                            /\ ~Has("shown_any_entry") => CanStillPaste(w, s)
                    failing == i \in Images /\ i \in failed[w]
                IN /\ fresh' = [fresh EXCEPT ![w] = TRUE]
                   /\ st' = [st EXCEPT ![w] = s]
@@ -476,7 +476,7 @@ Sync(w) ==
                         \/ /\ t # None
                            /\ \/ ~c.marked /\ c.hasText
                               \/ /\ c.marked /\ c.hasText /\ c.val = t
-                                 /\ Has("fix_shown_live") => CanStillPaste(w, c)
+                                 /\ ~Has("shown_any_entry") => CanStillPaste(w, c)
                               \/ c.marked /\ c.hasText /\ c.owner = tfg[w] /\ c.by # w
                         \/ t = None /\ ~(c.marked /\ c.hasText /\ c.by = w)
                         \/ fg # tfg[w]
@@ -509,7 +509,7 @@ WriteOk(w) ==
     /\ alive[w]
     /\ pc[w] \in WritePcs
     /\ ~Blocked
-    /\ Has("fix_seq_in_write") => seq = pub[w].basis
+    /\ ~Has("write_ignores_seq") => seq = pub[w].basis
     /\ LET e == pub[w]
            p1 == AfterEmpty
        IN /\ cb' = [content |-> e.content, by |-> w, marked |-> TRUE, owner |-> e.owner,
@@ -544,7 +544,7 @@ WriteFails(w) ==
     /\ pc[w] \in WritePcs
     /\ \/ busy
        \/ paste.phase = "asking" /\ paste.src # w
-       \/ Has("fix_seq_in_write") /\ ~Blocked /\ seq # pub[w].basis
+       \/ ~Has("write_ignores_seq") /\ ~Blocked /\ seq # pub[w].basis
     /\ pub' = [pub EXCEPT ![w] = NoEntry]
     /\ prom' = IF Has("promise_before_empty")
                THEN [prom EXCEPT ![w].open = FALSE] ELSE prom
@@ -631,9 +631,10 @@ NoLostCopy == ~lost
 \* before the user acted can land after it (1), then the session's own promise
 \* and Sync-ClipboardText of another name (2); a late write of the other
 \* session (see NoLostCopy) can undo that entry twice, each costing one more
-\* promise (2). TLC finds no more than 5 within the bounds of check.sh, and 3
-\* with the fix_seq_in_write variant. A loop between sessions exceeds any bound.
-MaxWritesPerAction == 5
+\* promise (2). Write refuses a write decided before the user acted, so TLC
+\* finds no more than 3 within the bounds of check.sh (5 with the variant
+\* write_ignores_seq). A loop between sessions exceeds any bound.
+MaxWritesPerAction == 3
 BoundedWrites == \A w \in Watchers : writes[w] <= MaxWritesPerAction
 
 \* A paste that waits for a promised path gets an answer from the session

@@ -2681,6 +2681,7 @@ public static class SshPasteNative {
             $script:FailNext = 0           # how many of the next uploads fail
             $script:DuringUpload = $null   # runs inside Send-Image: something happens while we upload
             $script:AfterRead = $null      # runs after Read-ClipboardImage took its snapshot
+            $script:BeforeWrite = $null    # runs inside Set-SshPasteClipboard, before the clipboard is written
             $script:ReadFails = 0
             $script:Prefix = @{}           # ssh path -> directory the "server" answers with
             $script:NextWindow = $script:TerminalA
@@ -2754,10 +2755,29 @@ public static class SshPasteNative {
             return $state
         }
         Mock Set-SshPasteClipboard {
-            param([byte[]]$Png, [string]$Text, [long]$Owner, [long]$Token)
-            $script:Entry = @{ Png = $Png; Text = $Text; HasFiles = $false; Owner = $Owner; Token = $Token }
+            # Like PendingClipboard.Write: refuses when the clipboard moved past -Basis.
+            # Promise is 'open' for a promised text, then 'resolved' or 'failed'.
+            param([byte[]]$Png, [string]$Text, [long]$Owner, [long]$Token, [switch]$Promise, [long]$Basis)
+            if ($null -ne $script:BeforeWrite) { & $script:BeforeWrite }
+            if ($Basis -ne [long][SshPasteNative]::Sequence) { throw 'could not write the clipboard: the clipboard changed since it was read' }
+            $state = $null
+            if ($Promise) { $state = 'open' }
+            $script:Entry = @{ Png = $Png; Text = $Text; HasFiles = $false; Owner = $Owner; Token = $Token; Promise = $state }
             [SshPasteNative]::Sequence++
             [void]$script:Writes.Add(@{ Text = $Text; Owner = $Owner; Token = $Token })
+        }
+        # One promise for the whole fake clipboard: a session completes the promise of the
+        # entry on the clipboard, which in these tests is always its own.
+        Mock Complete-ClipboardPromise {
+            param([string]$Text)
+            if ($null -ne $script:Entry -and $script:Entry['Promise'] -eq 'open') {
+                if ([string]::IsNullOrEmpty($Text)) { $script:Entry.Promise = 'failed' } else { $script:Entry.Promise = 'resolved' }
+            }
+        }
+        Mock Test-ClipboardAnswers {
+            param([string]$Text)
+            $e = $script:Entry
+            return ($null -ne $e -and $e.Text -ceq $Text -and $e['Promise'] -ne 'failed')
         }
         Mock Send-Image {
             param($SshPath, $Arguments, $Png, $Hash, $TimeoutSeconds)
@@ -3256,6 +3276,58 @@ public static class SshPasteNative {
             $script:Entry.Token | Should -Be $b.Token
             Invoke-Ticks $a 5
             $script:Entry.Token | Should -Be $b.Token
+        }
+    }
+
+    Context 'the counterexamples of the model check (verify/watcher)' {
+        It 'leaves a copy made while it writes alone, and tries again on the next tick (NoLostCopy)' {
+            $png = New-FakePng 1
+            $w = New-FakeWatcher $script:TerminalA
+            Set-Focus $script:TerminalA
+            Copy-FromApp $png
+            # The user copies text after the tick read the clipboard, before the write lands.
+            $script:BeforeWrite = { $script:BeforeWrite = $null; Copy-TextFromApp 'copied meanwhile' }
+            Invoke-WatcherStep $w
+            $script:Entry.Text | Should -BeExactly 'copied meanwhile'
+            $script:Entry.Png | Should -BeNullOrEmpty
+            Invoke-Ticks $w 5
+            $script:Entry.Text | Should -BeExactly 'copied meanwhile' -Because 'text the user copied is never replaced'
+            $script:Writes.Count | Should -Be 0
+        }
+
+        It 'writes the path again when a failed promise was left on the clipboard and the retry succeeds (ReadyPathPastes)' {
+            $png = New-FakePng 1
+            $w = New-FakeWatcher $script:TerminalA
+            Set-Focus $script:TerminalA
+            Copy-FromApp $png
+            # The upload fails while the user is in another window, so the failed promise stays.
+            $script:FailNext = 1
+            $script:DuringUpload = { Set-Focus $script:Other }
+            Invoke-Ticks $w 1
+            $script:Entry.Promise | Should -Be 'failed'
+            # The user is back before the next tick, and the retry is due.
+            $script:DuringUpload = $null
+            Set-Focus $script:TerminalA
+            Move-Clock $w 31
+            Invoke-Ticks $w 1
+            $script:Uploads.Count | Should -Be 2
+            $script:Entry.Text | Should -BeExactly (Get-PathFor $png)
+            $script:Entry.Promise | Should -Not -Be 'failed' -Because 'Ctrl+V must get the path, not nothing'
+        }
+
+        It 'does not rely on the entry of a session in another window, even when the path has the same name (NoLocalPathDuringUpload)' {
+            $png = New-FakePng 1
+            $a = New-FakeWatcher $script:TerminalA 'ssh-a'
+            $b = New-FakeWatcher $script:TerminalB 'ssh-b'
+            Set-Focus $script:TerminalA
+            Copy-FromApp $png
+            Invoke-Ticks $a 1
+            $script:Entry.Token | Should -Be $a.Token
+            Set-Focus $script:TerminalB
+            Invoke-Ticks $b 1
+            $script:Entry.Token | Should -Be $b.Token -Because 'a paste in this window must ask this session, which uploads to this server'
+            $script:Entry.Owner | Should -Be $script:TerminalB
+            $script:Entry.Text | Should -BeExactly (Get-PathFor $png)
         }
     }
 
@@ -4932,7 +5004,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
                     $script:Png = $ms.ToArray()
                 } finally { $bitmap.Dispose() }
                 try {
-                    Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-probe.png' -Owner 4242
+                    Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/ssh-paste-probe.png' -Owner 4242
                     [void][System.Windows.Forms.Clipboard]::GetDataObject()
                 } catch {
                     $script:SkipReason = 'the clipboard is not available here: ' + $_.Exception.Message
@@ -4945,7 +5017,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
         It 'reads back the PNG bytes, the owner, the session token and the text that were written' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-            Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-0123.png' -Owner 987654321 -Token 5550123456789
+            Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/ssh-paste-0123.png' -Owner 987654321 -Token 5550123456789
             $state = Read-ClipboardImage
             $state | Should -Not -BeNullOrEmpty
             ($state.Png -join ',') | Should -BeExactly ($script:Png -join ',')
@@ -4958,7 +5030,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
         It 'writes a plain image with an owner of 0 when there is no text' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-            Set-SshPasteClipboard -Png $script:Png -Text $null -Owner 0 -Token 77
+            Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text $null -Owner 0 -Token 77
             $state = Read-ClipboardImage
             $state | Should -Not -BeNullOrEmpty
             $state.HasText | Should -BeFalse
@@ -4968,9 +5040,17 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
             ($state.Png -join ',') | Should -BeExactly ($script:Png -join ',')
         }
 
+        It 'refuses to write over a copy made after the clipboard was read, and the copy stays' {
+            if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
+            $read = [long][SshPasteNative]::GetClipboardSequenceNumber()
+            [System.Windows.Forms.Clipboard]::SetText('copied after the read')
+            { Set-SshPasteClipboard -Basis $read -Png $script:Png -Text '/tmp/x.png' -Owner 1 -Token 2 } | Should -Throw '*changed since it was read*'
+            [System.Windows.Forms.Clipboard]::GetText() | Should -BeExactly 'copied after the read'
+        }
+
         It 'also offers the image as a bitmap for other apps' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-            Set-SshPasteClipboard -Png $script:Png -Text '/tmp/x.png' -Owner 1
+            Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/x.png' -Owner 1
             $image = [System.Windows.Forms.Clipboard]::GetImage()
             $image | Should -Not -BeNullOrEmpty
             try { $image.Width | Should -Be 24; $image.Height | Should -Be 16 } finally { $image.Dispose() }
@@ -4978,7 +5058,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
         It 'marks the rewrite so Windows keeps it out of clipboard history and cloud sync' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-            Set-SshPasteClipboard -Png $script:Png -Text '/tmp/x.png' -Owner 1
+            Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/x.png' -Owner 1
             $data = [System.Windows.Forms.Clipboard]::GetDataObject()
             $formats = @($data.GetFormats($false))
             foreach ($f in @('ExcludeClipboardContentFromMonitorProcessing', 'CanIncludeInClipboardHistory', 'CanUploadToCloudClipboard', $script:MarkerFormat)) {
@@ -4993,7 +5073,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
         It 'writes a marker: the owner window, the session token, then the text in UTF-16' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-            Set-SshPasteClipboard -Png $script:Png -Text '/tmp/x.png' -Owner 111 -Token 222
+            Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/x.png' -Owner 111 -Token 222
             $raw = Get-DataBytes ([System.Windows.Forms.Clipboard]::GetDataObject().GetData($script:MarkerFormat))
             [BitConverter]::ToInt64($raw, 0) | Should -Be 111
             [BitConverter]::ToInt64($raw, 8) | Should -Be 222
@@ -5002,6 +5082,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
         Context 'a promised text (delayed rendering)' {
             BeforeAll {
+                function Get-FrontWindow { return [SshPasteNative]::GetForegroundWindow().ToInt64() }
                 function Start-TextReader {
                     # Reads CF_UNICODETEXT on another thread, the way a paste does, and
                     # reports how long the read waited.
@@ -5023,7 +5104,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
             It 'makes a paste wait until the path is given, then pastes the path' {
                 if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-                Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-promised.png' -Owner 5 -Token 6 -Promise
+                Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/ssh-paste-promised.png' -Owner (Get-FrontWindow) -Token 6 -Promise
                 $reader = Start-TextReader
                 Start-Sleep -Milliseconds 900
                 $reader.Handle.IsCompleted | Should -BeFalse -Because 'the paste waits while the upload runs'
@@ -5035,7 +5116,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
             It 'gives a waiting paste nothing when the upload fails' {
                 if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-                Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-failed.png' -Owner 5 -Token 6 -Promise
+                Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/ssh-paste-failed.png' -Owner (Get-FrontWindow) -Token 6 -Promise
                 $reader = Start-TextReader
                 Start-Sleep -Milliseconds 500
                 $reader.Handle.IsCompleted | Should -BeFalse -Because 'the paste waits until the upload ends, here in failure'
@@ -5045,7 +5126,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
             It 'keeps the image and the marker readable at once while the text is promised' {
                 if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-                Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-open.png' -Owner 5 -Token 6 -Promise
+                Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/ssh-paste-open.png' -Owner (Get-FrontWindow) -Token 6 -Promise
                 $watch = [System.Diagnostics.Stopwatch]::StartNew()
                 $state = Read-ClipboardImage
                 $watch.ElapsedMilliseconds | Should -BeLessThan 2000 -Because 'reading our own entry never asks for the promised text'
@@ -5055,9 +5136,34 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
                 Complete-ClipboardPromise $null
             }
 
+            It 'gives a paste in another window nothing, at once' {
+                if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
+                Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/ssh-paste-elsewhere.png' -Owner ((Get-FrontWindow) + 4) -Token 6 -Promise
+                $result = Wait-TextReader (Start-TextReader)
+                $result.Text | Should -BeNullOrEmpty -Because 'the path is on this session''s server, not the server of the window that pastes'
+                $result.Ms | Should -BeLessThan 5000 -Because 'it does not wait for the upload'
+                Complete-ClipboardPromise $null
+            }
+
+            It 'answers whether a paste still gets the text: yes while promised or resolved, no once failed' {
+                if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
+                Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/a.png' -Owner (Get-FrontWindow) -Token 6 -Promise
+                Test-ClipboardAnswers '/tmp/a.png' | Should -BeTrue -Because 'the upload still runs'
+                Test-ClipboardAnswers '/tmp/b.png' | Should -BeFalse -Because 'the entry carries another text'
+                Complete-ClipboardPromise '/tmp/a.png'
+                Test-ClipboardAnswers '/tmp/a.png' | Should -BeTrue
+                Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/a.png' -Owner (Get-FrontWindow) -Token 6 -Promise
+                Complete-ClipboardPromise $null
+                Test-ClipboardAnswers '/tmp/a.png' | Should -BeFalse -Because 'a paste of a failed promise gets nothing'
+                Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/a.png' -Owner 1 -Token 6
+                Test-ClipboardAnswers '/tmp/a.png' | Should -BeTrue -Because 'the text was written at once'
+                [System.Windows.Forms.Clipboard]::SetText('copied by the user')
+                Test-ClipboardAnswers '/tmp/a.png' | Should -BeFalse -Because 'the entry is no longer ours'
+            }
+
             It 'keeps the image on the clipboard after the clipboard window closes' {
                 if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-                Set-SshPasteClipboard -Png $script:Png -Text '/tmp/ssh-paste-closing.png' -Owner 5 -Token 6 -Promise
+                Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/ssh-paste-closing.png' -Owner (Get-FrontWindow) -Token 6 -Promise
                 Close-Clipboard
                 try {
                     $state = Read-ClipboardImage
@@ -5083,7 +5189,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
         It 'does not read a format that is larger than the limit' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-            Set-SshPasteClipboard -Png $script:Png -Text $null -Owner 0
+            Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text $null -Owner 0
             $raw = [SshPasteNative]::ReadFormats([uint32[]]@($script:FormatPng, $script:FormatMarker, 0), 32)
             $raw[0] | Should -BeNullOrEmpty
             $raw[1] | Should -Not -BeNullOrEmpty
@@ -5105,10 +5211,10 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
 
         It 'Read-ClipboardImage reports the sequence number of what it read, and it moves when the clipboard changes' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
-            Set-SshPasteClipboard -Png $script:Png -Text $null -Owner 0 -Token 5
+            Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text $null -Owner 0 -Token 5
             $first = Read-ClipboardImage
             $first.Seq | Should -Be ([SshPasteNative]::GetClipboardSequenceNumber())
-            Set-SshPasteClipboard -Png $script:Png -Text '/tmp/x.png' -Owner 9 -Token 5
+            Set-SshPasteClipboard -Basis ([SshPasteNative]::GetClipboardSequenceNumber()) -Png $script:Png -Text '/tmp/x.png' -Owner 9 -Token 5
             $second = Read-ClipboardImage
             $second.Seq | Should -Not -Be $first.Seq
             $second.Text | Should -BeExactly '/tmp/x.png'

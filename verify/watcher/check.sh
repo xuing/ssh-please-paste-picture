@@ -45,32 +45,26 @@ done
 ONE='one|6|{"i1", "i2"}'
 WINDOWS='windows|4|{"i2"}'
 TABS='tabs|3|{"i2"}'
-FIXES='{"fix_seq_in_write", "fix_shown_live", "fix_render_in_owner_window"}'
 ALL='PastedPathExists PastedPathOnThisHost NoLocalPathDuringUpload ReadyPathPastes NoLostCopy BoundedWrites'
 runs=(
-    "$ONE|{}|INVARIANT|PastedPathExists NoLocalPathDuringUpload BoundedWrites|hold"
+    "$ONE|{}|INVARIANT|$ALL|hold"
     'one|5|{"i1", "i2"}|{}|PROPERTY|PasteAnswered|hold'
-    "$WINDOWS|{}|INVARIANT|PastedPathExists BoundedWrites|hold"
+    "$WINDOWS|{}|INVARIANT|$ALL|hold"
     'windows|3|{"i2"}|{}|PROPERTY|PasteAnswered|hold'
-    "$TABS|{}|INVARIANT|PastedPathExists PastedPathOnThisHost ReadyPathPastes BoundedWrites|hold"
-    "$ONE|{}|INVARIANT|NoLostCopy|finding"
-    "$ONE|{}|INVARIANT|PastedPathOnThisHost|finding"
-    "$ONE|{}|INVARIANT|ReadyPathPastes|finding"
-    "$WINDOWS|{}|INVARIANT|NoLocalPathDuringUpload|finding"
-    "$TABS|{}|INVARIANT|NoLocalPathDuringUpload|finding"
-    # The code with the three candidate fixes: every invariant holds. While a property
-    # is a known finding in the code, these runs are what catch a new break of it.
-    "$ONE|$FIXES|INVARIANT|$ALL|hold"
-    "$WINDOWS|$FIXES|INVARIANT|$ALL|hold"
-    "$TABS|$FIXES|INVARIANT|$ALL|hold"
+    "$TABS|{}|INVARIANT|$ALL|hold"
 )
 mutant_runs=(
     "$ONE|{\"write_path_before_upload\"}|INVARIANT|PastedPathExists|break"
     "$ONE|{\"resolve_on_failure\"}|INVARIANT|PastedPathExists|break"
     "$ONE|{\"upload_before_write\"}|INVARIANT|NoLocalPathDuringUpload|break"
-    "$ONE|{\"fix_shown_live\", \"promise_before_empty\"}|INVARIANT|ReadyPathPastes|break"
+    "$ONE|{\"promise_before_empty\"}|INVARIANT|ReadyPathPastes|break"
     'one|4|{"i1", "i2"}|{"complete_only_on_success"}|PROPERTY|PasteAnswered|break'
     "$WINDOWS|{\"strip_any_owner\"}|INVARIANT|BoundedWrites|break"
+    # The code before the model check's fixes:
+    "$ONE|{\"write_ignores_seq\"}|INVARIANT|NoLostCopy|break"
+    "$ONE|{\"render_in_any_window\"}|INVARIANT|PastedPathOnThisHost|break"
+    "$ONE|{\"shown_any_entry\"}|INVARIANT|ReadyPathPastes|break"
+    "$WINDOWS|{\"shown_any_entry\"}|INVARIANT|NoLocalPathDuringUpload|break"
 )
 if [ "$mutants" = 1 ]; then runs+=("${mutant_runs[@]}"); fi
 
