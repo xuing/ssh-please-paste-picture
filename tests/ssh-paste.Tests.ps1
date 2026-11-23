@@ -1020,6 +1020,17 @@ Describe 'Copied image files (CF_HDROP)' {
         $text | Should -BeExactly ('/tmp/ssh-paste-' + $items[0].Hash + '.png /tmp/ssh-paste-' + $items[1].Hash + '.jpg')
         Should -Invoke Send-Image -Times 2 -Exactly
     }
+    It 'with SSH_PASTE_DEBUG set, uploads with -v and drops LogLevel=ERROR together with its -o' {
+        Mock Send-Image { $script:DebugArgs = $Arguments; return ('/tmp/ssh-paste-' + $Hash + '.' + $Ext) }
+        $w = @{ SshPath = 'ssh'; SshVersion = $null; Parsed = (Split-SshArguments @('h')); NoProxy = $false; Pin = $null; Uploaded = @{}; Failed = @{}; WakeAt = [DateTime]::MaxValue }
+        $item = (Read-ImageFiles @($script:ImgA))[0]
+        $plain = @(Get-UploadSshArguments -Parsed $w.Parsed -Hash $item.Hash -Size $item.Bytes.Length -Ext $item.Ext)
+        $i = [Array]::IndexOf([object[]]$plain, 'LogLevel=ERROR')
+        $env:SSH_PASTE_DEBUG = '1'
+        try { Get-UploadedItemPath $w $item | Should -Not -BeNullOrEmpty } finally { Remove-Item Env:SSH_PASTE_DEBUG }
+        $expected = @('-v') + @(for ($k = 0; $k -lt $plain.Count; $k++) { if ($k -ne $i - 1 -and $k -ne $i) { $plain[$k] } })
+        @($script:DebugArgs) | Should -BeExactly $expected
+    }
     It 'pastes nothing while one of the files failed to upload' {
         Mock Send-Image { if ($Ext -eq 'jpg') { throw 'ssh exited with 255: refused' }; return ('/tmp/ssh-paste-' + $Hash + '.' + $Ext) }
         $w = @{ SshPath = 'ssh'; SshVersion = $null; Parsed = (Split-SshArguments @('h')); NoProxy = $false; Pin = $null; Uploaded = @{}; Failed = @{}; WakeAt = [DateTime]::MaxValue }

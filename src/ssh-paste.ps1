@@ -1252,8 +1252,11 @@ function Get-UploadedItemPath {
     try {
         $argv = Get-UploadSshArguments -Parsed $W.Parsed -Hash $Item.Hash -Size $Item.Bytes.Length -NoProxy:$W.NoProxy -SshVersion $W.SshVersion -Pin $W.Pin -Ext $Item.Ext
         if ($env:SSH_PASTE_DEBUG) {
-            # -v makes ssh say on stderr how far it got; LogLevel=ERROR is ours, so drop it.
-            $argv = @('-v') + @($argv | Where-Object { $_ -cne 'LogLevel=ERROR' })
+            # -v makes ssh say on stderr how far it got; LogLevel=ERROR is ours, so
+            # drop it together with its -o (a lone -o would take the next option as
+            # its value, and ssh refuses the command line).
+            $i = [Array]::IndexOf([object[]]$argv, 'LogLevel=ERROR')
+            $argv = @('-v') + @(for ($k = 0; $k -lt $argv.Count; $k++) { if ($k -ne $i - 1 -and $k -ne $i) { $argv[$k] } })
             Write-WatchDebug ('upload command: ssh ' + (Join-NativeArguments ($argv[0..($argv.Count - 2)])) + ' <sh -c script> ')
         }
         # 30 s plus 1 s per 256 KB, at most 5 minutes: big images on slow links need longer.
