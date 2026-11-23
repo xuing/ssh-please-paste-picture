@@ -52,7 +52,9 @@ found=$(cd "$check" && ls | sort | tr '\n' ' ')
 listed=$(awk '{ print $2 }' "$check/SHA256SUMS" | sort | tr '\n' ' ')
 [ "$listed" = "install.ps1 ssh-paste.cmd ssh-paste.ps1 " ] || fail "SHA256SUMS must list install.ps1, ssh-paste.cmd and ssh-paste.ps1 only. It lists: $listed"
 for f in $files; do cmp "$check/$f" "$dist/$f" || fail "$f on the release is not the built file"; done
-tr -d '\r' < "$check/ssh-paste.ps1" | grep -qxF "\$script:Version = '${tag#v}'" ||
+# grep reads all of its input (no -q): with pipefail, a reader that stops early
+# would make tr fail on a broken pipe once the file is larger than the pipe buffer.
+tr -d '\r' < "$check/ssh-paste.ps1" | grep -xF "\$script:Version = '${tag#v}'" > /dev/null ||
   fail "ssh-paste.ps1 on the release does not say version ${tag#v}"
 for f in $files; do
   ok=false

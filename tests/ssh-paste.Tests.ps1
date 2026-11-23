@@ -3955,7 +3955,9 @@ esac
             param([string]$Version)
             $d = Join-Path $script:Root ('dist-' + [guid]::NewGuid().ToString('N'))
             [void][System.IO.Directory]::CreateDirectory($d)
-            [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste.ps1'), "`$script:Version = '$Version'`nbody`n")
+            # The version line comes early and the file is larger than a pipe buffer (64 KB),
+            # like the real script: a check that stops reading early (grep -q) breaks its pipe.
+            [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste.ps1'), ("`$script:Version = '$Version'`n" + ("# body line`n" * 12000)))
             [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste.cmd'), "cmd`n")
             [System.IO.File]::WriteAllText((Join-Path $d 'install.ps1'), "installer`n")
             $sha = [System.Security.Cryptography.SHA256]::Create()

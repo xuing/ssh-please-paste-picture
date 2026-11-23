@@ -112,6 +112,16 @@ has.
   looks at the registry.
 - Seen 1x (2026-11-23).
 
+**Test fixtures are as large as the real thing.** A check that passes on a
+one-line stand-in can fail on the real 80 KB file.
+- The first release (v0.1.0) stopped at its last check: `tr ... | grep -q`
+  read the published `ssh-paste.ps1`; `grep -q` stopped at the first match,
+  `tr` got a broken pipe, and with `pipefail` the check failed. The test's
+  stand-in script was one line, smaller than the 64 KB pipe buffer. The fix
+  lets grep read everything; the stand-in is now larger than a pipe buffer,
+  and the test fails without the fix.
+- Seen 1x (2026-11-23).
+
 ## Behavior the user sees
 
 **When the user can act during a slow step, put the end result in place
