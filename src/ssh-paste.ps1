@@ -839,15 +839,62 @@ function Get-UploadedPath {
     # every one is uploaded.
     param($W, $State)
     $W.WakeAt = [DateTime]::MaxValue
-    $items = $State['Items']
-    if ($null -eq $items) { $items = @(@{ Bytes = $State.Png; Hash = $State.Hash; Ext = 'png' }) }
     $paths = New-Object System.Collections.ArrayList
-    foreach ($item in $items) {
+    foreach ($item in (Get-StateItems $State)) {
         $path = Get-UploadedItemPath $W $item
         if ($null -eq $path) { return $null }
         [void]$paths.Add($path)
     }
     return ($paths -join ' ')
+}
+
+function Get-StateItems {
+    param($State)
+    $items = $State['Items']
+    if ($null -eq $items) { $items = @(@{ Bytes = $State.Png; Hash = $State.Hash; Ext = 'png' }) }
+    return , @($items)
+}
+
+function Get-ExpectedText {
+    # The text Ctrl+V should paste, known before the upload: each file is named
+    # after its content. An earlier upload's real path wins (it can carry a
+    # per-user suffix when another user on the server owns the plain name).
+    param($W, $State)
+    $now = [DateTime]::UtcNow
+    $paths = foreach ($item in (Get-StateItems $State)) {
+        $done = $W.Uploaded[$item.Hash]
+        if ($null -ne $done -and ($now - $done.At).TotalHours -lt $script:UploadCacheHours) { $done.Path }
+        else { '/tmp/ssh-paste-' + $item.Hash + '.' + $item.Ext }
+    }
+    return (@($paths) -join ' ')
+}
+
+function Test-UploadFailing {
+    param($W, $State)
+    foreach ($item in (Get-StateItems $State)) { if ($W.Failed.ContainsKey($item.Hash)) { return $true } }
+    return $false
+}
+
+function Sync-ClipboardText {
+    # Re-reads the clipboard and, if it still holds the same image, makes its
+    # text $Text (or removes our text when $Text is empty). Leaves alone what the
+    # user copied since, and an entry another session in this window wrote.
+    param($W, [string]$Hash, [string]$Text, [IntPtr]$Foreground)
+    $fgKey = $Foreground.ToInt64()
+    $cur = Read-ClipboardImage
+    if ($cur.Hash -cne $Hash) { return }
+    $ours = ($null -ne $cur.Owner)
+    if (-not [string]::IsNullOrEmpty($Text)) {
+        if (-not $ours -and ($cur.HasText -or ($cur['HasFiles'] -and $null -eq $cur['Files']))) { return }
+        if ($ours -and $cur.HasText -and $cur.Text -ceq $Text) { return }
+        if ($ours -and $cur.HasText -and $cur.Owner -eq $fgKey -and $cur.Token -ne $W.Token) { return }
+        $owner = $fgKey
+    } else {
+        if (-not ($ours -and $cur.HasText -and $cur.Token -eq $W.Token)) { return }
+        $owner = 0
+    }
+    if ([long][SshPasteNative]::GetClipboardSequenceNumber() -ne $cur.Seq -or [SshPasteNative]::GetForegroundWindow() -ne $Foreground) { return }
+    Set-SshPasteClipboard -Png $cur.Png -Files $cur['Files'] -Text $Text -Owner $owner -Token $W.Token
 }
 
 function Get-UploadedItemPath {
@@ -916,13 +963,33 @@ function Invoke-WatcherTick {
     if (-not $ours -and ($state.HasText -or ($state['HasFiles'] -and $null -eq $state['Files']))) { return }
 
     if (Test-HostForeground $W.Matcher $foreground) {
-        $path = Get-UploadedPath $W $state
-        if ($null -eq $path) { return }
-        if ($ours -and $state.HasText) {
-            if ($state.Text -ceq $path) { return }
-            if ($state.Owner -eq $fgKey -and $state.Token -ne $W.Token) { return }
+        # Put the expected path on the clipboard first, then upload: a Ctrl+V
+        # pressed during the upload already pastes the path, not a local one.
+        $expected = Get-ExpectedText $W $state
+        $otherSession = ($ours -and $state.HasText -and $state.Owner -eq $fgKey -and $state.Token -ne $W.Token)
+        $shown = ($ours -and $state.HasText -and $state.Text -ceq $expected)
+        $wrote = $false
+        if (-not $shown -and -not $otherSession -and -not (Test-UploadFailing $W $state)) {
+            if ([long][SshPasteNative]::GetClipboardSequenceNumber() -ne $state.Seq -or [SshPasteNative]::GetForegroundWindow() -ne $foreground) {
+                $W.LastSeq = -1
+                return
+            }
+            Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $expected -Owner $fgKey -Token $W.Token
+            $W.LastSeq = -1
+            $wrote = $true
         }
-        $text = $path
+        $path = Get-UploadedPath $W $state
+        if ($null -eq $path) {
+            # The upload failed: take the path back so Ctrl+V does not paste a missing file.
+            Sync-ClipboardText $W $state.Hash $null $foreground
+            $W.LastSeq = -1
+            return
+        }
+        if ($path -cne $expected -or -not ($wrote -or $shown -or $otherSession)) {
+            Sync-ClipboardText $W $state.Hash $path $foreground
+            $W.LastSeq = -1
+        }
+        return
     } elseif ($ours -and $state.HasText -and $state.Owner -ne $fgKey) {
         $text = $null
     } else {

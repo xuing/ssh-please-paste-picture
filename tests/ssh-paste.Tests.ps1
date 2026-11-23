@@ -2691,6 +2691,20 @@ public static class SshPasteNative {
             $script:Entry.Png | Should -Be $second
         }
 
+        It 'has the remote path on the clipboard while the upload runs, so an early Ctrl+V pastes it' {
+            $png = New-FakePng 4
+            $w = New-FakeWatcher $script:TerminalA
+            Set-Focus $script:TerminalA
+            Copy-FromApp $png
+            $script:SeenDuringUpload = 'not called'
+            $script:DuringUpload = { $script:SeenDuringUpload = $script:Entry.Text }
+            Invoke-Ticks $w 1
+            $script:DuringUpload = $null
+            $script:SeenDuringUpload | Should -BeExactly (Get-PathFor $png)
+            $script:Entry.Text | Should -BeExactly (Get-PathFor $png)
+            $script:Writes.Count | Should -Be 1 -Because 'the real path equals the expected one, so there is no second write'
+        }
+
         It 'does not overwrite a copy that happens during the upload' {
             $first = New-FakePng 1
             $second = New-FakePng 2
@@ -2700,7 +2714,7 @@ public static class SshPasteNative {
             $script:DuringUpload = { Copy-FromApp $second }
             Invoke-Ticks $w 1
             $script:Uploads.Count | Should -Be 1
-            $script:Writes.Count | Should -Be 0
+            $script:Writes.Count | Should -Be 1 -Because 'the expected path goes on the clipboard before the upload starts'
             $script:Entry.Png | Should -Be $second
             $script:Entry.Text | Should -BeNullOrEmpty
             $script:Entry.Owner | Should -BeNullOrEmpty
@@ -2709,7 +2723,7 @@ public static class SshPasteNative {
             $script:DuringUpload = $null
             Invoke-Ticks $w 3
             $script:Uploads.Count | Should -Be 2
-            $script:Writes.Count | Should -Be 1
+            $script:Writes.Count | Should -Be 2
             $script:Entry.Text | Should -BeExactly (Get-PathFor $second)
         }
 
@@ -2720,28 +2734,28 @@ public static class SshPasteNative {
             $script:DuringUpload = { Copy-TextFromApp 'meeting at 3' }
             Invoke-Ticks $w 1
             Invoke-Ticks $w 5
-            $script:Writes.Count | Should -Be 0
+            $script:Writes.Count | Should -Be 1 -Because 'only the write before the upload; the text copied during it stays'
             $script:Entry.Text | Should -BeExactly 'meeting at 3'
             $script:Entry.Png | Should -BeNullOrEmpty
             $script:Uploads.Count | Should -Be 1
         }
 
-        It 'does not write when another app comes to the front during the upload, and writes after coming back without a second upload' {
+        It 'puts the path back to a plain image when another app comes to the front during the upload, and writes it again after coming back without a second upload' {
             $png = New-FakePng 1
             $w = New-FakeWatcher $script:TerminalA
             Set-Focus $script:TerminalA
             Copy-FromApp $png
             $script:DuringUpload = { Set-Focus $script:Other }
             Invoke-Ticks $w 1
-            $script:Writes.Count | Should -Be 0
-            $script:Entry.Owner | Should -BeNullOrEmpty
+            $script:Writes.Count | Should -Be 1 -Because 'the expected path went on the clipboard before the upload'
 
             $script:DuringUpload = $null
             Invoke-Ticks $w 3
-            $script:Writes.Count | Should -Be 0 -Because 'the terminal is not in front'
+            $script:Writes.Count | Should -Be 2 -Because 'another app is in front, so the plain image goes back'
+            $script:Entry.Text | Should -BeNullOrEmpty
             Set-Focus $script:TerminalA
             Invoke-Ticks $w 3
-            $script:Writes.Count | Should -Be 1
+            $script:Writes.Count | Should -Be 3
             $script:Entry.Text | Should -BeExactly (Get-PathFor $png)
             $script:Uploads.Count | Should -Be 1
         }
@@ -2846,7 +2860,7 @@ public static class SshPasteNative {
     }
 
     Context 'a failing upload' {
-        It 'beeps once (not testable here), writes nothing, is quiet while it waits, and retries by itself after the backoff' {
+        It 'beeps once (not testable here), takes its path back off the clipboard, is quiet while it waits, and retries by itself after the backoff' {
             $png = New-FakePng 1
             $w = New-FakeWatcher $script:TerminalA
             Set-Focus $script:TerminalA
@@ -2857,7 +2871,7 @@ public static class SshPasteNative {
             $script:Uploads.Count | Should -Be 1
             $w.Failed.Count | Should -Be 1
             $w.Failed[(Get-ImageHash $png)].Count | Should -Be 1
-            $script:Writes.Count | Should -Be 0
+            $script:Writes.Count | Should -Be 2 -Because 'the expected path went on before the upload and came off when it failed'
             $script:Entry.Text | Should -BeNullOrEmpty
 
             # Nothing changes on the clipboard or in the window: no retry before the backoff (30 s).
@@ -2872,7 +2886,7 @@ public static class SshPasteNative {
             Invoke-Ticks $w 1
             $script:Uploads.Count | Should -Be 2
             $w.Failed[(Get-ImageHash $png)].Count | Should -Be 2
-            $script:Writes.Count | Should -Be 0
+            $script:Writes.Count | Should -Be 2 -Because 'a retry after a failure uploads first and writes only on success'
 
             # The second wait is 60 s, not 30.
             Move-Clock $w 31
@@ -2882,7 +2896,7 @@ public static class SshPasteNative {
             Invoke-Ticks $w 1
             $script:Uploads.Count | Should -Be 3
             $w.Failed.Count | Should -Be 0
-            $script:Writes.Count | Should -Be 1
+            $script:Writes.Count | Should -Be 3
             $script:Entry.Text | Should -BeExactly (Get-PathFor $png)
             Invoke-Ticks $w 10
             $script:Uploads.Count | Should -Be 3
@@ -2994,7 +3008,7 @@ public static class SshPasteNative {
             Copy-FromApp $png
             Invoke-Ticks $a 2
             Invoke-Ticks $b 10
-            $script:Writes.Count | Should -Be 1
+            $script:Writes.Count | Should -Be 2 -Because 'the expected /tmp path first, then the path this server returned'
             $script:Entry.Text | Should -BeExactly (Get-PathFor $png '/srv-a')
             $script:Uploads.Count | Should -Be 1 -Because 'the watcher of the other window has no reason to upload'
         }
@@ -3028,7 +3042,7 @@ public static class SshPasteNative {
             }
             $script:Uploads.Count | Should -Be 2
             ($script:Uploads | ForEach-Object { $_.SshPath } | Sort-Object) | Should -Be @('ssh-a', 'ssh-b')
-            $script:Writes.Count | Should -Be 1
+            $script:Writes.Count | Should -Be 2 -Because 'the expected /tmp path first, then the path this server returned'
             $script:Entry.Token | Should -Be $a.Token -Because 'the first one to write keeps the entry'
             $script:Entry.Text | Should -BeExactly (Get-PathFor $png '/srv-a')
         }
@@ -3045,7 +3059,7 @@ public static class SshPasteNative {
             Invoke-Ticks $a 2
             $script:Entry.Token | Should -Be $b.Token
             $script:Entry.Text | Should -BeExactly (Get-PathFor $png '/srv-b')
-            $script:Writes.Count | Should -Be 1
+            $script:Writes.Count | Should -Be 2 -Because 'the expected /tmp path first, then the path this server returned'
         }
 
         It 'restores the plain image once when the window loses the focus, and writes a path once when it returns' {

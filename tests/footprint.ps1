@@ -269,14 +269,15 @@ $ErrorActionPreference = 'Continue'
 if ($Mode -eq 'uninstall') { $env:SSH_PASTE_UNINSTALL = '1' } else { $env:SSH_PASTE_UNINSTALL = $null }
 if ($Ref) { $env:SSH_PASTE_REF = $Ref } else { $env:SSH_PASTE_REF = $null }
 $Uninstall = 'sentinel'
-$beforeFunctions = @(Get-ChildItem function: | ForEach-Object { $_.Name })
+# Functions that modules bring along when PowerShell autoloads them (e.g. Get-FileHash) are not ours.
+$beforeFunctions = @(Get-ChildItem function: | Where-Object { -not $_.ModuleName } | ForEach-Object { $_.Name })
 $global:LASTEXITCODE = 0
 Get-Content -Raw -LiteralPath $Installer | Invoke-Expression
 $code = $global:LASTEXITCODE
 $leaks = @()
 if ($ErrorActionPreference -ne 'Continue') { $leaks += 'ErrorActionPreference=' + $ErrorActionPreference }
 if ($Uninstall -ne 'sentinel') { $leaks += 'variable $Uninstall' }
-$newFunctions = @(Get-ChildItem function: | Where-Object { $beforeFunctions -notcontains $_.Name } | ForEach-Object { $_.Name })
+$newFunctions = @(Get-ChildItem function: | Where-Object { -not $_.ModuleName -and $beforeFunctions -notcontains $_.Name } | ForEach-Object { $_.Name })
 if ($newFunctions.Count -gt 0) { $leaks += 'functions ' + ($newFunctions -join ',') }
 try { $null = $notDefinedAnywhere } catch { $leaks += 'Set-StrictMode' }
 if ($leaks.Count -gt 0) { 'LEAKED into the calling session: ' + ($leaks -join '; '); exit 3 }
