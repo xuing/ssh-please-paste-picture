@@ -11,6 +11,9 @@ First release of ssh-pls-paste-pic. The command is `ssh-paste`.
 
 ### Added
 
+- Image files copied in File Explorer (png, jpg, jpeg, gif, webp, bmp, up to
+  20 at a time) are uploaded with their own extension, and Ctrl+V pastes all
+  remote paths separated by spaces. Explorer can still paste the files.
 - While an interactive session runs and its terminal window is in front,
   `ssh-paste` uploads copied images to `/tmp/ssh-paste-<hash>.png` on the
   server. Ctrl+V in the terminal pastes that path, while other apps still paste

@@ -59,10 +59,17 @@ BeforeAll {
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
+        # No byte order mark on stdin (Windows PowerShell 5.1 with a UTF-8 console), as in the core.
+        $restoreEncoding = $null
+        if ($null -ne $psi.PSObject.Properties['StandardInputEncoding']) {
+            $psi.StandardInputEncoding = New-Object System.Text.UTF8Encoding($false)
+        } else {
+            try { if ([Console]::InputEncoding.GetPreamble().Length -gt 0) { $restoreEncoding = [Console]::InputEncoding; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } } catch { $restoreEncoding = $null }
+        }
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $psi
         try {
-            [void]$process.Start()
+            try { [void]$process.Start() } finally { if ($null -ne $restoreEncoding) { try { [Console]::InputEncoding = $restoreEncoding } catch { } } }
             $out = $process.StandardOutput.ReadToEndAsync()
             $err = $process.StandardError.ReadToEndAsync()
             try {
@@ -184,9 +191,9 @@ Describe 'RemoteScript (the command that runs on the server)' {
         $script:RemoteScript.Contains('`') | Should -BeFalse
     }
 
-    It 'takes the hash as $1 and the byte count as $2' {
+    It 'takes the hash as $1, the byte count as $2 and the extension as $3' {
         $script:RemoteScript | Should -Match 'n=\$2;'
-        $script:RemoteScript | Should -Match '/tmp/ssh-paste-\$1\.png'
+        $script:RemoteScript | Should -Match '/tmp/ssh-paste-\$1\.\$e'
     }
 
     It 'makes private files: umask, no globbing, a temp file from mktemp' {
@@ -203,13 +210,15 @@ Describe 'RemoteScript (the command that runs on the server)' {
     It 'prunes only this user''s content-named files and temp leftovers older than a day, with two finds' {
         # ssh-paste-<32 characters>*.png and ssh-paste-tmp.*, so a same-user file such as
         # /tmp/ssh-paste-notes.png is never ours to delete.
-        $script:RemoteScript | Should -Match ('find /tmp -maxdepth 1 -user \$\(id -u\) -name ssh-paste-' + [regex]::Escape('?' * 32) + '\*\.png -mmin \+1440 -exec rm -f \{\} \+')
+        $script:RemoteScript | Should -Match ('find /tmp -maxdepth 1 -user \$\(id -u\) -name ssh-paste-' + [regex]::Escape('?' * 32) + '\*\.\$x -mmin \+1440 -exec rm -f \{\} \+')
         $script:RemoteScript | Should -Match 'find /tmp -maxdepth 1 -user \$\(id -u\) -name ssh-paste-tmp\.\* -mmin \+1440 -exec rm -f \{\} \+'
+        $script:RemoteScript | Should -Match 'for x in png jpg jpeg gif webp bmp; do find'
         $script:RemoteScript | Should -Not -Match '-name ssh-paste-\*'
     }
 
     It 'publishes the content name, or a per-user name when another user owns it' {
-        $script:RemoteScript | Should -Match 'for f in /tmp/ssh-paste-\$1\.png /tmp/ssh-paste-\$1-\$\(id -u\)\.png;'
+        $script:RemoteScript | Should -Match 'e=\$\{3:-png\}'
+        $script:RemoteScript | Should -Match 'for f in /tmp/ssh-paste-\$1\.\$e /tmp/ssh-paste-\$1-\$\(id -u\)\.\$e;'
         $script:RemoteScript | Should -Match 'echo \$n \$f; exit 0'
     }
 
@@ -304,7 +313,7 @@ Describe 'Join-NativeArguments and Split-CommandLine round trip' {
         $argv = Get-UploadSshArguments -Parsed $parsed -Hash '0123456789abcdef0123456789abcdef' -Size 5000 -SshVersion ([version]'9.0')
         $back = Get-RoundTrip $argv
         Format-ArgList $back | Should -BeExactly (Format-ArgList $argv)
-        $back[-1] | Should -Match "^sh -c 'umask 077;.* ssh-paste 0123456789abcdef0123456789abcdef 5000$"
+        $back[-1] | Should -Match "^sh -c 'umask 077;.* ssh-paste 0123456789abcdef0123456789abcdef 5000 png$"
     }
 
     It 'round-trips 1000 random argument lists' {
@@ -903,7 +912,7 @@ Describe 'Get-UploadSshArguments' {
 
     It 'makes the last argument exactly the sh -c command with the hash and the size' {
         $a = Get-Upload @('host') -Size 4321
-        $a[$a.Count - 1] | Should -BeExactly ("sh -c '" + $script:RemoteScript + "' ssh-paste " + $script:Hash + ' 4321')
+        $a[$a.Count - 1] | Should -BeExactly ("sh -c '" + $script:RemoteScript + "' ssh-paste " + $script:Hash + ' 4321 png')
     }
 
     It 'does not pass the remote command of the user session along' {
@@ -944,6 +953,72 @@ Describe 'Get-ImageHash' {
         $b = [byte[]](1..50)
         $b[49] = 99
         Get-ImageHash $a | Should -Not -BeExactly (Get-ImageHash $b)
+    }
+}
+
+Describe 'Copied image files (CF_HDROP)' {
+    BeforeAll {
+        function New-Drop {
+            param([string[]]$Paths, [bool]$Wide)
+            $enc = [System.Text.Encoding]::ASCII
+            if ($Wide) { $enc = [System.Text.Encoding]::Unicode }
+            $body = $enc.GetBytes((($Paths -join [char]0) + [char]0 + [char]0))
+            $head = New-Object byte[] 20
+            [BitConverter]::GetBytes(20).CopyTo($head, 0)
+            [BitConverter]::GetBytes([int]$Wide).CopyTo($head, 16)
+            return , ([byte[]]($head + $body))
+        }
+        $script:DropDir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-drop-' + [guid]::NewGuid().ToString('N'))
+        [void](New-Item -ItemType Directory -Path $script:DropDir)
+        $script:ImgA = Join-Path $script:DropDir 'shot one.png'
+        $script:ImgB = Join-Path $script:DropDir 'photo.JPG'
+        $script:Txt = Join-Path $script:DropDir 'notes.txt'
+        [System.IO.File]::WriteAllBytes($script:ImgA, [byte[]](1..120))
+        [System.IO.File]::WriteAllBytes($script:ImgB, [byte[]](1..90))
+        [System.IO.File]::WriteAllText($script:Txt, 'x')
+    }
+    AfterAll { Remove-Item -LiteralPath $script:DropDir -Recurse -Force -ErrorAction SilentlyContinue }
+
+    It 'reads the paths of a wide (Unicode) drop list' {
+        @(ConvertFrom-DropFiles (New-Drop @($script:ImgA, $script:ImgB) $true)) | Should -Be @($script:ImgA, $script:ImgB)
+    }
+    It 'reads the paths of an ANSI drop list' {
+        @(ConvertFrom-DropFiles (New-Drop @($script:ImgA) $false)) | Should -Be @($script:ImgA)
+    }
+    It 'returns nothing for bytes that are not a drop list' {
+        @(ConvertFrom-DropFiles ([byte[]](1..10))).Count | Should -Be 0
+        @(ConvertFrom-DropFiles $null).Count | Should -Be 0
+    }
+    It 'turns image files into upload items with their lowercase extension and content hash' {
+        $items = Read-ImageFiles @($script:ImgA, $script:ImgB)
+        $items.Count | Should -Be 2
+        $items[0].Ext | Should -BeExactly 'png'
+        $items[1].Ext | Should -BeExactly 'jpg'
+        $items[1].Hash | Should -BeExactly (Get-ImageHash ([System.IO.File]::ReadAllBytes($script:ImgB)))
+    }
+    It 'leaves the files alone when one of them is not an image, is missing, or there are too many' {
+        Read-ImageFiles @($script:ImgA, $script:Txt) | Should -BeNullOrEmpty
+        Read-ImageFiles @((Join-Path $script:DropDir 'missing.png')) | Should -BeNullOrEmpty
+        Read-ImageFiles @(1..($script:MaxCopiedFiles + 1) | ForEach-Object { $script:ImgA }) | Should -BeNullOrEmpty
+    }
+    It 'accepts only the image extensions it uploads' {
+        foreach ($e in @('png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp')) { Get-ImageFileExtension ('a.' + $e.ToUpperInvariant()) | Should -BeExactly $e }
+        Get-ImageFileExtension 'a.exe' | Should -BeNullOrEmpty
+        { Get-UploadSshArguments -Parsed (Split-SshArguments @('h')) -Hash ('a' * 32) -Size 1 -Ext 'exe' } | Should -Throw '*bad image extension*'
+    }
+    It 'pastes the remote paths of all files, separated by spaces, once every file is uploaded' {
+        Mock Send-Image { return ('/tmp/ssh-paste-' + $Hash + '.' + $Ext) }
+        $w = @{ SshPath = 'ssh'; SshVersion = $null; Parsed = (Split-SshArguments @('h')); NoProxy = $false; Pin = $null; Uploaded = @{}; Failed = @{}; WakeAt = [DateTime]::MaxValue }
+        $items = Read-ImageFiles @($script:ImgA, $script:ImgB)
+        $text = Get-UploadedPath $w @{ Items = $items }
+        $text | Should -BeExactly ('/tmp/ssh-paste-' + $items[0].Hash + '.png /tmp/ssh-paste-' + $items[1].Hash + '.jpg')
+        Should -Invoke Send-Image -Times 2 -Exactly
+    }
+    It 'pastes nothing while one of the files failed to upload' {
+        Mock Send-Image { if ($Ext -eq 'jpg') { throw 'ssh exited with 255: refused' }; return ('/tmp/ssh-paste-' + $Hash + '.' + $Ext) }
+        $w = @{ SshPath = 'ssh'; SshVersion = $null; Parsed = (Split-SshArguments @('h')); NoProxy = $false; Pin = $null; Uploaded = @{}; Failed = @{}; WakeAt = [DateTime]::MaxValue }
+        Get-UploadedPath $w @{ Items = (Read-ImageFiles @($script:ImgA, $script:ImgB)) } | Should -BeNullOrEmpty
+        $w.Failed.Count | Should -Be 1
     }
 }
 
@@ -2220,7 +2295,7 @@ Describe 'Get-UploadedPath' {
         [void](Get-UploadedPath $w $script:State)
         Should -Invoke Send-Image -Times 1 -Exactly -ParameterFilter {
             $Hash -ceq '0123456789abcdef0123456789abcdef' -and $Png.Length -eq 40 -and
-            $Arguments[$Arguments.Count - 1].EndsWith(' ssh-paste 0123456789abcdef0123456789abcdef 40') -and
+            $Arguments[$Arguments.Count - 1].EndsWith(' ssh-paste 0123456789abcdef0123456789abcdef 40 png') -and
             $Arguments -contains '-p' -and $Arguments -contains 'alice@h' -and $Arguments -contains 'StdinNull=no'
         }
     }
@@ -3738,7 +3813,7 @@ Describe 'Get-SshVersion and Send-Image with a stand-in for ssh' -Tag 'Unix' -Sk
         function New-FakeSsh {
             param([string]$Name, [string]$Body)
             $path = Join-Path $script:FakeDir $Name
-            [System.IO.File]::WriteAllText($path, "#!/bin/sh`n" + $Body + "`n")
+            [System.IO.File]::WriteAllText($path, "#!/bin/sh`n" + ($Body -replace "`r", "") + "`n")   # checkouts may be CRLF
             & chmod +x $path
             return $path
         }
@@ -3816,7 +3891,9 @@ exec sh -c "$last"'
 
     It 'Send-Image fails when the server names a path that is not this image' {
         $ssh = New-FakeSsh 'ssh-other' 'for last; do :; done
-n=${last##* }
+set -- $last
+while [ $# -gt 2 ]; do shift; done
+n=$1
 cat > /dev/null
 echo "$n /tmp/ssh-paste-other.png"'
         $png = [byte[]](1..50)
@@ -4040,7 +4117,7 @@ Describe 'Windows integration' -Tag 'Windows' -Skip:(-not $onWindows) {
         It 'does not read a format that is larger than the limit' {
             if ($script:SkipReason) { Set-ItResult -Skipped -Because $script:SkipReason; return }
             Set-SshPasteClipboard -Png $script:Png -Text $null -Owner 0
-            $raw = [SshPasteNative]::ReadFormats([uint32[]]@($script:FormatPng, $script:FormatMarker, 0), 10)
+            $raw = [SshPasteNative]::ReadFormats([uint32[]]@($script:FormatPng, $script:FormatMarker, 0), 32)
             $raw[0] | Should -BeNullOrEmpty
             $raw[1] | Should -Not -BeNullOrEmpty
             $raw[2] | Should -BeNullOrEmpty

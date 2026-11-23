@@ -20,21 +20,23 @@ $script:BlockBegin = '# >>> ssh-paste (managed by ssh-paste --enable / --disable
 $script:BlockEnd = '# <<< ssh-paste <<<'
 $script:BlockCreatedFile = '# ssh-paste created this file; it is deleted when the last host is disabled.'
 $script:MaxImageBytes = 64MB
+$script:ImageExtensions = @('png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp')
+$script:MaxCopiedFiles = 20
 $script:RetryFailedSeconds = 30
 $script:UploadCacheHours = 6
 
 # Runs on the server through `sh -c`, with $1 = content hash (32 hex digits, made
-# by us) and $2 = byte count. It contains no single quote, backslash or
+# by us), $2 = byte count and $3 = file extension (png when absent). It contains no single quote, backslash or
 # exclamation mark, so every login shell (bash, zsh, fish, tcsh) passes it to sh
 # unchanged. It receives into a private temp file, checks the size, prunes this
 # user's day-old files, then publishes /tmp/ssh-paste-<hash>.png (reused when an
 # identical complete copy exists; a per-user name when another user owns it).
-$script:RemoteScript = 'umask 077; set -fC; n=$2; ' +
+$script:RemoteScript = 'umask 077; set -fC; n=$2; e=${3:-png}; ' +
     't=$(mktemp /tmp/ssh-paste-tmp.XXXXXXXXXX 2> /dev/null) || { t=/tmp/ssh-paste-tmp.$$; : > $t; } || exit 3; ' +
     'cat >> $t; s=$(wc -c < $t); if [ $s -eq $n ]; then :; else rm -f $t; echo short $s; exit 4; fi; ' +
-    'find /tmp -maxdepth 1 -user $(id -u) -name ssh-paste-????????????????????????????????*.png -mmin +1440 -exec rm -f {} + 2> /dev/null; ' +
+    'for x in png jpg jpeg gif webp bmp; do find /tmp -maxdepth 1 -user $(id -u) -name ssh-paste-????????????????????????????????*.$x -mmin +1440 -exec rm -f {} + 2> /dev/null; done; ' +
     'find /tmp -maxdepth 1 -user $(id -u) -name ssh-paste-tmp.* -mmin +1440 -exec rm -f {} + 2> /dev/null; ' +
-    'for f in /tmp/ssh-paste-$1.png /tmp/ssh-paste-$1-$(id -u).png; do ' +
+    'for f in /tmp/ssh-paste-$1.$e /tmp/ssh-paste-$1-$(id -u).$e; do ' +
     'if [ -h $f ]; then :; elif [ -f $f ] && [ -O $f ] && cmp -s $t $f; then rm -f $t; touch $f; echo $n $f; exit 0; fi; ' +
     'if [ -d $f ]; then continue; fi; ' +
     'if mv -f $t $f 2> /dev/null && [ -f $f ]; then echo $n $f; exit 0; fi; done; rm -f $t; exit 1'
@@ -209,8 +211,9 @@ function Get-UploadSshArguments {
     # Arguments for the separate, non-interactive upload connection. Our options
     # come first because ssh uses the first value it sees for each option; the
     # user's options keep their place before or after the destination.
-    param($Parsed, [string]$Hash, [long]$Size, [switch]$NoProxy, [version]$SshVersion, [hashtable]$Pin)
+    param($Parsed, [string]$Hash, [long]$Size, [switch]$NoProxy, [version]$SshVersion, [hashtable]$Pin, [string]$Ext = 'png')
     if ($Hash -cnotmatch '^[0-9a-f]{32}\z') { throw "bad image hash: $Hash" }
+    if ($script:ImageExtensions -cnotcontains $Ext) { throw "bad image extension: $Ext" }
     $argv = New-Object System.Collections.ArrayList
     foreach ($a in @('-T', '-x',
             '-o', 'BatchMode=yes', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
@@ -252,7 +255,7 @@ function Get-UploadSshArguments {
     foreach ($a in $before) { [void]$argv.Add($a) }
     [void]$argv.Add([string]$Parsed.Destination)
     foreach ($a in $after) { [void]$argv.Add($a) }
-    [void]$argv.Add("sh -c '" + $script:RemoteScript + "' ssh-paste " + $Hash + ' ' + $Size)
+    [void]$argv.Add("sh -c '" + $script:RemoteScript + "' ssh-paste " + $Hash + ' ' + $Size + ' ' + $Ext)
     return @($argv)
 }
 
@@ -286,9 +289,34 @@ function Get-TrimmedPng {
     return $null
 }
 
+function ConvertFrom-DropFiles {
+    # CF_HDROP bytes (a DROPFILES header, then NUL-separated paths ending with an
+    # empty string) -> the list of paths.
+    param([byte[]]$Bytes)
+    if ($null -eq $Bytes -or $Bytes.Length -lt 20) { return @() }
+    $offset = [BitConverter]::ToInt32($Bytes, 0)
+    if ($offset -lt 20 -or $offset -ge $Bytes.Length) { return @() }
+    $encoding = [System.Text.Encoding]::Default
+    if ([BitConverter]::ToInt32($Bytes, 16) -ne 0) { $encoding = [System.Text.Encoding]::Unicode }
+    $paths = New-Object System.Collections.ArrayList
+    foreach ($p in $encoding.GetString($Bytes, $offset, $Bytes.Length - $offset).Split([char]0)) {
+        if ($p.Length -eq 0) { break }
+        [void]$paths.Add($p)
+    }
+    return @($paths)
+}
+
+function Get-ImageFileExtension {
+    # The lowercase extension when the path names an image type we upload, else $null.
+    param([string]$Path)
+    $ext = [System.IO.Path]::GetExtension($Path).TrimStart('.').ToLowerInvariant()
+    if ($script:ImageExtensions -contains $ext) { return $ext }
+    return $null
+}
+
 function Read-UploadReply {
     # The last non-empty line of the reply is "<size> <path>".
-    param([string]$Output, [long]$ExpectedSize, [string]$Hash)
+    param([string]$Output, [long]$ExpectedSize, [string]$Hash, [string]$Ext = 'png')
     $lines = @($Output -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 })
     if ($lines.Count -eq 0) { throw 'the server sent no reply (is sh available there?)' }
     $last = $lines[$lines.Count - 1].Trim()
@@ -297,7 +325,7 @@ function Read-UploadReply {
     $size = [long]$Matches[1]
     $path = $Matches[2]
     if ($size -ne $ExpectedSize) { throw "size mismatch: sent $ExpectedSize bytes, server has $size" }
-    if ($path -cnotmatch ('^/tmp/ssh-paste-' + $Hash + '(-[0-9]+)?\.png\z')) { throw "unexpected path from the server: $path" }
+    if ($path -cnotmatch ('^/tmp/ssh-paste-' + $Hash + '(-[0-9]+)?\.' + $Ext + '\z')) { throw "unexpected path from the server: $path" }
     return $path
 }
 
@@ -435,7 +463,7 @@ public static class SshPasteNative {
     public sealed class Snapshot {
         public uint Sequence;
         public bool HasPng, HasDib, HasText, HasFiles;
-        public byte[] Png, Dib, Marker, Text;
+        public byte[] Png, Dib, Marker, Text, Drop;
     }
 
     // One consistent view of the clipboard: availability, the bytes we need and
@@ -448,7 +476,8 @@ public static class SshPasteNative {
             s.HasDib = IsClipboardFormatAvailable(8);
             s.HasText = IsClipboardFormatAvailable(13) || IsClipboardFormatAvailable(1);
             s.HasFiles = IsClipboardFormatAvailable(15);
-            if (s.HasPng || s.HasDib) {
+            if (s.HasPng || s.HasDib || s.HasFiles) {
+                if (s.HasFiles) s.Drop = Copy(15, 1 << 20);
                 if (s.HasPng) s.Png = Copy(pngFormat, maxBytes);
                 if (s.Png == null && s.HasDib) s.Dib = Copy(8, maxBytes);
                 s.Marker = Copy(markerFormat, 64);
@@ -560,7 +589,22 @@ function Read-ClipboardImage {
     # when the clipboard is busy; the caller retries on the next tick.
     $snap = [SshPasteNative]::ReadSnapshot($script:FormatPng, $script:FormatMarker, [long]$script:MaxImageBytes)
     $state = @{ Seq = [long]$snap.Sequence; Png = $null; Hash = $null; HasText = $snap.HasText; HasFiles = $snap.HasFiles
-        Owner = $null; Token = $null; Text = $null }
+        Owner = $null; Token = $null; Text = $null; Files = $null; Items = $null }
+    if ($null -ne $snap.Marker -and $snap.Marker.Length -ge 16) {
+        $state.Owner = [BitConverter]::ToInt64($snap.Marker, 0)
+        $state.Token = [BitConverter]::ToInt64($snap.Marker, 8)
+    }
+    if ($null -ne $snap.Text) { $state.Text = ([System.Text.Encoding]::Unicode.GetString($snap.Text)).Split([char]0)[0] }
+    if ($null -ne $snap.Drop) {
+        # Image files copied in Explorer: upload the files themselves.
+        $items = Read-ImageFiles (ConvertFrom-DropFiles $snap.Drop)
+        if ($null -ne $items) {
+            $state.Files = @($items | ForEach-Object { $_.Path })
+            $state.Items = $items
+            $state.Hash = Get-ImageHash ([System.Text.Encoding]::ASCII.GetBytes((@($items | ForEach-Object { $_.Hash }) -join ' ')))
+        }
+        return $state
+    }
     $png = $null
     if ($null -ne $snap.Png) { $png = Get-TrimmedPng $snap.Png }
     $dib = $snap.Dib
@@ -571,12 +615,24 @@ function Read-ClipboardImage {
     if ($null -eq $png -or $png.Length -eq 0) { return $state }
     $state.Png = $png
     $state.Hash = Get-ImageHash $png
-    if ($null -ne $snap.Marker -and $snap.Marker.Length -ge 16) {
-        $state.Owner = [BitConverter]::ToInt64($snap.Marker, 0)
-        $state.Token = [BitConverter]::ToInt64($snap.Marker, 8)
-    }
-    if ($null -ne $snap.Text) { $state.Text = ([System.Text.Encoding]::Unicode.GetString($snap.Text)).Split([char]0)[0] }
     return $state
+}
+
+function Read-ImageFiles {
+    # Items to upload when every path is an image file of an accepted type and
+    # size; $null otherwise (then the copied files are left to Windows Terminal).
+    param([string[]]$Paths)
+    if ($null -eq $Paths -or $Paths.Count -eq 0 -or $Paths.Count -gt $script:MaxCopiedFiles) { return $null }
+    $items = New-Object System.Collections.ArrayList
+    foreach ($path in $Paths) {
+        $ext = Get-ImageFileExtension $path
+        if ($null -eq $ext) { return $null }
+        $info = New-Object System.IO.FileInfo -ArgumentList $path
+        if (-not $info.Exists -or $info.Length -eq 0 -or $info.Length -gt $script:MaxImageBytes) { return $null }
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        [void]$items.Add(@{ Path = $path; Bytes = $bytes; Hash = (Get-ImageHash $bytes); Ext = $ext })
+    }
+    return , @($items)
 }
 
 function New-DwordStream {
@@ -588,7 +644,25 @@ function Set-SshPasteClipboard {
     # Image (bitmap + original PNG bytes), optionally the remote path as text, a
     # marker naming the window and session it was written by, and the documented
     # flags that keep our rewrites out of Win+V history and cloud clipboard sync.
-    param([byte[]]$Png, [string]$Text, [long]$Owner, [long]$Token)
+    param([byte[]]$Png, [string]$Text, [long]$Owner, [long]$Token, [string[]]$Files)
+    if ($null -ne $Files -and $Files.Count -gt 0) {
+        # Copied image files: keep the file list (Explorer still pastes the files)
+        # and add the remote paths as text, which Windows Terminal pastes first.
+        $marker = New-Object byte[] 16
+        [BitConverter]::GetBytes($Owner).CopyTo($marker, 0)
+        [BitConverter]::GetBytes($Token).CopyTo($marker, 8)
+        $list = New-Object System.Collections.Specialized.StringCollection
+        foreach ($f in $Files) { [void]$list.Add($f) }
+        $data = New-Object System.Windows.Forms.DataObject
+        $data.SetFileDropList($list)
+        if (-not [string]::IsNullOrEmpty($Text)) { $data.SetText($Text) }
+        $data.SetData($script:MarkerFormat, $false, (New-Object -TypeName System.IO.MemoryStream -ArgumentList (, $marker)))
+        $data.SetData('ExcludeClipboardContentFromMonitorProcessing', $false, (New-DwordStream 1))
+        $data.SetData('CanIncludeInClipboardHistory', $false, (New-DwordStream 0))
+        $data.SetData('CanUploadToCloudClipboard', $false, (New-DwordStream 0))
+        [System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 50)
+        return
+    }
     $source = New-Object -TypeName System.IO.MemoryStream -ArgumentList (, $Png)
     $bitmap = [System.Drawing.Image]::FromStream($source)
     try {
@@ -668,7 +742,7 @@ function Get-EffectiveSshConfig {
 
 function Send-Image {
     # One ssh connection sends, verifies, prunes and publishes; returns the path.
-    param([string]$SshPath, [string[]]$Arguments, [byte[]]$Png, [string]$Hash, [int]$TimeoutSeconds = 30)
+    param([string]$SshPath, [string[]]$Arguments, [byte[]]$Png, [string]$Hash, [int]$TimeoutSeconds = 30, [string]$Ext = 'png')
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $SshPath
@@ -731,7 +805,7 @@ function Send-Image {
             throw ('ssh exited with {0}: {1}' -f $process.ExitCode, $err)
         }
         if (-not $stdout.Wait((& $remaining))) { throw 'the reply from ssh did not arrive in time' }
-        return (Read-UploadReply $stdout.Result $Png.Length $Hash)
+        return (Read-UploadReply $stdout.Result $Png.Length $Hash $Ext)
     } finally {
         # Closing our ends ends any read still pending on a pipe that a leftover
         # child of ssh keeps open.
@@ -760,37 +834,59 @@ function New-Watcher {
 }
 
 function Get-UploadedPath {
-    # Upload once per image. A failed upload is retried after 30 s, 1 min, 2 min
+    # The text to paste for this clipboard state: the remote path of the image,
+    # or the paths of all copied image files separated by spaces. $null until
+    # every one is uploaded.
+    param($W, $State)
+    $W.WakeAt = [DateTime]::MaxValue
+    $items = $State['Items']
+    if ($null -eq $items) { $items = @(@{ Bytes = $State.Png; Hash = $State.Hash; Ext = 'png' }) }
+    $paths = New-Object System.Collections.ArrayList
+    foreach ($item in $items) {
+        $path = Get-UploadedItemPath $W $item
+        if ($null -eq $path) { return $null }
+        [void]$paths.Add($path)
+    }
+    return ($paths -join ' ')
+}
+
+function Get-UploadedItemPath {
+    # Upload once per file. A failed upload is retried after 30 s, 1 min, 2 min
     # and so on (beeping only the first time). An upload is redone after a few
     # hours so the server's day-old cleanup never removes a path we paste.
-    # Sets $W.WakeAt so the watcher comes back for the retry or the refresh.
-    param($W, $State)
+    # Moves $W.WakeAt earlier so the watcher comes back for a retry or refresh.
+    param($W, $Item)
     $now = [DateTime]::UtcNow
-    $done = $W.Uploaded[$State.Hash]
+    $done = $W.Uploaded[$Item.Hash]
     if ($null -ne $done -and ($now - $done.At).TotalHours -lt $script:UploadCacheHours) {
-        $W.WakeAt = $done.At.AddHours($script:UploadCacheHours)
+        Set-WakeAt $W $done.At.AddHours($script:UploadCacheHours)
         return $done.Path
     }
-    $failed = $W.Failed[$State.Hash]
+    $failed = $W.Failed[$Item.Hash]
     if ($null -ne $failed) {
         $retryAt = $failed.At.AddSeconds([Math]::Min(1800, $script:RetryFailedSeconds * [Math]::Pow(2, $failed.Count - 1)))
-        if ($now -lt $retryAt) { $W.WakeAt = $retryAt; return $null }
+        if ($now -lt $retryAt) { Set-WakeAt $W $retryAt; return $null }
     }
     try {
-        $argv = Get-UploadSshArguments -Parsed $W.Parsed -Hash $State.Hash -Size $State.Png.Length -NoProxy:$W.NoProxy -SshVersion $W.SshVersion -Pin $W.Pin
-        $path = Send-Image -SshPath $W.SshPath -Arguments $argv -Png $State.Png -Hash $State.Hash
-        $W.Uploaded[$State.Hash] = @{ Path = $path; At = $now }
-        $W.Failed.Remove($State.Hash)
-        $W.WakeAt = $now.AddHours($script:UploadCacheHours)
+        $argv = Get-UploadSshArguments -Parsed $W.Parsed -Hash $Item.Hash -Size $Item.Bytes.Length -NoProxy:$W.NoProxy -SshVersion $W.SshVersion -Pin $W.Pin -Ext $Item.Ext
+        $path = Send-Image -SshPath $W.SshPath -Arguments $argv -Png $Item.Bytes -Hash $Item.Hash -Ext $Item.Ext
+        $W.Uploaded[$Item.Hash] = @{ Path = $path; At = $now }
+        $W.Failed.Remove($Item.Hash)
+        Set-WakeAt $W $now.AddHours($script:UploadCacheHours)
         return $path
     } catch {
         $count = 1
         if ($null -ne $failed) { $count = $failed.Count + 1 }
-        $W.Failed[$State.Hash] = @{ Message = $_.Exception.Message; At = [DateTime]::UtcNow; Count = $count }
-        $W.WakeAt = [DateTime]::UtcNow.AddSeconds([Math]::Min(1800, $script:RetryFailedSeconds * [Math]::Pow(2, $count - 1)))
+        $W.Failed[$Item.Hash] = @{ Message = $_.Exception.Message; At = [DateTime]::UtcNow; Count = $count }
+        Set-WakeAt $W ([DateTime]::UtcNow.AddSeconds([Math]::Min(1800, $script:RetryFailedSeconds * [Math]::Pow(2, $count - 1))))
         if ($count -eq 1) { try { [System.Media.SystemSounds]::Hand.Play() } catch { } }
         return $null
     }
+}
+
+function Set-WakeAt {
+    param($W, [DateTime]$At)
+    if ($At -lt $W.WakeAt) { $W.WakeAt = $At }
 }
 
 function Invoke-WatcherTick {
@@ -814,9 +910,10 @@ function Invoke-WatcherTick {
     $W.LastForeground = $fgKey
     $W.WakeAt = [DateTime]::MaxValue
     $state = $W.State
-    if ($null -eq $state.Png) { return }
+    if ($null -eq $state.Png -and $null -eq $state['Files']) { return }
     $ours = ($null -ne $state.Owner)
-    if (-not $ours -and ($state.HasText -or $state.HasFiles)) { return }   # an app copied more than an image
+    # An app copied text along with the image, or files that are not all images: leave it alone.
+    if (-not $ours -and ($state.HasText -or ($state['HasFiles'] -and $null -eq $state['Files']))) { return }
 
     if (Test-HostForeground $W.Matcher $foreground) {
         $path = Get-UploadedPath $W $state
@@ -838,7 +935,7 @@ function Invoke-WatcherTick {
     }
     $owner = $fgKey
     if ($null -eq $text) { $owner = 0 }
-    Set-SshPasteClipboard -Png $state.Png -Text $text -Owner $owner -Token $W.Token
+    Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $text -Owner $owner -Token $W.Token
     $W.LastSeq = -1   # read our own write back on the next tick
 }
 
@@ -848,9 +945,9 @@ function Restore-Clipboard {
     param($W)
     try {
         $state = Read-ClipboardImage
-        if ($null -ne $state.Png -and $null -ne $state.Owner -and $state.HasText -and $state.Token -eq $W.Token -and
+        if (($null -ne $state.Png -or $null -ne $state['Files']) -and $null -ne $state.Owner -and $state.HasText -and $state.Token -eq $W.Token -and
             [long][SshPasteNative]::GetClipboardSequenceNumber() -eq $state.Seq) {
-            Set-SshPasteClipboard -Png $state.Png -Text $null -Owner 0 -Token $W.Token
+            Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $null -Owner 0 -Token $W.Token
         }
     } catch { }
 }
@@ -1195,7 +1292,7 @@ function Invoke-Doctor {
     Report $true ('terminal: ' + $matcher.Kind)
     try {
         $state = Read-ClipboardImage
-        if ($null -eq $state.Png) { Report $true 'clipboard: readable (no image right now)' } else { Report $true ('clipboard: image, {0} bytes' -f $state.Png.Length) }
+        if ($null -ne $state['Files']) { Report $true ('clipboard: {0} copied image file(s)' -f $state.Files.Count) } elseif ($null -eq $state.Png) { Report $true 'clipboard: readable (no image right now)' } else { Report $true ('clipboard: image, {0} bytes' -f $state.Png.Length) }
     } catch { Report $false ('clipboard: ' + $_.Exception.Message); $ok = $false }
     if ($null -eq $SshArgs -or $SshArgs.Count -eq 0) {
         Write-Host ''

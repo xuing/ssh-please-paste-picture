@@ -12,7 +12,7 @@
 
 Windows Terminal 只粘贴文本，服务器上的程序读的是服务器剪贴板，不是本机剪贴板。用 `ssh-paste` 连 SSH 后：
 
-1. 在 Windows 上截图复制（Win+Shift+S 或其他图片程序）。
+1. 在 Windows 上截图复制（Win+Shift+S 或其他图片程序），或在资源管理器里复制图片文件（png、jpg、jpeg、gif、webp、bmp）。
 2. 切回 SSH 终端窗口。
 3. `ssh-paste` 把图片传到服务器的 `/tmp/ssh-paste-<hash>.png`。
 4. 按 Ctrl+V 粘贴该路径。

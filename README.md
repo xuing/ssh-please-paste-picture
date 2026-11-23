@@ -15,7 +15,8 @@ script on Windows. Nothing is installed on the server.
 Windows Terminal pastes only text, and remote programs cannot read your Windows
 clipboard. Here is how `ssh-paste` works:
 
-1. Copy a screenshot on Windows with Win+Shift+S or another image app.
+1. Copy a screenshot on Windows with Win+Shift+S or another image app, or copy
+   image files (png, jpg, jpeg, gif, webp, bmp) in File Explorer.
 2. Switch back to your SSH terminal window.
 3. `ssh-paste` uploads the image to `/tmp/ssh-paste-<hash>.png` on the server.
 4. Press Ctrl+V to paste that path.
