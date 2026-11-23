@@ -453,6 +453,28 @@ public static class SshPasteNative {
     [DllImport("user32.dll")] public static extern bool IsClipboardFormatAvailable(uint format);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterClipboardFormat(string name);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int which);
+    [StructLayout(LayoutKind.Sequential)] struct IoStatusBlock { public IntPtr Status; public IntPtr Information; }
+    [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(IntPtr handle, out IoStatusBlock io, out uint info, uint length, int infoClass);
+
+    // True when the handle was opened for overlapped I/O (FileModeInformation has
+    // neither FILE_SYNCHRONOUS_IO_ALERT nor _NONALERT). Win32-OpenSSH gives its
+    // ProxyCommand such pipes; synchronous ReadFile on them can report a pending
+    // read as finished with 0 bytes, which looks like end of input.
+    public static bool IsOverlapped(IntPtr handle) {
+        IoStatusBlock io; uint mode;
+        if (NtQueryInformationFile(handle, out io, out mode, 4, 16) != 0) return false;
+        return (mode & 0x30) == 0;
+    }
+
+    // stdin (-10) or stdout (-11) as an unbuffered stream that uses overlapped
+    // I/O when the handle needs it.
+    public static System.IO.Stream OpenStandardStream(int which, bool write, out bool overlapped) {
+        IntPtr handle = GetStdHandle(which);
+        overlapped = IsOverlapped(handle);
+        Microsoft.Win32.SafeHandles.SafeFileHandle safe = new Microsoft.Win32.SafeHandles.SafeFileHandle(handle, false);
+        return new System.IO.FileStream(safe, write ? System.IO.FileAccess.Write : System.IO.FileAccess.Read, 1, overlapped);
+    }
     [DllImport("user32.dll", SetLastError = true)] static extern bool OpenClipboard(IntPtr owner);
     [DllImport("user32.dll")] static extern bool CloseClipboard();
     [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);
@@ -1165,13 +1187,37 @@ function Get-ParentSshArguments {
     return @{ Path = $exe; Args = $rest }
 }
 
+function Write-ProxyDebug {
+    # With SSH_PASTE_DEBUG=1, ProxyCommand mode reports its steps on stderr
+    # (stdout carries the SSH stream).
+    param([string]$Message)
+    if ($env:SSH_PASTE_DEBUG) { [Console]::Error.WriteLine('ssh-paste debug: ' + $Message) }
+}
+
 function Invoke-Proxy {
     # ProxyCommand mode. stdout is the SSH byte stream: never write to it.
     param([string]$TargetHost, [string]$Port, [string]$Alias)
     $client = Connect-Tcp $TargetHost ([int]$Port)
+    Write-ProxyDebug ('connected to {0}' -f $client.Client.RemoteEndPoint)
     $network = $client.GetStream()
-    $stdin = [Console]::OpenStandardInput()
-    $stdout = [Console]::OpenStandardOutput()
+    $stdin = $null
+    $stdout = $null
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        try {
+            if (-not ('SshPasteNative' -as [type])) { Add-Type -TypeDefinition $script:NativeSource }
+            $inOverlapped = $false
+            $outOverlapped = $false
+            $stdin = [SshPasteNative]::OpenStandardStream(-10, $false, [ref]$inOverlapped)
+            $stdout = [SshPasteNative]::OpenStandardStream(-11, $true, [ref]$outOverlapped)
+            Write-ProxyDebug ('stdin overlapped: {0}, stdout overlapped: {1}' -f $inOverlapped, $outOverlapped)
+        } catch {
+            Write-ProxyDebug ('native streams unavailable: ' + $_.Exception.Message)
+            $stdin = $null
+            $stdout = $null
+        }
+    }
+    if ($null -eq $stdin) { $stdin = [Console]::OpenStandardInput() }
+    if ($null -eq $stdout) { $stdout = [Console]::OpenStandardOutput() }
     $up = $stdin.CopyToAsync($network)
     $down = $network.CopyToAsync($stdout)
 
@@ -1203,6 +1249,7 @@ function Invoke-Proxy {
         while ($true) {
             $done = [System.Threading.Tasks.Task]::WaitAny(@($up, $down), 250)
             if ($done -eq 0) {
+                Write-ProxyDebug ('ssh closed its side (faulted: {0})' -f $up.IsFaulted)
                 # ssh closed its side: half-close and let the server finish.
                 if (-not $up.IsFaulted) {
                     try { $client.Client.Shutdown([System.Net.Sockets.SocketShutdown]::Send) } catch { }
@@ -1213,7 +1260,7 @@ function Invoke-Proxy {
                 }
                 break
             }
-            if ($done -eq 1) { break }
+            if ($done -eq 1) { Write-ProxyDebug ('the server closed its side (faulted: {0})' -f $down.IsFaulted); break }
             if ($null -ne $watcher) { try { Invoke-WatcherTick $watcher } catch { $watcher.LastSeq = -1 } }
         }
         foreach ($t in @($up, $down)) {
@@ -1280,6 +1327,11 @@ function Get-ResolvedSshConfig {
     return (ConvertFrom-SshG $r.Out)
 }
 
+function Test-HostResolves {
+    param([string]$Name)
+    try { return (@([System.Net.Dns]::GetHostAddresses($Name)).Count -gt 0) } catch { return $false }
+}
+
 function Invoke-Enable {
     param([string[]]$Hosts)
     if ($null -eq $Hosts -or $Hosts.Count -eq 0) { throw 'usage: ssh-paste --enable HOST [HOST...]' }
@@ -1293,6 +1345,11 @@ function Invoke-Enable {
         if (-not (Test-HostAlias $h)) { throw "use a host name or a Host alias from ~/.ssh/config (no user@, no options): $h" }
         if ($managed -contains $h -or $added -contains $h) { continue }
         $resolved = Get-ResolvedSshConfig $h
+        $hostName = $h
+        if ($resolved.ContainsKey('hostname')) { $hostName = [string]$resolved['hostname'] }
+        if (-not (Test-HostResolves $hostName)) {
+            throw ("cannot find the host {0} (from {1}). Check the name, or add it to ~/.ssh/config, then run --enable again" -f $hostName, $h)
+        }
         foreach ($key in @('proxyjump', 'proxycommand')) {
             if ($resolved.ContainsKey($key) -and $resolved[$key] -ne 'none') {
                 throw ("{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}" -f $h, $key, $resolved[$key])
@@ -1312,7 +1369,9 @@ function Invoke-Enable {
     Write-Info ''
     foreach ($line in (Set-ManagedBlock '' $all $proxy -CreatedFile:$createdFile).TrimEnd() -split "`r?`n") { Write-Info ('    ' + $line) 'Cyan' }
     Write-Info ''
-    Write-Info ('Now connect as usual: ssh ' + $all[0])
+    $example = $all[0]
+    if ($added.Count -gt 0) { $example = $added[0] }
+    Write-Info ('Now connect as usual: ssh ' + $example)
     return 0
 }
 

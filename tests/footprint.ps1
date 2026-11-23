@@ -46,7 +46,7 @@ $FragmentsDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\Fragment
 $WindowsAppsDir = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
 $SshDir = Join-Path $env:USERPROFILE '.ssh'
 $SshConfig = Join-Path $SshDir 'config'
-$TestHost = 'sftest.invalid'
+$TestHost = 'localhost'
 
 $sourceText = [System.IO.File]::ReadAllText($SourcePs1)
 if ($sourceText -notmatch "(?m)^\`$script:Version\s*=\s*'([^']+)'") { throw 'no $script:Version in src\ssh-paste.ps1' }

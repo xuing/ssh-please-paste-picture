@@ -1094,6 +1094,14 @@ Describe 'Read-UploadReply' {
     }
 }
 
+Describe 'Test-HostResolves' {
+    It 'finds localhost and an IP address, and not a name that cannot exist' {
+        Test-HostResolves 'localhost' | Should -BeTrue
+        Test-HostResolves '127.0.0.1' | Should -BeTrue
+        Test-HostResolves 'no-such-host.invalid' | Should -BeFalse
+    }
+}
+
 Describe 'Test-HostAlias' {
     It 'accepts <Name>' -ForEach @(
         @{ Name = 'myhost'; Value = 'myhost' }
@@ -1483,6 +1491,7 @@ Describe 'Get-SshPath' {
 
 Describe 'ssh config editing (Update-SshConfig, Invoke-Enable, Invoke-Disable)' {
     BeforeAll {
+        Mock Test-HostResolves { $true }   # the hosts in these tests are made up
         $script:HomeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-cfg-' + [guid]::NewGuid().ToString('N'))
         $script:SshDir = Join-Path $script:HomeDir '.ssh'
         $script:Cfg = Join-Path $script:SshDir 'config'
