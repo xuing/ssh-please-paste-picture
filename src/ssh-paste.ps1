@@ -14,7 +14,7 @@ Keep this file ASCII. https://github.com/xuing/ssh-please-paste-picture
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
-$script:Version = '0.1.0'
+$script:Version = '0.0.0-dev'
 $script:MarkerFormat = 'SshPaste.Owner'
 $script:BlockBegin = '# >>> ssh-paste (managed by ssh-paste --enable / --disable) >>>'
 $script:BlockEnd = '# <<< ssh-paste <<<'
@@ -947,6 +947,7 @@ function Get-UploadedItemPath {
         $count = 1
         if ($null -ne $failed) { $count = $failed.Count + 1 }
         $W.Failed[$Item.Hash] = @{ Message = $_.Exception.Message; At = [DateTime]::UtcNow; Count = $count }
+        Write-WatchDebug ('upload failed ({0}x): {1}' -f $count, $_.Exception.Message)
         Set-WakeAt $W ([DateTime]::UtcNow.AddSeconds([Math]::Min(1800, $script:RetryFailedSeconds * [Math]::Pow(2, $count - 1))))
         if ($count -eq 1) { try { [System.Media.SystemSounds]::Hand.Play() } catch { } }
         return $null
@@ -979,6 +980,7 @@ function Invoke-WatcherTick {
     $W.LastForeground = $fgKey
     $W.WakeAt = [DateTime]::MaxValue
     $state = $W.State
+    Write-WatchDebug ('tick: foreground={0} terminal={1} {2}' -f $fgKey, (Test-HostForeground $W.Matcher $foreground), (Format-WatchState $W $state))
     if ($null -eq $state.Png -and $null -eq $state['Files']) { return }
     $ours = ($null -ne $state.Owner)
     # An app copied text along with the image, or files that are not all images: leave it alone.
@@ -999,8 +1001,10 @@ function Invoke-WatcherTick {
             Set-SshPasteClipboard -Png $state.Png -Files $state['Files'] -Text $expected -Owner $fgKey -Token $W.Token
             $W.LastSeq = -1
             $wrote = $true
+            Write-WatchDebug ('wrote the expected path before the upload: ' + $expected)
         }
         $path = Get-UploadedPath $W $state
+        Write-WatchDebug ('upload result: ' + $path)
         if ($null -eq $path) {
             # The upload failed: take the path back so Ctrl+V does not paste a missing file.
             Sync-ClipboardText $W $state.Hash $null $foreground
@@ -1095,7 +1099,7 @@ function Invoke-Wrapper {
     $process = [System.Diagnostics.Process]::Start($psi)
     try {
         while (-not $process.WaitForExit(250)) {
-            if ($null -ne $watcher) { try { Invoke-WatcherTick $watcher } catch { $watcher.LastSeq = -1 } }
+            if ($null -ne $watcher) { try { Invoke-WatcherTick $watcher } catch { $watcher.LastSeq = -1; Write-WatchDebug ('tick error: ' + $_.Exception.Message + ' at ' + $_.InvocationInfo.PositionMessage) } }
         }
         $process.WaitForExit()
     } finally {
@@ -1187,11 +1191,34 @@ function Get-ParentSshArguments {
     return @{ Path = $exe; Args = $rest }
 }
 
+function Write-WatchDebug {
+    # With SSH_PASTE_DEBUG=1, the watcher logs what it sees and decides to
+    # %TEMP%\ssh-paste-debug.log (the terminal shows the ssh session).
+    param([string]$Message)
+    if (-not $env:SSH_PASTE_DEBUG) { return }
+    try {
+        $path = Join-Path ([System.IO.Path]::GetTempPath()) 'ssh-paste-debug.log'
+        $line = '{0} [{1}] {2}' -f (Get-Date).ToString('HH:mm:ss.fff'), $PID, $Message
+        [System.IO.File]::AppendAllText($path, $line + [Environment]::NewLine)
+    } catch { }
+}
+
+function Format-WatchState {
+    param($W, $State)
+    if ($null -eq $State) { return 'no state' }
+    $kind = 'none'
+    if ($null -ne $State['Files']) { $kind = 'files(' + @($State['Files']).Count + ')' } elseif ($null -ne $State.Png) { $kind = 'image(' + $State.Png.Length + ' bytes)' }
+    $owner = 'app'
+    if ($null -ne $State.Owner) { $owner = 'ours(window ' + $State.Owner + ', mine=' + ($State.Token -eq $W.Token) + ')' }
+    return ('seq={0} {1} text={2} files={3} by={4} pasteText={5}' -f $State.Seq, $kind, $State.HasText, $State['HasFiles'], $owner, $State.Text)
+}
+
 function Write-ProxyDebug {
     # With SSH_PASTE_DEBUG=1, ProxyCommand mode reports its steps on stderr
     # (stdout carries the SSH stream).
     param([string]$Message)
     if ($env:SSH_PASTE_DEBUG) { [Console]::Error.WriteLine('ssh-paste debug: ' + $Message) }
+    Write-WatchDebug ('proxy: ' + $Message)
 }
 
 function Invoke-Proxy {
@@ -1261,7 +1288,7 @@ function Invoke-Proxy {
                 break
             }
             if ($done -eq 1) { Write-ProxyDebug ('the server closed its side (faulted: {0})' -f $down.IsFaulted); break }
-            if ($null -ne $watcher) { try { Invoke-WatcherTick $watcher } catch { $watcher.LastSeq = -1 } }
+            if ($null -ne $watcher) { try { Invoke-WatcherTick $watcher } catch { $watcher.LastSeq = -1; Write-WatchDebug ('tick error: ' + $_.Exception.Message + ' at ' + $_.InvocationInfo.PositionMessage) } }
         }
         foreach ($t in @($up, $down)) {
             if ($t.IsFaulted) {
@@ -1515,6 +1542,112 @@ function Invoke-Uninstall {
     return 0
 }
 
+function ConvertTo-VersionParts {
+    # "0.1.12", "v0.1.12" or "0.1.0-dev" -> @{ Core = [version]; Pre = 'dev' or '' }.
+    param([string]$Text)
+    if ($Text -cnotmatch '^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?\z') { return $null }
+    return @{ Core = [version]('{0}.{1}.{2}' -f $Matches[1], $Matches[2], $Matches[3]); Pre = [string]$Matches[4] }
+}
+
+function Test-NewerVersion {
+    # True when $Candidate is a newer release than $Current. A pre-release
+    # (0.1.0-dev, 0.2.0-rc.1) is older than the same version without the suffix.
+    param([string]$Candidate, [string]$Current)
+    $a = ConvertTo-VersionParts $Candidate
+    $b = ConvertTo-VersionParts $Current
+    if ($null -eq $a) { return $false }
+    if ($null -eq $b) { return $true }
+    if ($a.Core -ne $b.Core) { return ($a.Core -gt $b.Core) }
+    if ($a.Pre -ceq $b.Pre) { return $false }
+    if ($a.Pre -eq '') { return $true }
+    if ($b.Pre -eq '') { return $false }
+    return ([string]::CompareOrdinal($a.Pre, $b.Pre) -gt 0)
+}
+
+function Get-UpdateBase {
+    if ($env:SSH_PASTE_UPDATE_URL) { return $env:SSH_PASTE_UPDATE_URL.TrimEnd('/') }
+    return 'https://api.github.com/repos/xuing/ssh-please-paste-picture'
+}
+
+function Invoke-WebDownload {
+    # Bytes of a URL. One place for web access, so tests can replace it.
+    param([string]$Url)
+    $old = [System.Net.ServicePointManager]::SecurityProtocol
+    try {
+        if ($old -ne 0) { [System.Net.ServicePointManager]::SecurityProtocol = $old -bor [System.Net.SecurityProtocolType]::Tls12 }
+        $client = New-Object System.Net.WebClient
+        try {
+            $client.Headers.Add('User-Agent', 'ssh-paste')
+            $client.Headers.Add('Accept', 'application/vnd.github+json')
+            return , $client.DownloadData($Url)
+        } finally { $client.Dispose() }
+    } finally {
+        [System.Net.ServicePointManager]::SecurityProtocol = $old
+    }
+}
+
+function Get-LatestRelease {
+    # @{ Version; Assets = @{ name = download url } } of the latest release.
+    $json = [System.Text.Encoding]::UTF8.GetString((Invoke-WebDownload ((Get-UpdateBase) + '/releases/latest')))
+    $release = ConvertFrom-Json $json
+    $assets = @{}
+    foreach ($a in @($release.assets)) { $assets[[string]$a.name] = [string]$a.browser_download_url }
+    return @{ Version = ([string]$release.tag_name).TrimStart('v'); Assets = $assets }
+}
+
+function Get-Sha256Hex {
+    param([byte[]]$Bytes)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return (-join ($sha.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') })) } finally { $sha.Dispose() }
+}
+
+function Test-ReleaseChecksum {
+    # SHA256SUMS lines are "<hex>  <name>"; true when $Name is listed with $Bytes' hash.
+    param([string]$Sums, [string]$Name, [byte[]]$Bytes)
+    $hash = Get-Sha256Hex $Bytes
+    foreach ($line in ($Sums -split "`r?`n")) {
+        if ($line -match '^([0-9a-fA-F]{64})\s+\*?(\S+)\s*$' -and $Matches[2] -ceq $Name) { return ($Matches[1].ToLowerInvariant() -ceq $hash) }
+    }
+    return $false
+}
+
+function Start-Installer {
+    # Runs a downloaded install.ps1 in Windows PowerShell; returns its exit code.
+    param([string]$Path)
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $Path
+    return $LASTEXITCODE
+}
+
+function Invoke-Update {
+    # ssh-paste --update [--check]: compare with the latest release and, unless
+    # --check, run that release's install.ps1 after checking it against SHA256SUMS.
+    param([string[]]$Options)
+    $checkOnly = ($Options -contains '--check')
+    $latest = Get-LatestRelease
+    if (-not (Test-NewerVersion $latest.Version $script:Version)) {
+        Write-Info ('ssh-paste {0} is up to date (latest release: {1}).' -f $script:Version, $latest.Version) 'Green'
+        return 0
+    }
+    Write-Info ('ssh-paste {0} is available (you have {1}).' -f $latest.Version, $script:Version)
+    if ($checkOnly) { Write-Info 'Install it with: ssh-paste --update'; return 0 }
+    foreach ($name in @('install.ps1', 'SHA256SUMS')) {
+        if (-not $latest.Assets.ContainsKey($name)) { throw "release $($latest.Version) has no $name" }
+    }
+    $installer = Invoke-WebDownload $latest.Assets['install.ps1']
+    $sums = [System.Text.Encoding]::ASCII.GetString((Invoke-WebDownload $latest.Assets['SHA256SUMS']))
+    if (-not (Test-ReleaseChecksum $sums 'install.ps1' $installer)) { throw 'install.ps1 does not match SHA256SUMS; nothing was changed' }
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-update-' + [guid]::NewGuid().ToString('N'))
+    [void][System.IO.Directory]::CreateDirectory($dir)
+    try {
+        $file = Join-Path $dir 'install.ps1'
+        [System.IO.File]::WriteAllBytes($file, $installer)
+        return (Start-Installer $file)
+    } finally {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-Usage {
     return @(
         ('ssh-paste ' + $script:Version + ' - paste Windows screenshots into programs running over SSH'),
@@ -1523,6 +1656,7 @@ function Get-Usage {
         '  ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)',
         '  ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config',
         '  ssh-paste --doctor [HOST]           check this computer and test an upload to HOST',
+        '  ssh-paste --update [--check]        install the latest release (--check: only say if there is one)',
         '  ssh-paste --uninstall               remove ssh-paste and everything it changed',
         '  ssh-paste --version | --help',
         '',
@@ -1547,6 +1681,7 @@ function Invoke-Main {
         '--enable' { return (Invoke-Enable $rest) }
         '--disable' { return (Invoke-Disable $rest) }
         '--doctor' { return (Invoke-Doctor $rest) }
+        '--update' { return (Invoke-Update $rest) }
         '--uninstall' { return (Invoke-Uninstall) }
         '--version' { Write-Host $script:Version; return 0 }
         '--help' { Write-Host (Get-Usage); return 0 }
