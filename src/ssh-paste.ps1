@@ -18,9 +18,13 @@ Set-StrictMode -Version 2.0
 # descriptor table in these variables. A posix program started further down,
 # such as the ssh.exe that uploads, would read them too and take the
 # interactive session's pipes as its own stdin and stdout (see the TODO in
-# PowerShell/openssh-portable contrib/win32/win32compat/w32fd.c). Drop them.
-$script:InheritedSshState = @('c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE', 'c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_CHROOT')
-foreach ($name in $script:InheritedSshState) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
+# PowerShell/openssh-portable contrib/win32/win32compat/w32fd.c). Drop them, and
+# start every child through New-ChildStartInfo, which drops them again.
+# Every variable with Win32-OpenSSH's private prefix goes, so later ones do too.
+$script:InheritedSshPrefix = 'c28fc6f98a2c44abbbd89d6a3037d0d9_'
+foreach ($variable in @(Get-ChildItem -Path Env: | Where-Object { $_.Name.StartsWith($script:InheritedSshPrefix, [StringComparison]::OrdinalIgnoreCase) })) {
+    Remove-Item -LiteralPath ('Env:' + $variable.Name) -ErrorAction SilentlyContinue
+}
 
 $script:Version = '0.0.0-dev'
 $script:MarkerFormat = 'SshPaste.Owner'
@@ -462,6 +466,16 @@ public static class SshPasteNative {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterClipboardFormat(string name);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
     [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int which);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
+
+    // Clears HANDLE_FLAG_INHERIT, so programs we start do not get a copy of
+    // this handle. False when the handle cannot be changed.
+    public static bool KeepToSelf(IntPtr handle) {
+        if (handle == IntPtr.Zero || handle == new IntPtr(-1)) return false;
+        return SetHandleInformation(handle, 1, 0);
+    }
+
+    public static IntPtr StandardHandle(int which) { return GetStdHandle(which); }
     [StructLayout(LayoutKind.Sequential)] struct IoStatusBlock { public IntPtr Status; public IntPtr Information; }
     [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(IntPtr handle, out IoStatusBlock io, out uint info, uint length, int infoClass);
 
@@ -714,18 +728,35 @@ function Set-SshPasteClipboard {
     }
 }
 
-function Invoke-NativeCapture {
-    # Run a program, capture stdout and stderr separately. (In Windows PowerShell
-    # 5.1, `& prog 2>&1` turns stderr lines into errors under -ErrorAction Stop.)
-    param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 20)
+function New-ChildStartInfo {
+    # The one way this script starts a program: no shell, and an environment
+    # without Win32-OpenSSH's private variables. -Redirect gives the child its
+    # own stdin, stdout and stderr pipes and no console window; without it the
+    # child shares our console (the interactive ssh of wrapper mode).
+    # tests/lint.ps1 fails when ProcessStartInfo is created anywhere else.
+    param([string]$FilePath, [string[]]$Arguments, [switch]$Redirect, [string[]]$RemoveVariables)
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $FilePath
     Set-ProcessArguments $psi $Arguments
     $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
+    foreach ($key in @($psi.EnvironmentVariables.Keys)) {
+        if ([string]$key -and ([string]$key).StartsWith($script:InheritedSshPrefix, [StringComparison]::OrdinalIgnoreCase)) { $psi.EnvironmentVariables.Remove([string]$key) }
+    }
+    foreach ($name in @($RemoveVariables)) { if ($name) { $psi.EnvironmentVariables.Remove($name) } }
+    if ($Redirect) {
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+    }
+    return $psi
+}
+
+function Invoke-NativeCapture {
+    # Run a program, capture stdout and stderr separately. (In Windows PowerShell
+    # 5.1, `& prog 2>&1` turns stderr lines into errors under -ErrorAction Stop.)
+    param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 20)
+    $psi = New-ChildStartInfo -FilePath $FilePath -Arguments $Arguments -Redirect
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $psi
     try {
@@ -770,18 +801,16 @@ function Get-EffectiveSshConfig {
     return $null
 }
 
+function Get-RemainingMilliseconds {
+    param([DateTime]$Deadline)
+    return [int][Math]::Max(0, ($Deadline - [DateTime]::UtcNow).TotalMilliseconds)
+}
+
 function Send-Image {
     # One ssh connection sends, verifies, prunes and publishes; returns the path.
     param([string]$SshPath, [string[]]$Arguments, [byte[]]$Png, [string]$Hash, [int]$TimeoutSeconds = 30, [string]$Ext = 'png')
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $SshPath
-    Set-ProcessArguments $psi $Arguments
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
+    $psi = New-ChildStartInfo -FilePath $SshPath -Arguments $Arguments -Redirect
     # The stdin writer must not start with a byte order mark: .NET Framework uses
     # Console.InputEncoding, which is UTF-8 *with* BOM when the code page is 65001.
     $restoreEncoding = $null
@@ -804,12 +833,11 @@ function Send-Image {
         }
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        $remaining = { [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds) }
         $sendError = $null
         try {
             $stdin = $process.StandardInput.BaseStream
             $write = $stdin.WriteAsync($Png, 0, $Png.Length)
-            if (-not $write.Wait((& $remaining))) { $sendError = 'timed out sending the image' }
+            if (-not $write.Wait((Get-RemainingMilliseconds $deadline))) { $sendError = 'timed out sending the image' }
             else { $stdin.Flush() }
         } catch {
             $sendError = $_.Exception.GetBaseException().Message
@@ -818,7 +846,7 @@ function Send-Image {
             try { $process.StandardInput.Close() } catch { $sendError = $_.Exception.GetBaseException().Message }
         }
         if ($null -ne $sendError -and -not $process.HasExited) { try { $process.Kill() } catch { } }
-        if (-not $process.WaitForExit((& $remaining))) {
+        if (-not $process.WaitForExit((Get-RemainingMilliseconds $deadline))) {
             try { $process.Kill() } catch { }
             # Killing ssh closes its pipes, so what it wrote on stderr can be read now.
             $tail = ''
@@ -826,9 +854,9 @@ function Send-Image {
             throw ("ssh did not finish in {0} seconds (stdin sent: {1}); ssh said: {2}" -f $TimeoutSeconds, ($null -eq $sendError), $tail)
         }
         $err = ''
-        if ($stderr.Wait((& $remaining))) { $err = $stderr.Result.Trim() }
+        if ($stderr.Wait((Get-RemainingMilliseconds $deadline))) { $err = $stderr.Result.Trim() }
         if ($process.ExitCode -ne 0 -or $null -ne $sendError) {
-            if ($err.Length -eq 0 -and $stdout.Wait((& $remaining))) {
+            if ($err.Length -eq 0 -and $stdout.Wait((Get-RemainingMilliseconds $deadline))) {
                 # The server's own word, e.g. "short 120", when ssh says nothing.
                 $lines = @($stdout.Result -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 })
                 if ($lines.Count -gt 0) { $err = $lines[$lines.Count - 1].Trim() }
@@ -837,7 +865,7 @@ function Send-Image {
             if ([string]::IsNullOrEmpty($err)) { $err = 'no error message' }
             throw ('ssh exited with {0}: {1}' -f $process.ExitCode, $err)
         }
-        if (-not $stdout.Wait((& $remaining))) { throw 'the reply from ssh did not arrive in time' }
+        if (-not $stdout.Wait((Get-RemainingMilliseconds $deadline))) { throw 'the reply from ssh did not arrive in time' }
         return (Read-UploadReply $stdout.Result $Png.Length $Hash $Ext)
     } finally {
         # Closing our ends ends any read still pending on a pipe that a leftover
@@ -1110,11 +1138,7 @@ function Invoke-Wrapper {
             }
         }
     }
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $ssh
-    Set-ProcessArguments $psi $SshArgs
-    $psi.UseShellExecute = $false
-    $process = [System.Diagnostics.Process]::Start($psi)
+    $process = [System.Diagnostics.Process]::Start((New-ChildStartInfo -FilePath $ssh -Arguments $SshArgs))
     try {
         while (-not $process.WaitForExit(250)) {
             if ($null -ne $watcher) { try { Invoke-WatcherTick $watcher } catch { $watcher.LastSeq = -1; Write-WatchDebug ('tick error: ' + $_.Exception.Message + ' at ' + $_.InvocationInfo.PositionMessage) } }
@@ -1255,6 +1279,14 @@ function Invoke-Proxy {
             $stdin = [SshPasteNative]::OpenStandardStream(-10, $false, [ref]$inOverlapped)
             $stdout = [SshPasteNative]::OpenStandardStream(-11, $true, [ref]$outOverlapped)
             Write-ProxyDebug ('stdin overlapped: {0}, stdout overlapped: {1}' -f $inOverlapped, $outOverlapped)
+            # ssh gave us these pipes, and the socket is ours: children we start
+            # (the upload ssh) must not hold copies of the session's pipes.
+            $kept = @(
+                [SshPasteNative]::KeepToSelf([SshPasteNative]::StandardHandle(-10)),
+                [SshPasteNative]::KeepToSelf([SshPasteNative]::StandardHandle(-11)),
+                [SshPasteNative]::KeepToSelf([SshPasteNative]::StandardHandle(-12)),
+                [SshPasteNative]::KeepToSelf($client.Client.Handle))
+            Write-ProxyDebug ('kept to self (stdin, stdout, stderr, socket): ' + ($kept -join ', '))
         } catch {
             Write-ProxyDebug ('native streams unavailable: ' + $_.Exception.Message)
             $stdin = $null
@@ -1560,35 +1592,14 @@ function Invoke-Uninstall {
     return 0
 }
 
-function ConvertTo-VersionParts {
-    # "0.1.12", "v0.1.12" or "0.1.0-dev" -> @{ Core = [version]; Pre = 'dev' or '' }.
-    param([string]$Text)
-    if ($Text -cnotmatch '^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?\z') { return $null }
-    return @{ Core = [version]('{0}.{1}.{2}' -f $Matches[1], $Matches[2], $Matches[3]); Pre = [string]$Matches[4] }
-}
-
-function Test-NewerVersion {
-    # True when $Candidate is a newer release than $Current. A pre-release
-    # (0.1.0-dev, 0.2.0-rc.1) is older than the same version without the suffix.
-    param([string]$Candidate, [string]$Current)
-    $a = ConvertTo-VersionParts $Candidate
-    $b = ConvertTo-VersionParts $Current
-    if ($null -eq $a) { return $false }
-    if ($null -eq $b) { return $true }
-    if ($a.Core -ne $b.Core) { return ($a.Core -gt $b.Core) }
-    if ($a.Pre -ceq $b.Pre) { return $false }
-    if ($a.Pre -eq '') { return $true }
-    if ($b.Pre -eq '') { return $false }
-    return ([string]::CompareOrdinal($a.Pre, $b.Pre) -gt 0)
-}
-
 function Get-UpdateBase {
     if ($env:SSH_PASTE_UPDATE_URL) { return $env:SSH_PASTE_UPDATE_URL.TrimEnd('/') }
-    return 'https://api.github.com/repos/xuing/ssh-please-paste-picture'
+    return 'https://github.com/xuing/ssh-please-paste-picture/releases/latest/download'
 }
 
 function Invoke-WebDownload {
-    # Bytes of a URL. One place for web access, so tests can replace it.
+    # Bytes of a URL, through the system proxy with the user's credentials. One
+    # place for web access, so tests can replace it.
     param([string]$Url)
     $old = [System.Net.ServicePointManager]::SecurityProtocol
     try {
@@ -1596,21 +1607,12 @@ function Invoke-WebDownload {
         $client = New-Object System.Net.WebClient
         try {
             $client.Headers.Add('User-Agent', 'ssh-paste')
-            $client.Headers.Add('Accept', 'application/vnd.github+json')
+            if ($null -ne $client.Proxy) { $client.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials }
             return , $client.DownloadData($Url)
         } finally { $client.Dispose() }
     } finally {
         [System.Net.ServicePointManager]::SecurityProtocol = $old
     }
-}
-
-function Get-LatestRelease {
-    # @{ Version; Assets = @{ name = download url } } of the latest release.
-    $json = [System.Text.Encoding]::UTF8.GetString((Invoke-WebDownload ((Get-UpdateBase) + '/releases/latest')))
-    $release = ConvertFrom-Json $json
-    $assets = @{}
-    foreach ($a in @($release.assets)) { $assets[[string]$a.name] = [string]$a.browser_download_url }
-    return @{ Version = ([string]$release.tag_name).TrimStart('v'); Assets = $assets }
 }
 
 function Get-Sha256Hex {
@@ -1630,30 +1632,27 @@ function Test-ReleaseChecksum {
 }
 
 function Start-Installer {
-    # Runs a downloaded install.ps1 in Windows PowerShell; returns its exit code.
+    # Runs a downloaded install.ps1 in Windows PowerShell on this console and
+    # returns its exit code. Its own output goes to the console, not to us.
+    # SSH_PASTE_UNINSTALL and SSH_PASTE_REF are for running the installer by
+    # hand; an update must not inherit them.
     param([string]$Path)
-    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $Path
-    return $LASTEXITCODE
+    $powershell = [System.IO.Path]::Combine([string]$env:SystemRoot, 'System32\WindowsPowerShell\v1.0\powershell.exe')
+    $psi = New-ChildStartInfo -FilePath $powershell -Arguments @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Path) -RemoveVariables @('SSH_PASTE_UNINSTALL', 'SSH_PASTE_REF')
+    $process = [System.Diagnostics.Process]::Start($psi)
+    try { $process.WaitForExit(); return $process.ExitCode } finally { $process.Dispose() }
 }
 
 function Invoke-Update {
-    # ssh-paste --update [--check]: compare with the latest release and, unless
-    # --check, run that release's install.ps1 after checking it against SHA256SUMS.
+    # ssh-paste --update: run the latest release's install.ps1 after checking it
+    # against that release's SHA256SUMS. The installer replaces the files in
+    # place and says what changed ("Upgraded", or "Reinstalled" when current).
     param([string[]]$Options)
-    $checkOnly = ($Options -contains '--check')
-    $latest = Get-LatestRelease
-    if (-not (Test-NewerVersion $latest.Version $script:Version)) {
-        Write-Info ('ssh-paste {0} is up to date (latest release: {1}).' -f $script:Version, $latest.Version) 'Green'
-        return 0
-    }
-    Write-Info ('ssh-paste {0} is available (you have {1}).' -f $latest.Version, $script:Version)
-    if ($checkOnly) { Write-Info 'Install it with: ssh-paste --update'; return 0 }
-    foreach ($name in @('install.ps1', 'SHA256SUMS')) {
-        if (-not $latest.Assets.ContainsKey($name)) { throw "release $($latest.Version) has no $name" }
-    }
-    $installer = Invoke-WebDownload $latest.Assets['install.ps1']
-    $sums = [System.Text.Encoding]::ASCII.GetString((Invoke-WebDownload $latest.Assets['SHA256SUMS']))
+    if (@($Options).Count -gt 0) { throw ('--update takes no options: ' + (@($Options) -join ' ')) }
+    $base = Get-UpdateBase
+    Write-Info ('Downloading the latest release from ' + $base)
+    $installer = Invoke-WebDownload ($base + '/install.ps1')
+    $sums = [System.Text.Encoding]::ASCII.GetString((Invoke-WebDownload ($base + '/SHA256SUMS')))
     if (-not (Test-ReleaseChecksum $sums 'install.ps1' $installer)) { throw 'install.ps1 does not match SHA256SUMS; nothing was changed' }
     $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-update-' + [guid]::NewGuid().ToString('N'))
     [void][System.IO.Directory]::CreateDirectory($dir)
@@ -1674,7 +1673,7 @@ function Get-Usage {
         '  ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)',
         '  ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config',
         '  ssh-paste --doctor [HOST]           check this computer and test an upload to HOST',
-        '  ssh-paste --update [--check]        install the latest release (--check: only say if there is one)',
+        '  ssh-paste --update                  install the latest release',
         '  ssh-paste --uninstall               remove ssh-paste and everything it changed',
         '  ssh-paste --version | --help',
         '',

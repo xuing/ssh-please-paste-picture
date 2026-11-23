@@ -13,6 +13,14 @@ Tags
              SSH_PASTE_E2E_KEY     optional, passed as -i
              SSH_PASTE_E2E_CONFIG  optional, passed as -F
              SSH_PASTE_SSH         optional, the ssh to use (default: ssh on PATH)
+
+Home sandbox
+  The whole run happens with USERPROFILE, HOME, APPDATA and LOCALAPPDATA pointing at a
+  temporary folder and with every SSH_PASTE_* variable unset, so a test can never read
+  or change the real profile, and the tester's own settings cannot change a result. The
+  variables listed in $script:KeptVariables are the test inputs described above and stay.
+  Run the whole file (tests/run-pester.ps1 or check.ps1): the repository guard tests at
+  the end live in it.
 #>
 
 BeforeDiscovery {
@@ -30,6 +38,29 @@ BeforeDiscovery {
 }
 
 BeforeAll {
+    # --- home sandbox (see the header) ---------------------------------------------
+    $script:SandboxRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-home-' + [guid]::NewGuid().ToString('N'))
+    $script:RealHome = $env:USERPROFILE
+    $script:HomeVariables = @('USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA')
+    # Inputs of the opt-in tests: the clipboard switch, and the E2E host and its options.
+    $script:KeptVariables = @('SSH_PASTE_TEST_CLIPBOARD', 'SSH_PASTE_E2E_HOST', 'SSH_PASTE_E2E_KEY', 'SSH_PASTE_E2E_CONFIG', 'SSH_PASTE_REPO')
+    if ($env:SSH_PASTE_E2E_HOST) { $script:KeptVariables += 'SSH_PASTE_SSH' }
+    $script:SavedVariables = @{}
+    foreach ($name in $script:HomeVariables + @(Get-ChildItem Env: | Where-Object { $_.Name -like 'SSH_PASTE_*' -and $script:KeptVariables -notcontains $_.Name } | ForEach-Object { $_.Name })) {
+        $script:SavedVariables[$name] = [System.Environment]::GetEnvironmentVariable($name)
+    }
+    foreach ($name in @($script:SavedVariables.Keys)) {
+        # Remove-Item, not SetEnvironmentVariable($null): .NET on Unix keeps an empty value.
+        if ($name -like 'SSH_PASTE_*') { Remove-Item -LiteralPath ('Env:' + $name) }
+    }
+    $script:SandboxRoaming = Join-Path (Join-Path $script:SandboxRoot 'AppData') 'Roaming'
+    $script:SandboxLocal = Join-Path (Join-Path $script:SandboxRoot 'AppData') 'Local'
+    foreach ($dir in @($script:SandboxRoot, $script:SandboxRoaming, $script:SandboxLocal)) { [void][System.IO.Directory]::CreateDirectory($dir) }
+    $env:USERPROFILE = $script:SandboxRoot
+    $env:HOME = $script:SandboxRoot
+    $env:APPDATA = $script:SandboxRoaming
+    $env:LOCALAPPDATA = $script:SandboxLocal
+
     $script:RepoRoot = Split-Path -Parent $PSScriptRoot
     $script:CorePath = Join-Path $script:RepoRoot 'src/ssh-paste.ps1'
     . $script:CorePath
@@ -126,6 +157,36 @@ BeforeAll {
     }
 }
 
+AfterAll {
+    foreach ($name in @($script:SavedVariables.Keys)) {
+        if ($null -eq $script:SavedVariables[$name]) {
+            Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue
+        } else {
+            [System.Environment]::SetEnvironmentVariable($name, $script:SavedVariables[$name])
+        }
+    }
+    Remove-Item -LiteralPath $script:SandboxRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Describe 'home sandbox' {
+    It 'points the home variables at the sandbox, not the real profile' {
+        foreach ($name in $script:HomeVariables) {
+            $value = [System.Environment]::GetEnvironmentVariable($name)
+            $value | Should -BeLike ($script:SandboxRoot + '*') -Because "$name must not be the real one"
+        }
+        if ($script:RealHome) { $env:USERPROFILE | Should -Not -Be $script:RealHome }
+    }
+
+    It 'leaves no SSH_PASTE_ variable set except the documented test inputs' {
+        $stray = @(Get-ChildItem Env: | Where-Object { $_.Name -like 'SSH_PASTE_*' -and $script:KeptVariables -notcontains $_.Name } | ForEach-Object { $_.Name })
+        $stray | Should -BeNullOrEmpty
+    }
+
+    It 'resolves the ssh config path inside the sandbox' {
+        (Get-SshConfigPath) | Should -BeLike ($script:SandboxRoot + '*')
+    }
+}
+
 Describe 'source file' {
     It 'is pure ASCII' {
         $bytes = [System.IO.File]::ReadAllBytes($script:CorePath)
@@ -166,7 +227,7 @@ Describe 'source file' {
     }
 
     It 'can be dot-sourced for tests: functions load, main does not run' {
-        $script:Version | Should -Match '^\d+\.\d+\.\d+$'
+        $script:Version | Should -Match '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$'
     }
 
     It 'this test file is ASCII too' {
@@ -1871,7 +1932,7 @@ Describe 'install.ps1' {
     }
 
     Context 'the default ref' {
-        It 'is one assignment of main, which release.yml replaces with the tag' {
+        It 'is one assignment of main, which publish.yml replaces with the tag' {
             $text = [System.IO.File]::ReadAllText($script:InstallPath)
             ([regex]::Matches($text, "(?m)^    \`$DefaultRef = 'main'\r?$")).Count | Should -Be 1
             $script:InstallStrings.DefaultRef | Should -BeExactly 'main'
@@ -1879,14 +1940,101 @@ Describe 'install.ps1' {
             $text | Should -Match '\$Ref = \$DefaultRef'
         }
 
-        It 'is what release.yml edits' {
-            $yml = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github/workflows/release.yml'))
+        It 'is what publish.yml edits' {
+            $yml = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github/workflows/publish.yml'))
             $yml | Should -Match 'DefaultRef'
         }
 
         It 'documents the release download as the way to install' {
             $text = [System.IO.File]::ReadAllText($script:InstallPath)
             $text | Should -Match 'irm https://github\.com/xuing/ssh-please-paste-picture/releases/latest/download/install\.ps1 \| iex'
+        }
+    }
+
+    Context 'a release install' {
+        BeforeAll {
+            # Get-SourceFiles runs here with a fake Get-WebBytes that serves $Web.Files and records the URLs.
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:InstallPath, [ref]$null, [ref]$null)
+            $fnTexts = foreach ($name in @('Get-Sha256Hex', 'Assert-ListedSha256', 'Get-SourceFiles')) {
+                $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+                if ($null -eq $fn) { throw "install.ps1 has no function $name" }
+                $fn.Extent.Text
+            }
+            $code = 'param($DefaultRef, $Ref, $Web, $DownloadBase, $ReleaseBase, $ReleaseTag)' + "`n" + '$ScriptDir = $null' + "`n" + ($fnTexts -join "`n") + @'
+
+function Get-WebBytes {
+    param([string]$Url)
+    [void]$Web.Asked.Add($Url)
+    if (-not $Web.Files.ContainsKey($Url)) { throw "404 $Url" }
+    return , $Web.Files[$Url]
+}
+Get-SourceFiles $Ref
+'@
+            $script:SourceBlock = [scriptblock]::Create($code)
+            $script:Release = 'https://github.com/xuing/ssh-please-paste-picture/releases/download/v0.1.7/'
+            $script:Raw = 'https://raw.githubusercontent.com/xuing/ssh-please-paste-picture/'
+            function Get-Hex {
+                param([byte[]]$Bytes)
+                $sha = [System.Security.Cryptography.SHA256]::Create()
+                try { return (([System.BitConverter]::ToString($sha.ComputeHash($Bytes)) -replace '-', '').ToLowerInvariant()) } finally { $sha.Dispose() }
+            }
+            function New-Web {
+                # A release v0.1.7 whose SHA256SUMS lists the two payload files and install.ps1.
+                $ps1 = [System.Text.Encoding]::ASCII.GetBytes("`$script:Version = '0.1.7'`n")
+                $cmd = [System.Text.Encoding]::ASCII.GetBytes("ssh-paste.ps1`n")
+                $sums = "{0}  ssh-paste.ps1`n{1} *ssh-paste.cmd`n{2}  install.ps1`n" -f (Get-Hex $ps1), (Get-Hex $cmd).ToUpperInvariant(), ('0' * 64)
+                $files = @{}
+                $files[$script:Release + 'ssh-paste.ps1'] = $ps1
+                $files[$script:Release + 'ssh-paste.cmd'] = $cmd
+                $files[$script:Release + 'SHA256SUMS'] = [System.Text.Encoding]::ASCII.GetBytes($sums)
+                $files[$script:Raw + 'main/src/ssh-paste.ps1'] = [System.Text.Encoding]::ASCII.GetBytes("raw ps1`n")
+                $files[$script:Raw + 'main/src/ssh-paste.cmd'] = [System.Text.Encoding]::ASCII.GetBytes("raw cmd`n")
+                $files[$script:Raw + 'v0.1.7/src/ssh-paste.ps1'] = [System.Text.Encoding]::ASCII.GetBytes("raw tag ps1`n")
+                $files[$script:Raw + 'v0.1.7/src/ssh-paste.cmd'] = [System.Text.Encoding]::ASCII.GetBytes("raw tag cmd`n")
+                return @{ Files = $files; Asked = (New-Object System.Collections.ArrayList) }
+            }
+            function Get-Source {
+                param([string]$DefaultRef, [string]$Ref, $Web)
+                return (& $script:SourceBlock $DefaultRef $Ref $Web $script:InstallStrings.DownloadBase $script:InstallStrings.ReleaseBase $script:InstallStrings.ReleaseTag)
+            }
+        }
+
+        It 'downloads the files attached to the release and checks them against its SHA256SUMS' {
+            $web = New-Web
+            $s = Get-Source 'v0.1.7' '' $web
+            $s.Tag | Should -BeExactly 'v0.1.7'
+            [System.Text.Encoding]::ASCII.GetString($s.Ps1) | Should -Match "Version = '0.1.7'"
+            @($web.Asked) | Should -Contain ($script:Release + 'SHA256SUMS')
+            @($web.Asked | Where-Object { $_ -like '*raw.githubusercontent.com*' }).Count | Should -Be 0
+        }
+
+        It 'refuses a file that is not what SHA256SUMS lists' {
+            $web = New-Web
+            $web.Files[$script:Release + 'ssh-paste.ps1'] = [System.Text.Encoding]::ASCII.GetBytes("`$script:Version = '0.0.0-dev'`n")
+            { Get-Source 'v0.1.7' '' $web } | Should -Throw '*ssh-paste.ps1 does not match SHA256SUMS*'
+            $web = New-Web
+            $web.Files[$script:Release + 'ssh-paste.cmd'] = [System.Text.Encoding]::ASCII.GetBytes("changed`n")
+            { Get-Source 'v0.1.7' '' $web } | Should -Throw '*ssh-paste.cmd does not match SHA256SUMS*'
+        }
+
+        It 'refuses a release whose SHA256SUMS does not list a payload file' {
+            $web = New-Web
+            $web.Files[$script:Release + 'SHA256SUMS'] = [System.Text.Encoding]::ASCII.GetBytes(('{0}  install.ps1' -f ('0' * 64)))
+            { Get-Source 'v0.1.7' '' $web } | Should -Throw '*does not list ssh-paste.ps1*'
+        }
+
+        It 'takes src/ from the raw ref for main, for a branch and for an explicit ref, and reads no SHA256SUMS then' {
+            foreach ($case in @(@('main', ''), @('main', 'v0.1.7'), @('v0.1.7', 'main'))) {
+                $web = New-Web
+                $s = Get-Source $case[0] $case[1] $web
+                $s.Tag | Should -BeNullOrEmpty
+                @($web.Asked | Where-Object { $_ -like '*SHA256SUMS' -or $_ -like '*/releases/download/*' }).Count | Should -Be 0 -Because ($case -join ' / ')
+            }
+        }
+
+        It 'checks that the release ships the version of its tag before it installs anything' {
+            $text = [System.IO.File]::ReadAllText($script:InstallPath)
+            $text | Should -Match '\$version -ne \$source\.Tag\.Substring\(1\)'
         }
     }
 
@@ -3444,11 +3592,737 @@ Describe 'wrapper mode' {
     }
 }
 
+Describe 'Test-ReleaseChecksum' {
+    BeforeAll {
+        function Get-TestHash {
+            param([byte[]]$Bytes)
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try { return (-join ($sha.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') })) } finally { $sha.Dispose() }
+        }
+        $script:Bytes = [System.Text.Encoding]::ASCII.GetBytes("Write-Host 'install'`n")
+        $script:Hash = Get-TestHash $script:Bytes
+        $script:OtherHash = Get-TestHash ([System.Text.Encoding]::ASCII.GetBytes('something else'))
+    }
+
+    It 'accepts the line of the file with the right hash' {
+        Test-ReleaseChecksum ($script:Hash + '  install.ps1') 'install.ps1' $script:Bytes | Should -BeTrue
+    }
+
+    It 'accepts the line in the middle of the others, as sha256sum writes them' {
+        $sums = ($script:OtherHash + '  ssh-paste.ps1'), ($script:Hash + '  install.ps1'), ($script:OtherHash + '  ssh-paste.cmd') -join "`n"
+        Test-ReleaseChecksum ($sums + "`n") 'install.ps1' $script:Bytes | Should -BeTrue
+    }
+
+    It 'refuses a wrong hash' {
+        Test-ReleaseChecksum ($script:OtherHash + '  install.ps1') 'install.ps1' $script:Bytes | Should -BeFalse
+    }
+
+    It 'refuses bytes that changed by one byte' {
+        $changed = [byte[]]$script:Bytes.Clone()
+        $changed[0] = $changed[0] -bxor 1
+        Test-ReleaseChecksum ($script:Hash + '  install.ps1') 'install.ps1' $changed | Should -BeFalse
+    }
+
+    It 'refuses when only another file name has the hash' {
+        $sums = ($script:Hash + '  ssh-paste.ps1'), ($script:OtherHash + '  install.ps1') -join "`n"
+        Test-ReleaseChecksum $sums 'install.ps1' $script:Bytes | Should -BeFalse
+    }
+
+    It 'refuses when the file is not listed' {
+        Test-ReleaseChecksum ($script:Hash + '  ssh-paste.cmd') 'install.ps1' $script:Bytes | Should -BeFalse
+        Test-ReleaseChecksum '' 'install.ps1' $script:Bytes | Should -BeFalse
+    }
+
+    It 'does not take a longer or differently cased name for the file' {
+        Test-ReleaseChecksum ($script:Hash + '  install.ps1.bak') 'install.ps1' $script:Bytes | Should -BeFalse
+        Test-ReleaseChecksum ($script:Hash + '  my-install.ps1') 'install.ps1' $script:Bytes | Should -BeFalse
+        Test-ReleaseChecksum ($script:Hash + '  Install.ps1') 'install.ps1' $script:Bytes | Should -BeFalse
+    }
+
+    It 'accepts the binary marker "*" before the name' {
+        Test-ReleaseChecksum ($script:Hash + ' *install.ps1') 'install.ps1' $script:Bytes | Should -BeTrue
+        Test-ReleaseChecksum ($script:OtherHash + ' *install.ps1') 'install.ps1' $script:Bytes | Should -BeFalse
+    }
+
+    It 'accepts CRLF line endings' {
+        $sums = (($script:OtherHash + '  ssh-paste.ps1'), ($script:Hash + '  install.ps1')) -join "`r`n"
+        Test-ReleaseChecksum ($sums + "`r`n") 'install.ps1' $script:Bytes | Should -BeTrue
+        Test-ReleaseChecksum $sums 'install.ps1' $script:Bytes | Should -BeTrue
+    }
+
+    It 'accepts an upper case hash' {
+        Test-ReleaseChecksum ($script:Hash.ToUpperInvariant() + '  install.ps1') 'install.ps1' $script:Bytes | Should -BeTrue
+    }
+
+    It 'refuses a hash of the wrong length' {
+        Test-ReleaseChecksum ($script:Hash.Substring(0, 63) + '  install.ps1') 'install.ps1' $script:Bytes | Should -BeFalse
+        Test-ReleaseChecksum ($script:Hash + '0  install.ps1') 'install.ps1' $script:Bytes | Should -BeFalse
+    }
+
+    It 'goes by the first line that names the file' {
+        $sums = ($script:OtherHash + '  install.ps1'), ($script:Hash + '  install.ps1') -join "`n"
+        Test-ReleaseChecksum $sums 'install.ps1' $script:Bytes | Should -BeFalse
+    }
+}
+
+Describe 'New-ChildStartInfo (the one way to start a program)' {
+    It 'leaves out every variable with the Win32-OpenSSH private prefix, set before or after start' {
+        $name = $script:InheritedSshPrefix + 'POSIX_FD_STATE'
+        $later = $script:InheritedSshPrefix + 'SOMETHING_NEW'
+        try {
+            Set-Item -LiteralPath ('Env:' + $name) -Value 'fd table'
+            Set-Item -LiteralPath ('Env:' + $later) -Value 'x'
+            $psi = New-ChildStartInfo -FilePath 'ssh' -Arguments @('-V') -Redirect
+            @($psi.EnvironmentVariables.Keys | Where-Object { ([string]$_).StartsWith($script:InheritedSshPrefix, [StringComparison]::OrdinalIgnoreCase) }).Count | Should -Be 0
+            $psi.EnvironmentVariables.ContainsKey('PATH') | Should -BeTrue -Because 'only the private variables go'
+        } finally {
+            Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath ('Env:' + $later) -ErrorAction SilentlyContinue
+        }
+    }
+    It 'redirects the three streams and hides the window only with -Redirect' {
+        $psi = New-ChildStartInfo -FilePath 'ssh' -Arguments @('-V') -Redirect
+        @($psi.RedirectStandardInput, $psi.RedirectStandardOutput, $psi.RedirectStandardError, $psi.CreateNoWindow) | Should -Be @($true, $true, $true, $true)
+        $plain = New-ChildStartInfo -FilePath 'ssh' -Arguments @('host')
+        @($plain.RedirectStandardInput, $plain.RedirectStandardOutput, $plain.UseShellExecute) | Should -Be @($false, $false, $false)
+    }
+}
+
+Describe 'Invoke-Update (ssh-paste --update)' {
+    BeforeEach {
+        $script:Installer = [System.Text.Encoding]::ASCII.GetBytes("Write-Host 'installer'`r`n")
+        $script:Sums = (Get-Sha256Hex $script:Installer) + '  install.ps1' + "`n" + ('0' * 64) + '  ssh-paste.ps1' + "`n"
+        $script:Fetched = New-Object System.Collections.ArrayList
+        Mock Write-Info { }
+        Mock Invoke-WebDownload {
+            [void]$script:Fetched.Add($Url)
+            if ($Url -like '*/install.ps1') { return , $script:Installer }
+            if ($Url -like '*/SHA256SUMS') { return , ([System.Text.Encoding]::ASCII.GetBytes($script:Sums)) }
+            throw "unexpected url $Url"
+        }
+        Mock Start-Installer { $script:RanInstaller = [System.IO.File]::ReadAllBytes($Path); return 0 }
+        $script:RanInstaller = $null
+    }
+
+    It 'takes no options, so a typo never does something else' {
+        { Invoke-Update @('--check') } | Should -Throw '*--update takes no options: --check*'
+        $script:Fetched.Count | Should -Be 0
+    }
+
+    It 'downloads install.ps1 and SHA256SUMS of the latest release and runs the installer when they match' {
+        Invoke-Update @() | Should -Be 0
+        @($script:Fetched) | Should -Be @(
+            'https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1',
+            'https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/SHA256SUMS')
+        $script:RanInstaller | Should -Be $script:Installer
+    }
+
+    It 'returns the exit code of the installer' {
+        Mock Start-Installer { return 7 }
+        Invoke-Update @() | Should -Be 7
+    }
+
+    It 'refuses an installer that does not match SHA256SUMS and runs nothing' {
+        $script:Sums = ('f' * 64) + '  install.ps1'
+        { Invoke-Update @() } | Should -Throw '*install.ps1 does not match SHA256SUMS; nothing was changed*'
+        Should -Invoke Start-Installer -Times 0 -Exactly
+    }
+
+    It 'refuses when SHA256SUMS does not list install.ps1' {
+        $script:Sums = (Get-Sha256Hex $script:Installer) + '  other.ps1'
+        { Invoke-Update @() } | Should -Throw '*does not match*'
+        Should -Invoke Start-Installer -Times 0 -Exactly
+    }
+
+    It 'uses SSH_PASTE_UPDATE_URL instead of GitHub when it is set' {
+        $env:SSH_PASTE_UPDATE_URL = 'http://127.0.0.1:9/rel/'
+        try {
+            Invoke-Update @() | Should -Be 0
+            $script:Fetched[0] | Should -BeExactly 'http://127.0.0.1:9/rel/install.ps1'
+        } finally { Remove-Item Env:SSH_PASTE_UPDATE_URL }
+    }
+
+    It 'leaves no temporary folder behind' {
+        $before = @(Get-ChildItem ([System.IO.Path]::GetTempPath()) -Filter 'ssh-paste-update-*' -ErrorAction SilentlyContinue).Count
+        Invoke-Update @() | Should -Be 0
+        @(Get-ChildItem ([System.IO.Path]::GetTempPath()) -Filter 'ssh-paste-update-*' -ErrorAction SilentlyContinue).Count | Should -Be $before
+    }
+}
+
+Describe 'Start-Installer' {
+    BeforeAll {
+        $script:SavedSystemRoot = $env:SystemRoot
+        if (-not $env:SystemRoot) { $env:SystemRoot = 'C:\Windows' }   # Linux has none
+    }
+    AfterAll { $env:SystemRoot = $script:SavedSystemRoot }
+    It 'starts the installer without SSH_PASTE_UNINSTALL and SSH_PASTE_REF, so an update never uninstalls or switches refs' {
+        $script:Seen = $null
+        Mock New-ChildStartInfo { $script:Seen = $RemoveVariables; throw 'stop here' }
+        { Start-Installer 'x.ps1' } | Should -Throw 'stop here'
+        $script:Seen | Should -Contain 'SSH_PASTE_UNINSTALL'
+        $script:Seen | Should -Contain 'SSH_PASTE_REF'
+    }
+
+    It 'returns only the child exit code, even when the child prints output' -Skip:(-not $IsLinux -and -not $IsMacOS) {
+        # On Linux the same mechanics run with /bin/sh standing in for powershell.exe.
+        $script:Shell = '/bin/sh'
+        Mock Join-Path { $script:Shell } -ParameterFilter { $ChildPath -like '*powershell.exe' }
+        $script:Script = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-installer-' + [guid]::NewGuid().ToString('N') + '.sh')
+        [System.IO.File]::WriteAllText($script:Script, "echo some output`nexit 3`n")
+        try {
+            Mock New-ChildStartInfo {
+                $psi = New-Object System.Diagnostics.ProcessStartInfo
+                $psi.FileName = '/bin/sh'
+                $psi.ArgumentList.Add($script:Script)
+                $psi.UseShellExecute = $false
+                $psi.RedirectStandardOutput = $true
+                return $psi
+            }
+            $result = @(Start-Installer $script:Script)
+            $result.Count | Should -Be 1
+            $result[0] | Should -Be 3
+        } finally { Remove-Item -LiteralPath $script:Script -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe 'New-ChildStartInfo -RemoveVariables' {
+    It 'removes the named variables from the child environment only' {
+        $env:SSH_PASTE_UNINSTALL = '1'
+        try {
+            $psi = New-ChildStartInfo -FilePath 'x' -Arguments @() -RemoveVariables @('SSH_PASTE_UNINSTALL')
+            $psi.EnvironmentVariables.ContainsKey('SSH_PASTE_UNINSTALL') | Should -BeFalse
+            $env:SSH_PASTE_UNINSTALL | Should -Be '1' -Because 'our own environment is left alone'
+        } finally { Remove-Item Env:SSH_PASTE_UNINSTALL -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe 'release scripts (.github/scripts)' -Tag 'Unix' -Skip:$onWindows {
+    BeforeAll {
+        $script:ScriptsDir = Join-Path $script:RepoRoot '.github/scripts'
+        $script:Bash = (Get-Command bash -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+        $script:Git = (Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+        $script:Root = Join-Path $script:SandboxRoot ('release-' + [guid]::NewGuid().ToString('N'))
+        [void][System.IO.Directory]::CreateDirectory($script:Root)
+
+        # The stand-in gh. A release is a folder $GH_STUB_DIR/releases/<tag> with a file "draft"
+        # while it is a draft and a folder "assets". Every call is appended to $GH_STUB_DIR/calls.
+        # GH_STUB_FAIL="release list" makes that gh command fail; GH_STUB_CORRUPT=1 changes a
+        # downloaded file.
+        $script:StubBin = Join-Path $script:Root 'bin'
+        [void][System.IO.Directory]::CreateDirectory($script:StubBin)
+        $stub = @'
+#!/usr/bin/env bash
+set -u
+d=$GH_STUB_DIR
+echo "$*" >> "$d/calls"
+if [ "${GH_STUB_FAIL:-}" = "$1 $2" ]; then echo "gh: HTTP 503" >&2; exit 1; fi
+case "$1 $2" in
+  "release list")
+    for r in "$d"/releases/*/; do
+      [ -d "$r" ] || continue
+      t=$(basename "$r")
+      if [ -e "$r/draft" ]; then echo "$t true"; else echo "$t false"; fi
+    done ;;
+  "release create")
+    t=$3; shift 3
+    mkdir -p "$d/releases/$t/assets"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --draft) touch "$d/releases/$t/draft" ;;
+        --title|--notes-file) shift ;;
+        --*) ;;
+        *) cp "$1" "$d/releases/$t/assets/" ;;
+      esac
+      shift
+    done ;;
+  "release delete") rm -rf "$d/releases/$3" ;;
+  "release download")
+    t=$3; shift 3; dir=.
+    while [ $# -gt 0 ]; do if [ "$1" = --dir ]; then dir=$2; shift; fi; shift; done
+    cp "$d/releases/$t/assets/"* "$dir/"
+    if [ -n "${GH_STUB_CORRUPT:-}" ]; then echo tamper >> "$dir/ssh-paste.cmd"; fi ;;
+  "release edit")
+    t=$3; shift 3
+    for a in "$@"; do
+      case "$a" in
+        --draft=false) rm -f "$d/releases/$t/draft" ;;
+        --latest) echo "$t" > "$d/latest" ;;
+      esac
+    done ;;
+  "api repos/"*) cat "$d/latest" ;;
+  "attestation verify") exit 0 ;;
+  *) echo "gh stub: unexpected: $*" >&2; exit 2 ;;
+esac
+'@
+        [System.IO.File]::WriteAllText((Join-Path $script:StubBin 'gh'), ($stub -replace "`r`n", "`n"))
+        Invoke-Process -FilePath 'chmod' -Arguments @('+x', (Join-Path $script:StubBin 'gh')) | Out-Null
+
+        function Invoke-GitIn {
+            param([string]$Dir, [string[]]$Arguments)
+            $r = Invoke-Process -FilePath $script:Git -Arguments (@('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false') + $Arguments) -WorkingDirectory $Dir
+            if ($r.ExitCode -ne 0) { throw ('git ' + ($Arguments -join ' ') + ' failed: ' + $r.Stderr) }
+            return $r.Stdout.Trim()
+        }
+        # Runs a release script with the stand-in gh first on PATH and the given environment.
+        function Invoke-Script {
+            param([string]$Script, [string[]]$Arguments, [string]$Work, [hashtable]$Environment)
+            $names = @($Environment.Keys) + @('PATH')
+            $saved = @{}
+            foreach ($n in $names) { $saved[$n] = [System.Environment]::GetEnvironmentVariable($n) }
+            try {
+                foreach ($n in $Environment.Keys) { [System.Environment]::SetEnvironmentVariable($n, $Environment[$n]) }
+                $env:PATH = $script:StubBin + [System.IO.Path]::PathSeparator + $saved['PATH']
+                return (Invoke-Process -FilePath $script:Bash -Arguments (@((Join-Path $script:ScriptsDir $Script)) + $Arguments) -WorkingDirectory $Work)
+            } finally {
+                foreach ($n in $names) { [System.Environment]::SetEnvironmentVariable($n, $saved[$n]) }
+            }
+        }
+        # A folder that is the stand-in's GitHub. Set-Release adds a release to it.
+        function New-Stub {
+            $d = Join-Path $script:Root ('stub-' + [guid]::NewGuid().ToString('N'))
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $d 'releases'))
+            return $d
+        }
+        function Set-Release {
+            param([string]$Stub, [string]$Tag, [switch]$Draft, [string]$AssetsFrom)
+            $r = Join-Path (Join-Path $Stub 'releases') $Tag
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $r 'assets'))
+            if ($Draft) { [System.IO.File]::WriteAllText((Join-Path $r 'draft'), '') }
+            if ($AssetsFrom) { foreach ($f in @(Get-ChildItem -LiteralPath $AssetsFrom -File)) { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $r 'assets') } }
+            else { [System.IO.File]::WriteAllText((Join-Path (Join-Path $r 'assets') 'stale'), 'old') }
+        }
+        function Get-StubCalls {
+            param([string]$Stub)
+            $f = Join-Path $Stub 'calls'
+            if (Test-Path -LiteralPath $f) { return @([System.IO.File]::ReadAllLines($f)) }
+            return @()
+        }
+        # A work clone with a bare "origin". Returns the clone's path.
+        function New-ScratchRepo {
+            $base = Join-Path $script:Root ([guid]::NewGuid().ToString('N'))
+            [void][System.IO.Directory]::CreateDirectory($base)
+            $origin = Join-Path $base 'origin.git'
+            Invoke-GitIn $base @('init', '-q', '--bare', '-b', 'main', $origin) | Out-Null
+            $work = Join-Path $base 'work'
+            Invoke-GitIn $base @('clone', '-q', $origin, $work) | Out-Null
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $work 'src'))
+            [System.IO.File]::WriteAllText((Join-Path $work 'src/ssh-paste.ps1'), "one`n")
+            [System.IO.File]::WriteAllText((Join-Path $work 'install.ps1'), "installer`n")
+            [System.IO.File]::WriteAllText((Join-Path $work 'README.md'), "readme`n")
+            Invoke-GitIn $work @('add', '-A') | Out-Null
+            Invoke-GitIn $work @('commit', '-q', '-m', 'install: first version') | Out-Null
+            Invoke-GitIn $work @('push', '-q', 'origin', 'HEAD:main') | Out-Null
+            return $work
+        }
+        function Add-Commit {
+            param([string]$Work, [string]$File, [string]$Subject)
+            [System.IO.File]::AppendAllText((Join-Path $Work $File), "line $Subject`n")
+            Invoke-GitIn $Work @('commit', '-q', '-am', $Subject) | Out-Null
+            Invoke-GitIn $Work @('push', '-q', 'origin', 'HEAD:main') | Out-Null
+            return (Invoke-GitIn $Work @('rev-parse', 'HEAD'))
+        }
+        # Runs plan-release.sh for the commit. Returns the tag it chose (empty for none), its reason and its exit code.
+        function Invoke-Plan {
+            param([string]$Work, [string]$Sha, [string]$Stub, [hashtable]$Extra = @{})
+            $out = Join-Path $Work '../plan-output.txt'
+            if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out }
+            $environment = @{ SHA = $Sha; GITHUB_OUTPUT = $out; GITHUB_REPOSITORY = 'x/y'; GH_STUB_DIR = $Stub }
+            foreach ($k in $Extra.Keys) { $environment[$k] = $Extra[$k] }
+            $r = Invoke-Script 'plan-release.sh' @() $Work $environment
+            $tag = ''
+            $reason = ''
+            if (Test-Path -LiteralPath $out) {
+                $lines = @([System.IO.File]::ReadAllLines($out))
+                $tag = ($lines | Where-Object { $_ -like 'tag=*' } | Select-Object -First 1).Substring(4)
+                $reason = ($lines | Where-Object { $_ -like 'reason=*' }) -join ' '
+            }
+            return @{ Tag = $tag; Reason = $reason; Exit = $r.ExitCode; Stderr = $r.Stderr }
+        }
+        # Plans, and fails the test unless the script succeeded.
+        function Get-Plan {
+            param([string]$Work, [string]$Sha, [string]$Stub)
+            $p = Invoke-Plan $Work $Sha $Stub
+            $p.Exit | Should -Be 0 -Because $p.Stderr
+            return $p
+        }
+        function Get-RemoteTags {
+            param([string]$Work)
+            $t = Invoke-GitIn $Work @('ls-remote', '--tags', '--refs', 'origin')
+            return @($t -split "`n" | Where-Object { $_ } | ForEach-Object { ($_ -split 'refs/tags/')[1] })
+        }
+        # The four release files of a version in a new folder, SHA256SUMS included.
+        function New-Dist {
+            param([string]$Version)
+            $d = Join-Path $script:Root ('dist-' + [guid]::NewGuid().ToString('N'))
+            [void][System.IO.Directory]::CreateDirectory($d)
+            [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste.ps1'), "`$script:Version = '$Version'`nbody`n")
+            [System.IO.File]::WriteAllText((Join-Path $d 'ssh-paste.cmd'), "cmd`n")
+            [System.IO.File]::WriteAllText((Join-Path $d 'install.ps1'), "installer`n")
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            $sums = foreach ($n in @('ssh-paste.ps1', 'ssh-paste.cmd', 'install.ps1')) {
+                '{0}  {1}' -f (([System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes((Join-Path $d $n)))) -replace '-', '').ToLowerInvariant()), $n
+            }
+            [System.IO.File]::WriteAllText((Join-Path $d 'SHA256SUMS'), (($sums -join "`n") + "`n"))
+            $sha.Dispose()
+            return $d
+        }
+    }
+
+    AfterAll {
+        if ($script:Root) { Remove-Item -LiteralPath $script:Root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'has bash and git, which the tests below need' {
+        $script:Bash | Should -Not -BeNullOrEmpty
+        $script:Git | Should -Not -BeNullOrEmpty
+    }
+
+    It 'parses every script with bash -n' {
+        foreach ($f in @(Get-ChildItem -LiteralPath $script:ScriptsDir -Filter '*.sh')) {
+            $r = Invoke-Process -FilePath $script:Bash -Arguments @('-n', $f.FullName)
+            $r.ExitCode | Should -Be 0 -Because ($f.Name + ': ' + $r.Stderr)
+        }
+    }
+
+    Context 'stamp-version.sh' {
+        It 'changes the version line of the real script and nothing else' {
+            $out = Join-Path $script:Root 'stamped.ps1'
+            $r = Invoke-Process -FilePath $script:Bash -Arguments @((Join-Path $script:ScriptsDir 'stamp-version.sh'), $script:CorePath, $out, '0.1.7')
+            $r.ExitCode | Should -Be 0 -Because ($r.Stdout + $r.Stderr)
+            $a = @([System.IO.File]::ReadAllText($script:CorePath) -split "`n")
+            $b = @([System.IO.File]::ReadAllText($out) -split "`n")
+            $b.Count | Should -Be $a.Count
+            $diff = @(0..($a.Count - 1) | Where-Object { $a[$_] -cne $b[$_] })
+            $diff.Count | Should -Be 1
+            ($b[$diff[0]] -replace "`r$", '') | Should -BeExactly '$script:Version = ''0.1.7'''
+            # The line ending of the line stays what it was (CRLF in a Windows checkout).
+            $a[$diff[0]].EndsWith("`r") | Should -Be $b[$diff[0]].EndsWith("`r")
+        }
+
+        It 'refuses a source without the exact line, and a version that is not v0.1.N' {
+            $odd = Join-Path $script:Root 'odd.ps1'
+            [System.IO.File]::WriteAllText($odd, "`$script:Version = '0.0.0-dev' # a comment`n")
+            $o = Join-Path $script:Root 'o.out'
+            $stamp = Join-Path $script:ScriptsDir 'stamp-version.sh'
+            (Invoke-Process -FilePath $script:Bash -Arguments @($stamp, $odd, $o, '0.1.7')).ExitCode | Should -Not -Be 0
+            foreach ($bad in @('0.1.7; rm', 'v0.1.7', '0.1.07', '0.2.0', '0.1.7-rc.1')) {
+                (Invoke-Process -FilePath $script:Bash -Arguments @($stamp, $script:CorePath, $o, $bad)).ExitCode | Should -Not -Be 0 -Because $bad
+            }
+        }
+    }
+
+    Context 'plan-release.sh' {
+        It 'releases v0.1.0 when nothing is published, and tags exactly the commit it was given' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            $sha = Invoke-GitIn $work @('rev-parse', 'HEAD')
+            $p = Get-Plan $work $sha $stub
+            $p.Tag | Should -BeExactly 'v0.1.0'
+            Get-RemoteTags $work | Should -Contain 'v0.1.0'
+            Invoke-GitIn $work @('rev-parse', 'v0.1.0^{commit}') | Should -BeExactly $sha
+            Invoke-GitIn $work @('cat-file', '-t', 'v0.1.0') | Should -BeExactly 'tag'
+        }
+
+        It 'continues with the tag that already points at the commit, so a rerun makes no second tag' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            $sha = Invoke-GitIn $work @('rev-parse', 'HEAD')
+            (Get-Plan $work $sha $stub).Tag | Should -BeExactly 'v0.1.0'
+            # The first run died after pushing the tag and before publishing: no release exists.
+            $again = Get-Plan $work $sha $stub
+            $again.Tag | Should -BeExactly 'v0.1.0'
+            $again.Reason | Should -Match 'already points at'
+            # Even when the release was published meanwhile: publishing checks it again.
+            Set-Release $stub 'v0.1.0'
+            (Get-Plan $work $sha $stub).Tag | Should -BeExactly 'v0.1.0'
+            @(Get-RemoteTags $work).Count | Should -Be 1
+        }
+
+        It 'does nothing for a commit that is not the newest on main: the newer commit releases it' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            $first = Invoke-GitIn $work @('rev-parse', 'HEAD')
+            $newer = Add-Commit $work 'src/ssh-paste.ps1' 'upload: a visible change'
+            $p = Get-Plan $work $first $stub
+            $p.Tag | Should -BeExactly ''
+            $p.Reason | Should -Match 'newer commit'
+            @(Get-RemoteTags $work).Count | Should -Be 0
+            (Get-Plan $work $newer $stub).Tag | Should -BeExactly 'v0.1.0'
+        }
+
+        It 'never gives older code a higher version than the unpublished tag that won' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            (Get-Plan $work (Invoke-GitIn $work @('rev-parse', 'HEAD')) $stub).Tag | Should -BeExactly 'v0.1.0'
+            Set-Release $stub 'v0.1.0'
+            $a = Add-Commit $work 'src/ssh-paste.ps1' 'upload: change a'
+            (Get-Plan $work $a $stub).Tag | Should -BeExactly 'v0.1.1'
+            # v0.1.1 has no release (its run died), and a newer commit arrives.
+            $b = Add-Commit $work 'src/ssh-paste.ps1' 'upload: change b'
+            $old = Get-Plan $work $a $stub
+            $old.Tag | Should -BeExactly ''
+            $new = Get-Plan $work $b $stub
+            $new.Tag | Should -BeExactly 'v0.1.2'
+            Invoke-GitIn $work @('rev-parse', 'v0.1.1^{commit}') | Should -BeExactly $a
+            Invoke-GitIn $work @('rev-parse', 'v0.1.2^{commit}') | Should -BeExactly $b
+        }
+
+        It 'counts a draft as unpublished: its changes are released with the next commit, even a docs one' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            (Get-Plan $work (Invoke-GitIn $work @('rev-parse', 'HEAD')) $stub).Tag | Should -BeExactly 'v0.1.0'
+            Set-Release $stub 'v0.1.0'
+            $src = Add-Commit $work 'src/ssh-paste.ps1' 'upload: change one'
+            (Get-Plan $work $src $stub).Tag | Should -BeExactly 'v0.1.1'
+            Set-Release $stub 'v0.1.1' -Draft
+            $docs = Add-Commit $work 'README.md' 'docs: change two'
+            $p = Get-Plan $work $docs $stub
+            $p.Tag | Should -BeExactly 'v0.1.2'
+            Invoke-GitIn $work @('rev-parse', 'v0.1.2^{commit}') | Should -BeExactly $docs
+        }
+
+        It 'skips a commit that changes only docs, tests or workflows, and releases one that changes src/ or install.ps1' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            (Get-Plan $work (Invoke-GitIn $work @('rev-parse', 'HEAD')) $stub).Tag | Should -BeExactly 'v0.1.0'
+            Set-Release $stub 'v0.1.0'
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $work 'tests'))
+            [System.IO.File]::WriteAllText((Join-Path $work 'tests/a.ps1'), "t`n")
+            Invoke-GitIn $work @('add', '-A') | Out-Null
+            Invoke-GitIn $work @('commit', '-q', '-m', 'tests: more') | Out-Null
+            $docs = Add-Commit $work 'README.md' 'docs: more'
+            $skip = Get-Plan $work $docs $stub
+            $skip.Tag | Should -BeExactly ''
+            $skip.Reason | Should -Match 'nothing to release'
+            $src = Add-Commit $work 'src/ssh-paste.ps1' 'upload: a visible change'
+            (Get-Plan $work $src $stub).Tag | Should -BeExactly 'v0.1.1'
+            Set-Release $stub 'v0.1.1'
+            $docs2 = Add-Commit $work 'README.md' 'docs: again'
+            (Get-Plan $work $docs2 $stub).Tag | Should -BeExactly ''
+            $inst = Add-Commit $work 'install.ps1' 'install: a visible change'
+            (Get-Plan $work $inst $stub).Tag | Should -BeExactly 'v0.1.2'
+        }
+
+        It 'orders versions as numbers and ignores tags that are not v0.1.N: after v0.1.9 comes v0.1.10' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            $first = Invoke-GitIn $work @('rev-parse', 'HEAD')
+            # v0.1.08 and v0.1.010 have leading zeros: bash would read 08 as a bad octal number.
+            foreach ($t in @('v0.1.2', 'v0.1.9', 'v0.1.08', 'v0.1.010', 'v0.2.0-rc.1', 'v1.0.0')) { Invoke-GitIn $work @('tag', '-a', $t, '-m', $t, $first) | Out-Null }
+            Invoke-GitIn $work @('push', '-q', 'origin', '--tags') | Out-Null
+            $src = Add-Commit $work 'src/ssh-paste.ps1' 'upload: a visible change'
+            Set-Release $stub 'v0.1.08'
+            $p = Get-Plan $work $src $stub
+            $p.Tag | Should -BeExactly 'v0.1.10'
+            Invoke-GitIn $work @('rev-parse', 'v0.1.9^{commit}') | Should -BeExactly $first
+        }
+
+        It 'ignores a leading-zero tag that points at the commit, and makes a real version' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            $sha = Invoke-GitIn $work @('rev-parse', 'HEAD')
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.08', '-m', 'odd', $sha) | Out-Null
+            Invoke-GitIn $work @('push', '-q', 'origin', '--tags') | Out-Null
+            (Get-Plan $work $sha $stub).Tag | Should -BeExactly 'v0.1.0'
+        }
+
+        It 'fails and tags nothing when gh cannot list the releases' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            $sha = Invoke-GitIn $work @('rev-parse', 'HEAD')
+            $p = Invoke-Plan $work $sha $stub @{ GH_STUB_FAIL = 'release list' }
+            $p.Exit | Should -Not -Be 0
+            $p.Tag | Should -BeExactly ''
+            @(Get-RemoteTags $work).Count | Should -Be 0
+        }
+    }
+
+    Context 'publish-release.sh' {
+        BeforeAll {
+            function Invoke-Publish {
+                param([string]$Stub, [string]$Tag, [string]$Dist, [hashtable]$Extra = @{})
+                $notes = Join-Path $script:Root 'notes.md'
+                [System.IO.File]::WriteAllText($notes, "notes`n")
+                $environment = @{ GITHUB_REPOSITORY = 'x/y'; GH_STUB_DIR = $Stub; ATTEST_WAIT = '0' }
+                foreach ($k in $Extra.Keys) { $environment[$k] = $Extra[$k] }
+                return (Invoke-Script 'publish-release.sh' @($Tag, $Dist, $notes) $script:Root $environment)
+            }
+            function Test-IsDraft { param([string]$Stub, [string]$Tag) return (Test-Path -LiteralPath (Join-Path (Join-Path (Join-Path $Stub 'releases') $Tag) 'draft')) }
+            function Get-Latest { param([string]$Stub) $f = Join-Path $Stub 'latest'; if (Test-Path -LiteralPath $f) { return ([System.IO.File]::ReadAllText($f)).Trim() } return '' }
+        }
+
+        It 'creates a draft, checks it, and only then publishes it as Latest' {
+            $stub = New-Stub
+            $dist = New-Dist '0.1.7'
+            $r = Invoke-Publish $stub 'v0.1.7' $dist
+            $r.ExitCode | Should -Be 0 -Because ($r.Stdout + $r.Stderr)
+            $calls = @(Get-StubCalls $stub)
+            $create = @($calls | Where-Object { $_ -like 'release create *' })
+            $create.Count | Should -Be 1
+            $create[0] | Should -Match '--draft'
+            $create[0] | Should -Match '--verify-tag'
+            $edit = @($calls | Where-Object { $_ -like 'release edit *' })
+            $edit.Count | Should -Be 1
+            $edit[0] | Should -Match '--draft=false --latest$'
+            $calls.IndexOf($create[0]) | Should -BeLessThan $calls.IndexOf(@($calls | Where-Object { $_ -like 'release download *' })[0])
+            $calls.IndexOf(@($calls | Where-Object { $_ -like 'release download *' })[0]) | Should -BeLessThan $calls.IndexOf($edit[0])
+            Test-IsDraft $stub 'v0.1.7' | Should -BeFalse
+            Get-Latest $stub | Should -BeExactly 'v0.1.7'
+            @(Get-ChildItem -LiteralPath (Join-Path $stub 'releases/v0.1.7/assets')).Count | Should -Be 4
+        }
+
+        It 'resumes after an earlier run left a draft: the draft is created again and published' {
+            $stub = New-Stub
+            $dist = New-Dist '0.1.7'
+            Set-Release $stub 'v0.1.7' -Draft   # one stale asset, as after an interrupted upload
+            $r = Invoke-Publish $stub 'v0.1.7' $dist
+            $r.ExitCode | Should -Be 0 -Because ($r.Stdout + $r.Stderr)
+            @(Get-StubCalls $stub | Where-Object { $_ -like 'release delete v0.1.7*' }).Count | Should -Be 1
+            Test-IsDraft $stub 'v0.1.7' | Should -BeFalse
+            @(Get-ChildItem -LiteralPath (Join-Path $stub 'releases/v0.1.7/assets') | ForEach-Object { $_.Name } | Sort-Object) -join ' ' | Should -BeExactly 'install.ps1 SHA256SUMS ssh-paste.cmd ssh-paste.ps1'
+        }
+
+        It 'checks an already published release instead of failing on create' {
+            $stub = New-Stub
+            $dist = New-Dist '0.1.7'
+            Set-Release $stub 'v0.1.7' -AssetsFrom $dist
+            [System.IO.File]::WriteAllText((Join-Path $stub 'latest'), 'v0.1.7')
+            $r = Invoke-Publish $stub 'v0.1.7' $dist
+            $r.ExitCode | Should -Be 0 -Because ($r.Stdout + $r.Stderr)
+            @(Get-StubCalls $stub | Where-Object { $_ -like 'release create *' -or $_ -like 'release delete *' }).Count | Should -Be 0
+        }
+
+        It 'does not give an older version the Latest mark' {
+            $stub = New-Stub
+            Set-Release $stub 'v0.1.9'
+            [System.IO.File]::WriteAllText((Join-Path $stub 'latest'), 'v0.1.9')
+            $r = Invoke-Publish $stub 'v0.1.7' (New-Dist '0.1.7')
+            $r.ExitCode | Should -Be 0 -Because ($r.Stdout + $r.Stderr)
+            @(Get-StubCalls $stub | Where-Object { $_ -like 'release edit v0.1.7*' })[0] | Should -Match '--latest=false'
+            Get-Latest $stub | Should -BeExactly 'v0.1.9'
+        }
+
+        It 'fails before creating or publishing anything when gh cannot list the releases' {
+            $stub = New-Stub
+            Set-Release $stub 'v0.1.9'
+            $r = Invoke-Publish $stub 'v0.1.7' (New-Dist '0.1.7') @{ GH_STUB_FAIL = 'release list' }
+            $r.ExitCode | Should -Not -Be 0
+            @(Get-StubCalls $stub | Where-Object { $_ -like 'release create *' -or $_ -like 'release edit *' }).Count | Should -Be 0
+            Get-Latest $stub | Should -BeExactly ''
+        }
+
+        It 'leaves the draft unpublished when a downloaded file differs from the sums' {
+            $stub = New-Stub
+            $r = Invoke-Publish $stub 'v0.1.7' (New-Dist '0.1.7') @{ GH_STUB_CORRUPT = '1' }
+            $r.ExitCode | Should -Not -Be 0
+            Test-IsDraft $stub 'v0.1.7' | Should -BeTrue
+            @(Get-StubCalls $stub | Where-Object { $_ -like 'release edit *' }).Count | Should -Be 0
+        }
+
+        It 'leaves the draft unpublished when ssh-paste.ps1 does not say the tag version' {
+            $stub = New-Stub
+            $r = Invoke-Publish $stub 'v0.1.7' (New-Dist '0.1.6')
+            $r.ExitCode | Should -Not -Be 0
+            ($r.Stdout + $r.Stderr) | Should -Match 'does not say version 0\.1\.7'
+            Test-IsDraft $stub 'v0.1.7' | Should -BeTrue
+        }
+
+        It 'leaves the draft unpublished when an attestation does not verify' {
+            $stub = New-Stub
+            $r = Invoke-Publish $stub 'v0.1.7' (New-Dist '0.1.7') @{ GH_STUB_FAIL = 'attestation verify' }
+            $r.ExitCode | Should -Not -Be 0
+            Test-IsDraft $stub 'v0.1.7' | Should -BeTrue
+        }
+
+        It 'refuses a tag that is not v0.1.N, leading zeros included' {
+            $stub = New-Stub
+            foreach ($bad in @('v0.1.08', 'v0.2.0', 'v0.1.7-rc.1', 'main')) {
+                (Invoke-Publish $stub $bad (New-Dist '0.1.7')).ExitCode | Should -Not -Be 0 -Because $bad
+            }
+            @(Get-StubCalls $stub).Count | Should -Be 0
+        }
+    }
+
+    Context 'release-notes.sh' {
+        BeforeAll {
+            function Get-Notes {
+                param([string]$Work, [string]$Tag, [string[]]$Published = @())
+                $stub = New-Stub
+                foreach ($t in $Published) { Set-Release $stub $t }
+                $r = Invoke-Script 'release-notes.sh' @($Tag) $Work @{ GITHUB_REPOSITORY = 'xuing/ssh-please-paste-picture'; GH_STUB_DIR = $stub }
+                $r.ExitCode | Should -Be 0 -Because $r.Stderr
+                return $r.Stdout
+            }
+        }
+
+        It 'lists the commit subjects since the previous release, leaves out docs, ci and tests commits, and ends with the install block' {
+            $work = New-ScratchRepo
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.9', '-m', 'x') | Out-Null
+            Add-Commit $work 'src/ssh-paste.ps1' 'upload: a copied image keeps its extension' | Out-Null
+            Add-Commit $work 'README.md' 'docs: reword the intro' | Out-Null
+            Add-Commit $work 'README.md' 'ci: faster runs' | Out-Null
+            Add-Commit $work 'README.md' 'tests: cover --update' | Out-Null
+            Add-Commit $work 'install.ps1' 'install: the installer keeps your PATH order' | Out-Null
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.10', '-m', 'x') | Out-Null
+            $notes = Get-Notes $work 'v0.1.10' @('v0.1.9')
+            $notes | Should -Match 'Since v0\.1\.9'
+            $notes | Should -Match '- upload: a copied image keeps its extension \([0-9a-f]{7,}\)'
+            $notes | Should -Match '- install: the installer keeps your PATH order \([0-9a-f]{7,}\)'
+            $notes | Should -Not -Match 'docs: reword'
+            $notes | Should -Not -Match 'ci: faster'
+            $notes | Should -Not -Match 'tests: cover'
+            $notes | Should -Not -Match 'first version'
+            $notes | Should -Match 'compare/v0\.1\.9\.\.\.v0\.1\.10'
+            $notes | Should -Match 'releases/download/v0\.1\.10/install\.ps1 \| iex'
+            $notes | Should -Match 'ssh-paste --update'
+            $notes | Should -Match 'gh attestation verify'
+        }
+
+        It 'starts at the previous published release, not at a tag that has no release' {
+            $work = New-ScratchRepo
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.0', '-m', 'x') | Out-Null
+            Add-Commit $work 'src/ssh-paste.ps1' 'upload: in the lost release' | Out-Null
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.1', '-m', 'x') | Out-Null
+            Add-Commit $work 'src/ssh-paste.ps1' 'upload: in this release' | Out-Null
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.2', '-m', 'x') | Out-Null
+            $notes = Get-Notes $work 'v0.1.2' @('v0.1.0')
+            $notes | Should -Match 'Since v0\.1\.0'
+            $notes | Should -Match 'upload: in the lost release'
+            $notes | Should -Match 'upload: in this release'
+        }
+
+        It 'lists every commit when only docs, ci and tests commits are there' {
+            $work = New-ScratchRepo
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.0', '-m', 'x') | Out-Null
+            Add-Commit $work 'README.md' 'docs: reword the intro' | Out-Null
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.1', '-m', 'x') | Out-Null
+            Get-Notes $work 'v0.1.1' @('v0.1.0') | Should -Match 'docs: reword the intro'
+        }
+
+        It 'starts at the first commit when nothing is published' {
+            $work = New-ScratchRepo
+            Invoke-GitIn $work @('tag', '-a', 'v0.1.0', '-m', 'x') | Out-Null
+            $notes = Get-Notes $work 'v0.1.0'
+            $notes | Should -Match 'The first release'
+            $notes | Should -Match 'install: first version'
+        }
+
+        It 'refuses a tag that is not v0.1.N' {
+            $work = New-ScratchRepo
+            $stub = New-Stub
+            foreach ($bad in @('main; rm -rf', 'v0.1.08', 'v0.2.0', 'v0.1.7-rc.1')) {
+                $r = Invoke-Script 'release-notes.sh' @($bad) $work @{ GITHUB_REPOSITORY = 'x/y'; GH_STUB_DIR = $stub }
+                $r.ExitCode | Should -Not -Be 0 -Because $bad
+            }
+        }
+    }
+}
+
 Describe 'Invoke-Main' {
     It 'prints the usage without arguments and returns 0' {
         $out = @(Invoke-Main @() 6>&1)
         $out[-1] | Should -Be 0
-        ($out | Out-String) | Should -Match 'ssh-paste \d+\.\d+\.\d+ - paste Windows screenshots'
+        ($out | Out-String) | Should -Match 'ssh-paste \S+ - paste Windows screenshots'
     }
 
     It 'returns 2 for --proxy without arguments' {
@@ -4494,6 +5368,97 @@ Describe 'end to end against a real ssh server' -Tag 'E2E' -Skip:(-not $e2eHost)
             $r = Invoke-Process -FilePath $script:E2ESsh -Arguments $argv -TimeoutSeconds 30
             $r.ExitCode | Should -Not -Be 0
             $r.Stderr | Should -Match 'cannot connect|Connection'
+        }
+    }
+}
+
+# Guards that read the repository itself, so a rule is checked where the tests already run.
+Describe 'repository guards' {
+    BeforeAll {
+        function Get-RepoFiles {
+            param([string]$Filter)
+            return @(Get-ChildItem -LiteralPath $script:RepoRoot -Recurse -File -Filter $Filter |
+                    Where-Object { $_.FullName -notmatch '[\\/](\.git|TestResults)[\\/]' })
+        }
+    }
+
+    It 'keeps the version in the repository at 0.0.0-dev; a release stamps its own' {
+        # The release copy of the script gets the real version from .github/scripts/stamp-version.sh.
+        $script:Version | Should -BeExactly '0.0.0-dev'
+        $lines = @(([System.IO.File]::ReadAllText($script:CorePath) -split "`r?`n") | Where-Object { $_ -cmatch '^\$script:Version\b' })
+        $lines.Count | Should -Be 1
+        $lines[0] | Should -BeExactly '$script:Version = ''0.0.0-dev'''
+    }
+
+    It 'stamps the version line of the script exactly as it is written there' {
+        $stamp = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github/scripts/stamp-version.sh'))
+        # from="\$script:Version = '0.0.0-dev'" in bash is the line $script:Version = '0.0.0-dev'.
+        $stamp | Should -Match ([regex]::Escape('from="\$script:Version = ''0.0.0-dev''"')) -Because 'stamp-version.sh must look for the line that is in src/ssh-paste.ps1'
+        $stamp | Should -Match ([regex]::Escape('to="\$script:Version = ''$version''"'))
+        $publish = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github/workflows/publish.yml'))
+        $publish | Should -Match ([regex]::Escape('stamp-version.sh src/ssh-paste.ps1 out/dist/ssh-paste.ps1 "${TAG#v}"')) -Because 'publish.yml must stamp the script it attaches to the release'
+        $publish | Should -Match ([regex]::Escape('cp src/ssh-paste.cmd install.ps1 out/dist/')) -Because 'the script itself is not copied unstamped'
+    }
+
+    It 'has one default ref line in install.ps1 that the release bakes the tag into' {
+        $installer = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot 'install.ps1'))
+        @([regex]::Matches($installer, '(?m)^ *\$DefaultRef = ''main''\r?$')).Count | Should -Be 1
+        $publish = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github/workflows/publish.yml'))
+        $publish | Should -Match ([regex]::Escape('s/^\( *[$]DefaultRef = \)''main''/\1''$TAG''/'))
+    }
+
+    It 'releases in one lock: publish.yml has the group release, bash for every step, and is called after CI ok' {
+        $publish = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github/workflows/publish.yml'))
+        $publish | Should -Match '(?m)^concurrency:\r?\n  group: release\r?\n  cancel-in-progress: false'
+        $publish | Should -Match '(?m)^defaults:\r?\n  run:\r?\n    shell: bash'
+        $publish | Should -Not -Match '(?m)^\s+shell: (?!bash)'
+        $ci = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot '.github/workflows/ci.yml'))
+        $ci | Should -Match '(?m)^  release:\r?\n(.*\r?\n)*?    needs: ci-ok\r?\n    if: github\.ref == ''refs/heads/main'' && \(github\.event_name == ''push'' \|\| github\.event_name == ''workflow_dispatch''\)\r?\n    uses: \./\.github/workflows/publish\.yml'
+        # A scheduled or manual run must not replace a pending push run (it may be the one that releases).
+        $ci | Should -Match 'group: ci-\$\{\{ github\.event_name \}\}-\$\{\{ github\.ref \}\}'
+    }
+
+    It 'has one release series and no way to release by a hand-pushed tag' {
+        foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot '.github/workflows') -File)) {
+            [System.IO.File]::ReadAllText($f.FullName) | Should -Not -Match '(?m)^\s+tags:' -Because ($f.Name + ' must not start on a pushed tag')
+        }
+        foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot '.github/scripts') -File -Filter '*.sh')) {
+            [System.IO.File]::ReadAllText($f.FullName) | Should -Not -Match 'run_number|--prerelease|-rc' -Because $f.Name
+        }
+    }
+
+    It 'has no CHANGELOG.md: a commit subject is the release note' {
+        Test-Path -LiteralPath (Join-Path $script:RepoRoot 'CHANGELOG.md') | Should -BeFalse
+        $mentions = @(Get-ChildItem -LiteralPath $script:RepoRoot -Recurse -File |
+                Where-Object { $_.FullName -notmatch '[\\/](\.git|TestResults)[\\/]' -and $_.Name -ne 'ssh-paste.Tests.ps1' } |
+                Where-Object { [System.IO.File]::ReadAllText($_.FullName) -cmatch 'CHANGELOG' } | ForEach-Object { $_.Name })
+        $mentions | Should -BeNullOrEmpty -Because 'nothing may point at a file that does not exist'
+    }
+
+    It 'parses every PowerShell file' {
+        $problems = @()
+        foreach ($file in @(Get-RepoFiles '*.ps1') + @(Get-RepoFiles '*.psd1')) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors)
+            foreach ($e in $errors) { $problems += ('{0}:{1}: {2}' -f $file.Name, $e.Extent.StartLineNumber, $e.Message) }
+        }
+        $problems | Should -BeNullOrEmpty
+    }
+
+    It 'keeps shell scripts free of carriage returns' {
+        $files = @(Get-RepoFiles '*.sh')
+        $files.Count | Should -BeGreaterThan 0
+        $crlf = @($files | Where-Object { [System.IO.File]::ReadAllBytes($_.FullName) -contains 13 } | ForEach-Object { $_.Name })
+        $crlf | Should -BeNullOrEmpty -Because 'sh fails on CRLF line endings'
+    }
+
+    It 'lists every command of the help text in both READMEs' {
+        $commands = @([regex]::Matches((Get-Usage), '(?<![\w-])--[a-z][a-z-]*') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+        $commands.Count | Should -BeGreaterThan 3
+        foreach ($readme in @('README.md', 'README.zh-CN.md')) {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $readme))
+            $missing = @($commands | Where-Object { -not $text.Contains($_) })
+            $missing | Should -BeNullOrEmpty -Because "$readme must mention every command that --help shows"
         }
     }
 }
