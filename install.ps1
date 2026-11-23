@@ -15,9 +15,10 @@ Remove ssh-paste and everything it changed, even when the installed copy is brok
     & ([scriptblock]::Create((irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1))) -Uninstall
 
 Options
-    -Ref <tag|branch|commit>   download that version instead of the default (env: SSH_PASTE_REF)
+    -Ref <tag|branch|commit>   download src/ of that version instead of the default (env: SSH_PASTE_REF)
                                The default is the release this file was attached to, or main
-                               for a copy taken from the repository.
+                               for a copy taken from the repository. A release installs the
+                               files attached to it, checked against its SHA256SUMS.
     -Uninstall                 remove instead of install (env: SSH_PASTE_UNINSTALL=1)
     -Help                      show this text
 The environment variables are for `irm ... | iex`, which cannot pass parameters.
@@ -50,9 +51,12 @@ Keep this file ASCII and valid for Windows PowerShell 5.1.
     $BlockEnd = '# <<< ssh-paste <<<'
     $BlockCreatedFile = '# ssh-paste created this file; it is deleted when the last host is disabled.'
     $DownloadBase = 'https://raw.githubusercontent.com/xuing/ssh-please-paste-picture'
-    # The ref that src/ is downloaded from. .github/workflows/release.yml replaces
-    # main with the release tag in the copy it attaches to a release, so that
-    # installer installs the files of its own release. Keep the next line as it is.
+    $ReleaseBase = 'https://github.com/xuing/ssh-please-paste-picture/releases/download'
+    $ReleaseTag = '^v0\.1\.(0|[1-9][0-9]*)$'
+    # The ref that is installed. .github/workflows/publish.yml replaces main with the
+    # release tag in the copy it attaches to a release. When it is a release tag, the
+    # files come from that release (version stamped, attested), checked against its
+    # SHA256SUMS; otherwise they come from src/ at that ref. Keep the next line as it is.
     $DefaultRef = 'main'
     $ScriptDir = $PSScriptRoot   # empty under iex
 
@@ -163,8 +167,26 @@ https://github.com/xuing/ssh-please-paste-picture
         }
     }
 
+    function Get-Sha256Hex {
+        param([byte[]]$Bytes)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { return ([System.BitConverter]::ToString($sha.ComputeHash($Bytes)) -replace '-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+    }
+
+    function Assert-ListedSha256 {
+        # SHA256SUMS ($Sums, text) must list $Name with the SHA-256 of $Bytes.
+        param([string]$Sums, [string]$Name, [byte[]]$Bytes)
+        $want = $null
+        foreach ($line in ($Sums -split "`r?`n")) {
+            if ($line -match '^([0-9a-fA-F]{64}) [ *](\S+)\s*$' -and $Matches[2] -ceq $Name) { $want = $Matches[1].ToLowerInvariant() }
+        }
+        if ($null -eq $want) { throw "SHA256SUMS does not list $Name" }
+        $got = Get-Sha256Hex $Bytes
+        if ($got -ne $want) { throw ('{0} does not match SHA256SUMS (expected {1}, got {2}); refusing to install it' -f $Name, $want, $got) }
+    }
+
     function Get-SourceFiles {
-        # Returns @{ Ps1 = [byte[]]; Cmd = [byte[]]; From = 'description' }.
+        # Returns @{ Ps1 = [byte[]]; Cmd = [byte[]]; From = 'description'; Tag = release tag or $null }.
         param([string]$Ref)
         $local = $null
         if ($ScriptDir) { $local = Join-Path $ScriptDir 'src' }
@@ -176,10 +198,12 @@ https://github.com/xuing/ssh-please-paste-picture
                 Ps1 = [System.IO.File]::ReadAllBytes((Join-Path $local 'ssh-paste.ps1'))
                 Cmd = [System.IO.File]::ReadAllBytes((Join-Path $local 'ssh-paste.cmd'))
                 From = $local
+                Tag = $null
             }
         }
         if ([string]::IsNullOrEmpty($Ref)) { $Ref = $DefaultRef }
-        $base = '{0}/{1}/src/' -f $DownloadBase, $Ref
+        $fromRelease = ($Ref -ceq $DefaultRef) -and ($DefaultRef -cmatch $ReleaseTag)
+        if ($fromRelease) { $base = '{0}/{1}/' -f $ReleaseBase, $Ref } else { $base = '{0}/{1}/src/' -f $DownloadBase, $Ref }
         $oldProtocol = [System.Net.ServicePointManager]::SecurityProtocol
         try {
             # Windows PowerShell 5.1 may not offer TLS 1.2 by default; add it unless
@@ -187,11 +211,19 @@ https://github.com/xuing/ssh-please-paste-picture
             if ([int]$oldProtocol -ne 0 -and ([int]$oldProtocol -band 3072) -eq 0) {
                 [System.Net.ServicePointManager]::SecurityProtocol = $oldProtocol -bor [System.Net.SecurityProtocolType]::Tls12
             }
-            return @{
+            $files = @{
                 Ps1 = Get-WebBytes ($base + 'ssh-paste.ps1')
                 Cmd = Get-WebBytes ($base + 'ssh-paste.cmd')
                 From = $base
+                Tag = $null
             }
+            if ($fromRelease) {
+                $sums = [System.Text.Encoding]::UTF8.GetString((Get-WebBytes ($base + 'SHA256SUMS')))
+                Assert-ListedSha256 $sums 'ssh-paste.ps1' $files.Ps1
+                Assert-ListedSha256 $sums 'ssh-paste.cmd' $files.Cmd
+                $files.Tag = $Ref
+            }
+            return $files
         } finally {
             [System.Net.ServicePointManager]::SecurityProtocol = $oldProtocol
         }
@@ -412,6 +444,9 @@ https://github.com/xuing/ssh-please-paste-picture
         # cmd.exe needs CRLF; a checkout or raw download may carry LF only.
         $cmdBytes = [System.Text.Encoding]::ASCII.GetBytes(($cmdText -replace "`r?`n", "`r`n"))
         $version = Get-ScriptVersion $ps1Text
+        if ($null -ne $source.Tag -and $version -ne $source.Tag.Substring(1)) {
+            throw ('release {0} ships ssh-paste.ps1 {1}, not {2}; refusing to install it' -f $source.Tag, $version, $source.Tag.Substring(1))
+        }
 
         $installed = Join-Path $dir 'ssh-paste.ps1'
         $oldVersion = $null
@@ -431,6 +466,7 @@ https://github.com/xuing/ssh-please-paste-picture
             Write-Line ('Upgraded ssh-paste {0} -> {1} in {2}' -f $oldVersion, $version, $dir) 'Green'
         }
         Write-Line ('  from {0}' -f $source.From)
+        if ($null -ne $source.Tag) { Write-Line '  checked against the SHA256SUMS of the release' }
         Write-Line '  files: ssh-paste.ps1, ssh-paste.cmd'
 
         $pathAdded = Add-UserPathEntry $dir

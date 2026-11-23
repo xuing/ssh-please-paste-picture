@@ -1,6 +1,7 @@
 @{
-    # Used by CI (.github/workflows/ci.yml) and by anyone who runs:
+    # Used by tests/lint.ps1 (run by check.ps1 and by CI) and by anyone who runs:
     #   Invoke-ScriptAnalyzer -Path src, install.ps1 -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+    # The PSScriptAnalyzer version CI uses is pinned in tests/tools.ps1.
     #
     # Every rule is on unless it is listed below with the reason it does not fit.
 

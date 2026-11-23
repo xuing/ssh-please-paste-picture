@@ -6,10 +6,13 @@
 # directory (host key, client key, authorized_keys, ssh config, logs) that is removed
 # on exit. ~/.ssh and the system's sshd are not touched.
 #
-#   tests/e2e-linux.sh
+#   tests/e2e-linux.sh            (or ./check.ps1 -E2E)
 #
 # Needs: bash, pwsh (PowerShell 7), ssh, ssh-keygen, sshd (openssh-server), python3.
-# On a CI runner a missing openssh-server is installed with sudo apt-get.
+# On a CI runner a missing openssh-server is installed with sudo apt-get, which is
+# given 5 minutes: a stuck mirror must fail the step, not hold the run for hours.
+# Results go to TestResults/e2e.xml; when the run fails the sshd log is copied to
+# TestResults/sshd.log (CI uploads that folder).
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -31,8 +34,8 @@ find_sshd() {
 if ! sshd_bin=$(find_sshd); then
     if [ "${CI:-}" = "true" ] && command -v sudo > /dev/null 2>&1; then
         echo "e2e-linux: installing openssh-server"
-        sudo apt-get update -qq
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server
+        sudo timeout 300 apt-get update -qq
+        sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -qq openssh-server
         sshd_bin=$(find_sshd)
     else
         echo "e2e-linux: sshd not found; install openssh-server" >&2
@@ -48,6 +51,7 @@ cleanup() {
     if [ "$status" -ne 0 ] && [ -f "$work/sshd.log" ]; then
         echo "---- sshd log ----" >&2
         cat "$work/sshd.log" >&2 || true
+        mkdir -p "$repo/TestResults" && cp "$work/sshd.log" "$repo/TestResults/sshd.log" || true
     fi
     rm -rf "$work"
     exit "$status"
@@ -105,29 +109,10 @@ done
 [ -n "$ready" ] || { echo "e2e-linux: could not log in to the throwaway sshd on port $port" >&2; exit 1; }
 echo "e2e-linux: sshd on 127.0.0.1:$port as $me"
 
-cat > "$work/run-e2e.ps1" << 'EOF'
-$ErrorActionPreference = 'Stop'
-$minimum = [version]'5.2.0'
-if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -ge $minimum })) {
-    Install-Module -Name Pester -MinimumVersion $minimum -Scope CurrentUser -Force -SkipPublisherCheck
-}
-Import-Module Pester -MinimumVersion $minimum
-$config = New-PesterConfiguration
-$config.Run.Path = Join-Path $env:SSH_PASTE_REPO 'tests/ssh-paste.Tests.ps1'
-$config.Run.PassThru = $true
-$config.Filter.Tag = @('E2E')
-$config.Output.Verbosity = 'Detailed'
-$result = Invoke-Pester -Configuration $config
-# A run that skipped its tests (no host, wrong tag) must not look like a pass.
-if ($result.FailedCount -gt 0 -or $result.SkippedCount -gt 0 -or $result.PassedCount -eq 0) {
-    Write-Host ('E2E: passed {0}, failed {1}, skipped {2}' -f $result.PassedCount, $result.FailedCount, $result.SkippedCount)
-    exit 1
-}
-EOF
-
 export SSH_PASTE_REPO="$repo"
 export SSH_PASTE_E2E_HOST=ssh-paste-e2e
 export SSH_PASTE_E2E_KEY="$work/client_key"
 export SSH_PASTE_E2E_CONFIG="$work/ssh_config"
 
-pwsh -NoLogo -NoProfile -NonInteractive -File "$work/run-e2e.ps1" < /dev/null
+# run-pester.ps1 fails the run when a test fails or is skipped (no host, wrong tag).
+pwsh -NoLogo -NoProfile -NonInteractive -File "$repo/tests/run-pester.ps1" -Tag E2E -Name e2e < /dev/null

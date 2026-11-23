@@ -1,76 +1,180 @@
-name: Release
+name: Publish
 
-# Push a tag such as v0.1.0 (it must match $script:Version in src/ssh-paste.ps1).
-# The tests run first; then a GitHub release is created with the files and their
-# SHA-256 sums. The install.ps1 attached to the release has its default ref set
-# to the tag, so that
+# Plans, builds, signs and publishes the release of a commit that CI tested. It runs only
+# when ci.yml calls it, after CI passed on a push to main (or on a manual CI run on main).
+#
+# One release at a time: the group "release" is the lock, and the planning happens inside
+# it. A run that waits is replaced by a newer waiting one, which is fine: only the newest
+# commit of main releases, and it releases everything before it too.
+#
+# The jobs, in order:
+#   plan     stop unless origin/main is the tested commit; tag it v0.1.<n> (or reuse the tag
+#            it already has) unless src/ and install.ps1 are as in the last release
+#   build    stamp the version into ssh-paste.ps1, bake the tag into install.ps1, write
+#            SHA256SUMS and the release notes
+#   attest   sign a build provenance attestation for the four files
+#   release  publish-release.sh: draft, download and check it, only then publish it
+# The install.ps1 attached to the release has its default ref set to the tag, so
 #   irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
-# installs the files of exactly that release (the copy in the repository keeps main).
+# installs the stamped, attested files of exactly that release. The copy in the repository
+# keeps main and installs src/. The version in the repository is 0.0.0-dev.
+# Every step can be run again ("Re-run failed jobs"): see docs/RELEASING.md.
 on:
-  push:
-    tags: ['v*']
+  workflow_call:
+    inputs:
+      sha:
+        description: 'The commit that CI tested: github.sha of the calling run.'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
-jobs:
-  ci:
-    name: CI
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
+defaults:
+  run:
+    shell: bash   # with pipefail: a failing gh in a pipeline fails the step
 
-  release:
-    name: Create the release
-    needs: ci
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan the release
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write   # to push the tag
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          # The script pushes the tag with this token.
+          persist-credentials: true
+
+      - name: Tag the tested commit
+        id: plan
+        env:
+          SHA: ${{ inputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/plan-release.sh
+
+  build:
+    name: Build the release files
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      # Full history and all tags: the release notes list the commits since the previous release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The tag is a version and points at the commit that was tested
+        env:
+          SHA: ${{ inputs.sha }}
+        run: |
+          . .github/scripts/lib.sh
+          [[ "$TAG" =~ $TAG_RE ]] || { echo "::error::tag $TAG is not a version like v0.1.7"; exit 1; }
+          head=$(git rev-parse HEAD)
+          echo "$TAG is $head; tested: $SHA"
+          [ "$head" = "$SHA" ] || { echo "::error::tag $TAG points at $head, not at the tested commit $SHA"; exit 1; }
+
+      - name: Collect the files and their SHA-256 sums
+        run: |
+          mkdir -p out/dist
+          cp src/ssh-paste.cmd install.ps1 out/dist/
+          # The release copy of the script says its own version; the repository's says 0.0.0-dev.
+          bash .github/scripts/stamp-version.sh src/ssh-paste.ps1 out/dist/ssh-paste.ps1 "${TAG#v}"
+          # Bake the tag into the attached installer: its default ref ($DefaultRef,
+          # main in the repository) becomes the tag, and it then installs the files of
+          # this release. The tag was checked above, so it is safe inside the sed
+          # replacement. CRLF checkouts: the match stops before the line ending.
+          sed -i "s/^\( *[$]DefaultRef = \)'main'/\1'$TAG'/" out/dist/install.ps1
+          baked=$(tr -d '\r' < out/dist/install.ps1 | grep -cxF "    \$DefaultRef = '$TAG'" || true)
+          leftover=$(grep -c "'main'" out/dist/install.ps1 || true)
+          echo "install.ps1: default ref lines set to $TAG: $baked; 'main' left: $leftover"
+          [ "$baked" = 1 ] && [ "$leftover" = 0 ] || {
+            echo "::error::could not set the default ref of out/dist/install.ps1 to $TAG"
+            exit 1
+          }
+          pwsh -NoProfile -Command '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD.Path "out/dist/install.ps1"), [ref]$null, [ref]$e); if ($e) { $e | ForEach-Object { Write-Host $_ }; exit 1 }'
+          (cd out/dist && sha256sum ssh-paste.ps1 ssh-paste.cmd install.ps1 > SHA256SUMS)
+          cat out/dist/SHA256SUMS
+
+      # The notes are the subjects of the commits since the previous release, then the
+      # install block. A commit subject is the release note: it says what a user now sees.
+      - name: Write the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash .github/scripts/release-notes.sh "$TAG" > out/notes.md
+          echo "---- notes.md"
+          cat out/notes.md
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: out
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only job with id-token and attestations permissions. It signs the exact
+  # bytes that the release job publishes (the same artifact).
+  attest:
+    name: Attest build provenance
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: out
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            out/dist/install.ps1
+            out/dist/ssh-paste.ps1
+            out/dist/ssh-paste.cmd
+            out/dist/SHA256SUMS
+
+  release:
+    name: Release ${{ needs.plan.outputs.tag }}
+    needs: [plan, build, attest]
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
           persist-credentials: false
 
-      - name: The tag matches the version in the script
-        run: |
-          # .gitattributes checks .ps1 out with CRLF, hence tr.
-          version=$(tr -d '\r' < src/ssh-paste.ps1 | sed -n "s/^\$script:Version = '\(.*\)'\$/\1/p")
-          echo "script version: ${version:-<not found>}, tag: $GITHUB_REF_NAME"
-          [ -n "$version" ] && [ "v$version" = "${GITHUB_REF_NAME%%-*}" ] || {
-            echo "::error::tag $GITHUB_REF_NAME does not match \$script:Version '$version' in src/ssh-paste.ps1"
-            exit 1
-          }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: out
 
-      - name: Collect the files and their SHA-256 sums
-        run: |
-          mkdir dist
-          cp src/ssh-paste.ps1 src/ssh-paste.cmd install.ps1 dist/
-          # Bake the tag into the attached installer: its default ref ($DefaultRef,
-          # main in the repository) becomes the tag. The tag is checked first, so
-          # it is safe inside the sed replacement. CRLF checkouts: the match stops
-          # before the line ending.
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || {
-            echo "::error::tag $GITHUB_REF_NAME is not like v1.2.3 or v1.2.3-rc.1"
-            exit 1
-          }
-          sed -i "s/^\( *[$]DefaultRef = \)'main'/\1'$GITHUB_REF_NAME'/" dist/install.ps1
-          baked=$(tr -d '\r' < dist/install.ps1 | grep -cxF "    \$DefaultRef = '$GITHUB_REF_NAME'" || true)
-          leftover=$(grep -c "'main'" dist/install.ps1 || true)
-          echo "install.ps1: default ref lines set to $GITHUB_REF_NAME: $baked; 'main' left: $leftover"
-          [ "$baked" = 1 ] && [ "$leftover" = 0 ] || {
-            echo "::error::could not set the default ref of dist/install.ps1 to $GITHUB_REF_NAME"
-            exit 1
-          }
-          pwsh -NoProfile -Command '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD.Path "dist/install.ps1"), [ref]$null, [ref]$e); if ($e) { $e | ForEach-Object { Write-Host $_ }; exit 1 }'
-          (cd dist && sha256sum ssh-paste.ps1 ssh-paste.cmd install.ps1 > SHA256SUMS)
-          cat dist/SHA256SUMS
-
-      - name: Create the GitHub release
+      - name: Publish the release, after checking its draft
         env:
+          TAG: ${{ needs.plan.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          prerelease=""
-          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/ssh-paste.ps1 dist/ssh-paste.cmd dist/install.ps1 dist/SHA256SUMS \
-            --verify-tag --generate-notes --title "ssh-paste $GITHUB_REF_NAME" $prerelease
+        run: bash .github/scripts/publish-release.sh "$TAG" out/dist out/notes.md

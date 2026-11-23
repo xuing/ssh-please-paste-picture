@@ -1,24 +1,34 @@
-# Normalize line endings: the repository stores LF, checkouts use the rules below.
+# Each rule below says why it exists. tests/ssh-paste.Tests.ps1 ("repository guards")
+# fails when a .sh file contains a carriage return, and CI's release job reads the script
+# with `tr -d '\r'`, so keep this file and those checks in step.
+
+# Default: Git decides per file whether it is text, stores text as LF in the repository
+# and converts on checkout according to the rules below. Without this, a Windows
+# checkout with core.autocrlf unset would store whatever line endings the editor wrote.
 * text=auto
 
-# Windows-side files are checked out with CRLF.
-# - .cmd: cmd.exe misparses batch files with LF-only line endings (labels,
-#   goto, long lines), so CRLF is required.
-# - .ps1 / .psd1: Windows PowerShell 5.1 and PowerShell 7 accept LF too; we use
-#   CRLF so a Windows checkout matches what Windows editors and Authenticode
-#   signing expect, and so all Windows-side files follow one rule.
-# Note: eol only applies to checkouts. Files fetched from raw.githubusercontent.com
-# are the stored (LF) blobs, so anything that must be CRLF on the user's
-# computer (the .cmd shim) is written by the installer itself.
+# --- Windows-side files: always checked out with CRLF ---------------------------------
+# .cmd and .bat: cmd.exe misparses batch files with LF-only line endings (labels, goto,
+# long lines), so CRLF is required for them to run.
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+# .ps1, .psd1 and .psm1: Windows PowerShell 5.1 and PowerShell 7 accept LF too. CRLF keeps
+# a Windows checkout in line with what Windows editors and Authenticode signing expect,
+# and gives every Windows-side file one rule.
 *.ps1  text eol=crlf
 *.psd1 text eol=crlf
 *.psm1 text eol=crlf
-*.cmd  text eol=crlf
-*.bat  text eol=crlf
+# eol only applies to checkouts. Files fetched from raw.githubusercontent.com are the
+# stored (LF) blobs, so anything that must be CRLF on the user's computer (the .cmd
+# shim) is written by install.ps1 itself.
 
-# Unix-side files keep LF.
+# --- Unix-side files: always LF ---------------------------------------------------------
+# A shell script with CRLF fails with "bad interpreter" or "command not found\r", so a
+# Windows checkout must not convert tests/e2e-linux.sh.
 *.sh   text eol=lf
 
+# --- Binary files: never touched ----------------------------------------------------------
+# Without these, text=auto could guess wrong and rewrite image bytes.
 *.png  binary
 *.jpg  binary
 *.gif  binary
