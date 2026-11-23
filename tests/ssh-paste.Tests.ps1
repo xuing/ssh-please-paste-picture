@@ -35,6 +35,29 @@ BeforeDiscovery {
             if ($null -ne $found) { $unixShells += @{ Shell = $name; ShellPath = $found.Source } }
         }
     }
+    # The tables in tests/cases.json, which the node tests of the macOS client
+    # (tests/mac/unit.test.js) run too. Each case becomes a hashtable for -ForEach;
+    # an Effective map becomes a hashtable, as Test-InteractiveSsh takes it.
+    $sharedCases = @{}
+    $json = ConvertFrom-Json ([System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'cases.json')))
+    foreach ($table in $json.PSObject.Properties) {
+        if ($table.Name -eq 'about') { continue }
+        $sharedCases[$table.Name] = @(foreach ($case in @($table.Value)) {
+                $h = @{}
+                foreach ($field in $case.PSObject.Properties) {
+                    $value = $field.Value
+                    if ($field.Name -eq 'Effective') {
+                        $map = @{}
+                        foreach ($setting in $value.PSObject.Properties) { $map[$setting.Name] = [string]$setting.Value }
+                        $value = $map
+                    } elseif ($field.Name -eq 'Argv') {
+                        $value = [string[]]@($value)
+                    }
+                    $h[$field.Name] = $value
+                }
+                $h
+            })
+    }
 }
 
 BeforeAll {
@@ -599,53 +622,7 @@ Describe 'Split-SshArguments' {
 }
 
 Describe 'Test-InteractiveSsh' {
-    It '<Name>' -ForEach @(
-        @{ Name = 'plain ssh myhost is interactive'; Argv = @('myhost'); Expected = $true }
-        @{ Name = 'user@host with port and key is interactive'; Argv = @('-p', '2222', '-i', 'k', 'me@host'); Expected = $true }
-        @{ Name = '-v -C -4 are still interactive'; Argv = @('-vvC4', 'host'); Expected = $true }
-        @{ Name = '-L forwarding with a shell is interactive'; Argv = @('-L', '8080:localhost:80', 'host'); Expected = $true }
-        @{ Name = '-t forces a terminal'; Argv = @('-t', 'host'); Expected = $true }
-        @{ Name = '-tt forces a terminal'; Argv = @('-tt', 'host'); Expected = $true }
-        @{ Name = '-T disables the terminal'; Argv = @('-T', 'host'); Expected = $false }
-        @{ Name = '-N runs no command'; Argv = @('-N', '-L', '1:localhost:2', 'host'); Expected = $false }
-        @{ Name = '-W is a stdio forward'; Argv = @('-W', 'target:22', 'jump'); Expected = $false }
-        @{ Name = '-f goes to the background'; Argv = @('-f', 'host', 'sleep', '5'); Expected = $false }
-        @{ Name = '-s is a subsystem'; Argv = @('-s', 'host', 'sftp'); Expected = $false }
-        @{ Name = '-G only prints the configuration'; Argv = @('-G', 'host'); Expected = $false }
-        @{ Name = '-V only prints the version'; Argv = @('-V'); Expected = $false }
-        @{ Name = '-O controls a master connection'; Argv = @('-O', 'check', 'host'); Expected = $false }
-        @{ Name = '-Q queries'; Argv = @('-Q', 'cipher'); Expected = $false }
-        @{ Name = 'a command without -t is not interactive'; Argv = @('host', 'uname', '-a'); Expected = $false }
-        @{ Name = 'a command with -t is interactive (vim, htop, ...)'; Argv = @('-t', 'host', 'htop'); Expected = $true }
-        @{ Name = 'a command with -t after the destination is interactive'; Argv = @('host', '-t', 'htop'); Expected = $true }
-        @{ Name = 'VS Code Remote-SSH style'; Argv = @('-T', '-D', '5000', 'host', 'bash'); Expected = $false }
-        @{ Name = 'scp style'; Argv = @('-x', '-oForwardAgent=no', '-oPermitLocalCommand=no', '-oClearAllForwardings=yes', '-oRemoteCommand=none', '-oRequestTTY=no', '--', 'host', 'scp', '-f', 'file'); Expected = $false }
-        @{ Name = 'git over ssh'; Argv = @('-o', 'SendEnv=GIT_PROTOCOL', 'git@github.com', 'git-upload-pack ''repo.git'''); Expected = $false }
-        @{ Name = 'no destination'; Argv = @('-v'); Expected = $false }
-        @{ Name = '-n redirects stdin from /dev/null'; Argv = @('-n', 'host'); Expected = $false }
-        @{ Name = '-n inside a cluster'; Argv = @('-vn', 'host'); Expected = $false }
-        @{ Name = '-n after the destination'; Argv = @('host', '-n'); Expected = $false }
-        @{ Name = '-o SessionType=none runs no session'; Argv = @('-o', 'SessionType=none', 'host'); Expected = $false }
-        @{ Name = '-o SessionType=subsystem'; Argv = @('-o', 'SessionType=subsystem', 'host'); Expected = $false }
-        @{ Name = '-oSessionType=none without a space'; Argv = @('-oSessionType=none', 'host'); Expected = $false }
-        @{ Name = '-o "SessionType none" with a space'; Argv = @('-o', 'SessionType none', 'host'); Expected = $false }
-        @{ Name = '-o SessionType=default is a normal session'; Argv = @('-o', 'SessionType=default', 'host'); Expected = $true }
-        @{ Name = '-o StdinNull=yes'; Argv = @('-o', 'StdinNull=yes', 'host'); Expected = $false }
-        @{ Name = '-o stdinnull=YES, any case'; Argv = @('-o', 'stdinnull=YES', 'host'); Expected = $false }
-        @{ Name = '-o StdinNull=no'; Argv = @('-o', 'StdinNull=no', 'host'); Expected = $true }
-        @{ Name = '-o RequestTTY=no'; Argv = @('-o', 'RequestTTY=no', 'host'); Expected = $false }
-        @{ Name = '-o RequestTTY=false'; Argv = @('-o', 'RequestTTY=false', 'host'); Expected = $false }
-        @{ Name = '-o RequestTTY=auto'; Argv = @('-o', 'RequestTTY=auto', 'host'); Expected = $true }
-        @{ Name = '-o RequestTTY=yes with a command'; Argv = @('-o', 'RequestTTY=yes', 'host', 'htop'); Expected = $true }
-        @{ Name = '-o RequestTTY=force with a command'; Argv = @('-o', 'RequestTTY=force', 'host', 'htop'); Expected = $true }
-        @{ Name = '-o RequestTTY=no then -t: the last one wins'; Argv = @('-o', 'RequestTTY=no', '-t', 'host'); Expected = $true }
-        @{ Name = '-t then -o RequestTTY=no: the last one wins'; Argv = @('-t', '-o', 'RequestTTY=no', 'host'); Expected = $false }
-        @{ Name = '-o RemoteCommand counts as a command'; Argv = @('-o', 'RemoteCommand=top', 'host'); Expected = $false }
-        @{ Name = '-o RemoteCommand with a space'; Argv = @('-o', 'RemoteCommand top', 'host'); Expected = $false }
-        @{ Name = '-o RemoteCommand with -t is interactive (htop, ...)'; Argv = @('-t', '-o', 'RemoteCommand=top', 'host'); Expected = $true }
-        @{ Name = '-o RemoteCommand with -o RequestTTY=force'; Argv = @('-o', 'RemoteCommand=top', '-o', 'RequestTTY=force', 'host'); Expected = $true }
-        @{ Name = '-o RemoteCommand=none is no command'; Argv = @('-o', 'RemoteCommand=none', 'host'); Expected = $true }
-    ) {
+    It '<Name>' -ForEach $sharedCases.interactive {
         $p = Split-SshArguments $Argv
         Test-InteractiveSsh $p | Should -Be $Expected
     }
@@ -660,28 +637,7 @@ Describe 'Test-InteractiveSsh' {
         Test-InteractiveSsh (Split-SshArguments @('-o', ' SessionType=none', 'host')) | Should -BeFalse
     }
 
-    It 'takes the effective ssh -G settings into account: <Name>' -ForEach @(
-        @{ Name = 'RequestTTY false in ~/.ssh/config'; Argv = @('host'); Effective = @{ requesttty = 'false' }; Expected = $false }
-        @{ Name = 'RequestTTY no'; Argv = @('host'); Effective = @{ requesttty = 'no' }; Expected = $false }
-        @{ Name = 'RequestTTY auto changes nothing'; Argv = @('host'); Effective = @{ requesttty = 'auto' }; Expected = $true }
-        @{ Name = 'RequestTTY true'; Argv = @('host'); Effective = @{ requesttty = 'true' }; Expected = $true }
-        @{ Name = 'RequestTTY force makes a command interactive'; Argv = @('host', 'htop'); Effective = @{ requesttty = 'force' }; Expected = $true }
-        @{ Name = 'RequestTTY true makes a command interactive'; Argv = @('host', 'htop'); Effective = @{ requesttty = 'true' }; Expected = $true }
-        @{ Name = 'a command with RequestTTY auto is not interactive'; Argv = @('host', 'uname'); Effective = @{ requesttty = 'auto' }; Expected = $false }
-        @{ Name = 'RequestTTY false beats -t on the command line'; Argv = @('-t', 'host'); Effective = @{ requesttty = 'false' }; Expected = $false }
-        @{ Name = 'SessionType none'; Argv = @('host'); Effective = @{ sessiontype = 'none' }; Expected = $false }
-        @{ Name = 'SessionType subsystem'; Argv = @('host'); Effective = @{ sessiontype = 'subsystem' }; Expected = $false }
-        @{ Name = 'SessionType default'; Argv = @('host'); Effective = @{ sessiontype = 'default' }; Expected = $true }
-        @{ Name = 'StdinNull yes'; Argv = @('host'); Effective = @{ stdinnull = 'yes' }; Expected = $false }
-        @{ Name = 'StdinNull no'; Argv = @('host'); Effective = @{ stdinnull = 'no' }; Expected = $true }
-        @{ Name = 'a RemoteCommand from the config makes it a command'; Argv = @('host'); Effective = @{ remotecommand = 'top' }; Expected = $false }
-        @{ Name = 'RemoteCommand none is no command'; Argv = @('host'); Effective = @{ remotecommand = 'none' }; Expected = $true }
-        @{ Name = 'a RemoteCommand with RequestTTY force'; Argv = @('host'); Effective = @{ remotecommand = 'top'; requesttty = 'force' }; Expected = $true }
-        @{ Name = 'a RemoteCommand with -t on the command line'; Argv = @('-t', 'host'); Effective = @{ remotecommand = 'top' }; Expected = $true }
-        @{ Name = 'a realistic ssh -G map of a plain login'; Argv = @('host'); Effective = @{ requesttty = 'auto'; sessiontype = 'default'; stdinnull = 'no'; remotecommand = 'none'; hostname = 'h' }; Expected = $true }
-        @{ Name = 'an empty map changes nothing'; Argv = @('host'); Effective = @{}; Expected = $true }
-        @{ Name = 'the arguments still rule out -N when the map looks fine'; Argv = @('-N', 'host'); Effective = @{ requesttty = 'auto'; sessiontype = 'default' }; Expected = $false }
-    ) {
+    It 'takes the effective ssh -G settings into account: <Name>' -ForEach $sharedCases.interactiveEffective {
         Test-InteractiveSsh (Split-SshArguments $Argv) $Effective | Should -Be $Expected
     }
 
@@ -699,18 +655,7 @@ Describe 'Test-InteractiveSsh' {
         Test-InteractiveSsh (Split-SshArguments @('-t', 'host', 'cmd')) | Should -BeTrue
     }
 
-    It 'lets the last of -t and -T win, as ssh does: <Name>' -ForEach @(
-        @{ Name = '-T then -t'; Argv = @('-T', '-t', 'host'); Expected = $true }
-        @{ Name = '-t then -T'; Argv = @('-t', '-T', 'host'); Expected = $false }
-        @{ Name = '-tT in one cluster'; Argv = @('-tT', 'host'); Expected = $false }
-        @{ Name = '-Tt in one cluster'; Argv = @('-Tt', 'host'); Expected = $true }
-        @{ Name = '-t before and -T after the destination'; Argv = @('-t', 'host', '-T'); Expected = $false }
-        @{ Name = '-T before and -t after the destination'; Argv = @('-T', 'host', '-t'); Expected = $true }
-        @{ Name = '-T then -t with a command'; Argv = @('-T', '-t', 'host', 'htop'); Expected = $true }
-        @{ Name = '-t then -T with a command'; Argv = @('-t', '-T', 'host', 'htop'); Expected = $false }
-        @{ Name = '-tt then -T'; Argv = @('-tt', '-T', 'host'); Expected = $false }
-        @{ Name = 'a command and -T then -t after the destination'; Argv = @('-T', 'host', '-t', 'htop'); Expected = $true }
-    ) {
+    It 'lets the last of -t and -T win, as ssh does: <Name>' -ForEach $sharedCases.lastTtyWins {
         Test-InteractiveSsh (Split-SshArguments $Argv) | Should -Be $Expected
     }
 
@@ -1119,19 +1064,7 @@ Describe 'Read-UploadReply' {
         { Read-UploadReply "banner`nshort 0`r`n" 1234 $script:H } | Should -Throw '*received 0 of 1234 bytes*'
     }
 
-    It 'rejects a path that is not this image''s name: <Name>' -ForEach @(
-        @{ Name = 'another hash'; Path = '/tmp/ssh-paste-ffffffffffffffffffffffffffffffff.png' }
-        @{ Name = 'a short name'; Path = '/tmp/ssh-paste-other.png' }
-        @{ Name = 'upper case'; Path = '/TMP/SSH-PASTE-0123456789ABCDEF0123456789ABCDEF.PNG' }
-        @{ Name = 'another directory'; Path = '/var/tmp/ssh-paste-0123456789abcdef0123456789abcdef.png' }
-        @{ Name = 'a subdirectory'; Path = '/tmp/x/ssh-paste-0123456789abcdef0123456789abcdef.png' }
-        @{ Name = 'a suffix without digits'; Path = '/tmp/ssh-paste-0123456789abcdef0123456789abcdef-.png' }
-        @{ Name = 'a suffix with letters'; Path = '/tmp/ssh-paste-0123456789abcdef0123456789abcdef-abc.png' }
-        @{ Name = 'a second suffix'; Path = '/tmp/ssh-paste-0123456789abcdef0123456789abcdef-1-2.png' }
-        @{ Name = 'another extension'; Path = '/tmp/ssh-paste-0123456789abcdef0123456789abcdef.png.x' }
-        @{ Name = 'no extension'; Path = '/tmp/ssh-paste-0123456789abcdef0123456789abcdef' }
-        @{ Name = 'a parent directory'; Path = '/tmp/../etc/ssh-paste-0123456789abcdef0123456789abcdef.png' }
-    ) {
+    It 'rejects a path that is not this image''s name: <Name>' -ForEach $sharedCases.badReplyPaths {
         { Read-UploadReply "1234 $Path" 1234 $script:H } | Should -Throw '*unexpected path*'
     }
 
@@ -1164,37 +1097,11 @@ Describe 'Test-HostResolves' {
 }
 
 Describe 'Test-HostAlias' {
-    It 'accepts <Name>' -ForEach @(
-        @{ Name = 'myhost'; Value = 'myhost' }
-        @{ Name = 'a dashed name'; Value = 'my-host' }
-        @{ Name = 'a dotted name'; Value = 'my.host.example.com' }
-        @{ Name = 'an IPv4 address'; Value = '192.168.1.10' }
-        @{ Name = 'a bracketed IPv6 address'; Value = '[::1]' }
-        @{ Name = 'an underscore'; Value = 'build_box_1' }
-        @{ Name = 'a number'; Value = '7' }
-    ) {
+    It 'accepts <Name>' -ForEach $sharedCases.hostAliasAccept {
         Test-HostAlias $Value | Should -BeTrue
     }
 
-    It 'rejects <Name>' -ForEach @(
-        @{ Name = 'an empty name'; Value = '' }
-        @{ Name = 'user@host'; Value = 'me@host' }
-        @{ Name = 'a leading dash'; Value = '-host' }
-        @{ Name = 'a lone dash'; Value = '-' }
-        @{ Name = 'a trailing newline'; Value = "myhost`n" }
-        @{ Name = 'a leading newline'; Value = "`nmyhost" }
-        @{ Name = 'a space'; Value = 'my host' }
-        @{ Name = 'a wildcard'; Value = '*' }
-        @{ Name = 'a pattern'; Value = 'web-*' }
-        @{ Name = 'a negation'; Value = '!web' }
-        @{ Name = 'a quote'; Value = 'ho"st' }
-        @{ Name = 'a semicolon'; Value = 'a;b' }
-        @{ Name = 'an option with a value'; Value = '-oProxyCommand=x' }
-        @{ Name = 'a path'; Value = 'C:\x' }
-        @{ Name = 'a percent token'; Value = 'a%h' }
-        @{ Name = 'a comma list'; Value = 'a,b' }
-        @{ Name = 'a leading dot'; Value = '.host' }
-    ) {
+    It 'rejects <Name>' -ForEach $sharedCases.hostAliasReject {
         Test-HostAlias $Value | Should -BeFalse
     }
 }
@@ -1354,19 +1261,7 @@ Describe 'Set-ManagedBlock' {
         $new.EndsWith($script:BlockEnd + "`n" + $orig) | Should -BeTrue
     }
 
-    It 'removes everything it added and returns the original text exactly: <Name>' -ForEach @(
-        @{ Name = 'empty file'; Text = '' }
-        @{ Name = 'one blank line'; Text = "`n" }
-        @{ Name = 'LF file'; Text = "Host a`n  HostName x`n`nHost b`n  HostName y`n" }
-        @{ Name = 'LF file without a trailing newline'; Text = "Host a`n  HostName x" }
-        @{ Name = 'LF file with several trailing blank lines'; Text = "Host a`n  HostName x`n`n`n" }
-        @{ Name = 'file that starts with blank lines and comments'; Text = "`n`n# my hosts`nHost a`n  HostName x`n" }
-        @{ Name = 'CRLF file'; Text = "Host a`r`n  HostName x`r`n`r`nHost b`r`n  HostName y`r`n" }
-        @{ Name = 'CRLF file without a trailing newline'; Text = "Host a`r`n  HostName x" }
-        @{ Name = 'file with global options before the first Host'; Text = "ServerAliveInterval 30`nAddKeysToAgent yes`n`nHost a`n  HostName x`n" }
-        @{ Name = 'file with tabs and trailing spaces'; Text = "Host a `n`tHostName x  `n" }
-        @{ Name = 'file that already has a Host * section'; Text = "Host a`n  HostName x`nHost *`n  Compression yes`n" }
-    ) {
+    It 'removes everything it added and returns the original text exactly: <Name>' -ForEach $sharedCases.blockRoundTrip {
         $added = Add-Block $Text @('myhost')
         (Get-ManagedHosts $added) | Should -Contain 'myhost'
         Remove-Block $added | Should -BeExactly $Text
@@ -2202,18 +2097,7 @@ Get-SourceFiles $Ref
 }
 
 Describe 'Get-SshOptionKey' {
-    It 'is the lower-cased name before "=" or white space: <Value>' -ForEach @(
-        @{ Value = 'ProxyCommand=ssh -W %h:%p x'; Expected = 'proxycommand' }
-        @{ Value = 'proxyjump=a,b'; Expected = 'proxyjump' }
-        @{ Value = 'ProxyJump a'; Expected = 'proxyjump' }
-        @{ Value = 'ProxyJump   a'; Expected = 'proxyjump' }
-        @{ Value = "RequestTTY`tforce"; Expected = 'requesttty' }
-        @{ Value = 'LOGLEVEL=QUIET'; Expected = 'loglevel' }
-        @{ Value = 'User = bob'; Expected = 'user' }
-        @{ Value = 'Port'; Expected = 'port' }
-        @{ Value = ''; Expected = '' }
-        @{ Value = '=x'; Expected = '' }
-    ) {
+    It 'is the lower-cased name before "=" or white space: <Value>' -ForEach $sharedCases.optionKey {
         Get-SshOptionKey $Value | Should -BeExactly $Expected
     }
 
