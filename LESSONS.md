@@ -158,6 +158,29 @@ only; the macOS watcher makes the same decisions in other code.
   the watcher kept writing paths after logout (94e9171).
 - Seen 1x (2026-11-24).
 
+**A failing check is not a flake until its log says so.** Read the debug log
+or the artifacts of the failed job before you re-run it; a re-run that passes
+only hides a race until it hits a user.
+- 9d48684: macOS e2e and jxa failed on main twice (runs 45358589125 and
+  45362405133) and passed on the PRs. The first was re-run as a runner flake.
+  The watcher's debug log in the second run's artifacts showed the cause: a
+  tick read the pasteboard between a writer's clear and its write, kept "empty"
+  for that change count, and never looked again. The fix reads an empty
+  pasteboard again; its test fails without it.
+- 89aef10 had loosened the Finder-copy assertion after the same kind of
+  failure instead of finding why.
+- Seen 2x (2026-11-24, 2026-11-24).
+
+**A test that covers whatever it finds must fail when something it should
+cover is missing.** A loop over the shells, browsers or tools present passes
+just as well when none of the interesting ones are there.
+- 356b04b: the Pester tests ran the server script through every login shell
+  they found. The Linux runner had only sh, bash and dash, so zsh, fish and
+  tcsh were never tested, while the README said they work and a commit message
+  said CI had run them. The CI job now installs them and fails if one is
+  missing; they then passed for the first time.
+- Seen 1x (2026-11-24).
+
 **A fixture takes machine facts (uid, home folder, host name) from the
 machine that runs it.** A literal that matches the author's computer passes
 there and fails on a runner.
