@@ -85,7 +85,15 @@ echo 'starting snapshot:'
 sed 's/^/    /' "$work/before"
 
 section 'round 1: install twice, --enable / --disable, ssh-paste --uninstall'
-run 'install' sh "$installer"
+run 'install' env PATH=/usr/bin:/bin:/usr/sbin:/sbin sh "$installer"
+# The line it prints for the current terminal comes before "Next:" and works when pasted.
+line=$(sed -n '/In this one, first run:$/{n;s/^  //;p;}' "$work/out")
+if [ -n "$line" ] && [ "$(grep -n 'first run:$' "$work/out" | cut -d: -f1)" -lt "$(grep -n '^Next:$' "$work/out" | cut -d: -f1)" ]; then
+    pass 'the install prints the PATH line before Next:'
+else
+    fail 'no PATH line before Next:'; sed 's/^/        /' "$work/out"
+fi
+check "$(env PATH=/usr/bin:/bin zsh -fc "$line; command -v ssh-paste")" "$cmd" 'the printed line puts ssh-paste on this shell'"'"'s PATH'
 run 'install again' sh "$installer"
 if grep -q '^Reinstalled ssh-paste' "$work/out"; then pass 'the second install says Reinstalled'; else fail "second install: $(head -n 1 "$work/out")"; fi
 check "$("$cmd" --version)" 0.0.0-dev 'ssh-paste --version'

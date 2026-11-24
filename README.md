@@ -19,7 +19,7 @@ irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/i
 
 Works in that window right away; open a new tab for others. Re-run to upgrade.
 
-**On macOS**, in Terminal (uses only what macOS ships; see [macOS](#macos)), then open a new tab:
+**On macOS**, in Terminal (uses only what macOS ships; see [macOS](#macos)). Then open a new tab, or run the `export PATH=...` line the installer prints to use it in this one:
 
 ```sh
 curl -fsSL https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.sh | sh

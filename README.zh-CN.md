@@ -19,7 +19,7 @@ irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/i
 
 当前窗口马上可用，其他窗口新开标签页即可。重新运行即可升级。
 
-**macOS 上**，在终端里运行（只用 macOS 自带的工具，见 [macOS](#macos) 一节），装完新开一个标签页：
+**macOS 上**，在终端里运行（只用 macOS 自带的工具，见 [macOS](#macos) 一节）。装完新开一个标签页；想在当前标签页直接用，就运行安装程序打印的那行 `export PATH=...`：
 
 ```sh
 curl -fsSL https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.sh | sh
