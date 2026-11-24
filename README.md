@@ -8,6 +8,8 @@ English | [简体中文](README.zh-CN.md)
 
 Paste a screenshot into remote Claude Code over SSH with Ctrl+V in Windows Terminal, or Cmd+V in Terminal on macOS. One script on your computer (`ssh-paste`); nothing on the server.
 
+How it works, what it never does, and how it compares: [docs/how-it-works.md](docs/how-it-works.md).
+
 ## Quick start
 
 **1. Install** on Windows, in PowerShell (not cmd), without administrator rights:
