@@ -105,13 +105,28 @@ if [[ -z $ssh_bin ]]; then
   print -u2 'ssh-paste: ssh was not found'
   exit 1
 fi
-dir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/ssh-paste.XXXXXXXX") || exit 1
+# A short private folder in /tmp (mode 700): the watcher's ready, mux and stop files, and
+# the session's control socket s, whose path must stay well under the ~104 bytes a socket
+# path may have ($TMPDIR is long on macOS).
+dir=$(/usr/bin/mktemp -d /tmp/ssh-paste.XXXXXXXX) || exit 1
+# A signal is noted, not acted on at once: zsh runs the trap after the foreground ssh
+# ends (ssh gets the terminal's signals itself), and then the normal path below stops
+# the watcher and waits for it before the folder goes.
+sig=
+trap 'sig=129' HUP
+trap 'sig=130' INT
+trap 'sig=143' TERM
+trap '/bin/rm -rf "$dir"' EXIT
 "$osascript" -l JavaScript "$js" --watch-wrapper "$dir" "$$" "$ssh_bin" "$keep" "$sdir" "$@" < /dev/null &
 watcher=$!
 while [[ ! -e "$dir/ready" ]] && kill -0 "$watcher" 2> /dev/null; do sleep 0.05; done
-"$ssh_bin" "$@"
+if [[ -e "$dir/mux" ]]; then
+  # The session is the master of $dir/s: uploads share the connection the user logs in to.
+  "$ssh_bin" -o ControlMaster=yes -o ControlPersist=no -o "ControlPath=$dir/s" "$@"
+else
+  "$ssh_bin" "$@"
+fi
 code=$?
 : > "$dir/stop"
 wait "$watcher" 2> /dev/null
-/bin/rm -rf "$dir"
-exit $code
+exit ${sig:-$code}

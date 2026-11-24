@@ -183,9 +183,11 @@ test('paste settings (--keep, --dir), the tables of tests/cases.json and the blo
     });
     await t.test('refuses --enable for a host only when the server refused the login (Get-EnableRefusal)', () => {
         for (const c of cases.enableRefusals) assert.equal(m.enableRefusal('h', c.Said) !== null, c.Refuse, c.Name);
-        const lines = m.enableRefusal('build', 'xu@build: Permission denied (publickey,password).');
+        assert.equal(m.enableRefusal('build', 'xu@build: Permission denied (publickey,password).').some((l) => /wrapper mode/.test(l)), false, 'no hint when the session cannot share its connection');
+        const lines = m.enableRefusal('build', 'xu@build: Permission denied (publickey,password).', true);
         assert.equal(lines[0], 'build did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add');
         assert.ok(lines.includes('    ssh-copy-id -i ~/.ssh/id_ed25519.pub build'));
+        assert.equal(lines[lines.length - 1], '  Or paste there without a key: ssh-paste build (wrapper mode) shares the connection you log in to.');
     });
     await t.test('writes words as a command line to type again in zsh (Format-ShellWords)', () => {
         for (const c of cases.shellWords) assert.equal(m.formatShellWords(c.Words), c.Expected, c.Name);
@@ -600,7 +602,8 @@ function pathFor(png, dir) {
 function newWorld() {
     const w = {
         fg: 0, seq: 1, entry: null, writes: [], uploads: [], reads: 0, failNext: 0, duringUpload: null, afterRead: null,
-        beforeWrite: null, readFails: 0, prefix: {}, clock: 1700000000000, hold: false, beeps: 0, logs: []
+        beforeWrite: null, readFails: 0, prefix: {}, clock: 1700000000000, hold: false, beeps: 0, logs: [],
+        muxReady: false, muxChecks: [], muxHomeError: null
     };
     w.P = {
         now: () => w.clock,
@@ -640,6 +643,8 @@ function newWorld() {
             if (w.entry && w.entry.Promise === 'open') w.entry.Promise = text ? 'resolved' : 'failed';
         },
         canAnswer: (text) => !!w.entry && w.entry.Text === text && w.entry.Promise !== 'failed',
+        muxCheck: (socket) => { w.muxChecks.push(socket); return w.muxReady; },
+        muxHome: () => { if (w.muxHomeError) throw new Error(w.muxHomeError); return '/home/alice'; },
         startUpload: (ssh, argv, item) => {
             w.uploads.push({ Hash: item.Hash, SshPath: ssh, Arguments: argv });
             if (w.duringUpload) w.duringUpload();
@@ -986,6 +991,85 @@ test('the watcher: one watcher, one terminal window', async (t) => {
         w.ticks(W, 1);
         assert.deepEqual(w.uploads.map((u) => u.Hash), [a, b]);
         assert.equal(w.entry.Text, '/tmp/ssh-paste-' + a + '.png /tmp/ssh-paste-' + b + '.png');
+    });
+});
+
+test('wrapper mode shares the session\'s connection (ControlMaster) for uploads', async (t) => {
+    const parse = (args) => m.splitSshArguments(args.concat(['alice@h']));
+    const plain = { controlmaster: 'false', controlpersist: 'no', forkafterauthentication: 'no' };
+    await t.test('only when the user has no multiplexing of their own and ssh -G was read', () => {
+        assert.equal(m.muxEligible(parse([]), plain), true);
+        assert.equal(m.muxEligible(parse(['-p', '2222', '-J', 'jump']), plain), true);
+        for (const args of [['-S', '/tmp/s'], ['-M'], ['-f'], ['-O', 'check'], ['-o', 'ControlPath=/tmp/x'], ['-oControlMaster=auto'], ['-o', 'ControlPersist=60'], ['-o', 'ForkAfterAuthentication=yes']]) {
+            assert.equal(m.muxEligible(parse(args), plain), false, args.join(' '));
+        }
+        assert.equal(m.muxEligible(parse([]), null), false, 'ssh -G failed');
+        assert.equal(m.muxEligible(parse([]), { hostname: 'h' }), false, 'ssh -G without controlmaster');
+        assert.equal(m.muxEligible(parse([]), Object.assign({}, plain, { controlmaster: 'auto', controlpath: '/u/.ssh/cm-%C' })), false);
+        assert.equal(m.muxEligible(parse([]), Object.assign({}, plain, { controlpath: '/u/.ssh/cm-%C' })), false);
+        assert.equal(m.muxEligible(parse([]), Object.assign({}, plain, { controlpersist: '60' })), false);
+        assert.equal(m.muxEligible(parse([]), Object.assign({}, plain, { forkafterauthentication: 'yes' })), false);
+    });
+    await t.test('uploads go through the socket only, without the user\'s config, and can never open a new connection', () => {
+        const argv = m.muxUploadArguments('/tmp/ssh-paste.AbCd1234/s', 'a'.repeat(32), 40, { keep: '7d', dir: '/data/x' });
+        assert.deepEqual(argv.slice(0, 2), ['-F', 'none']);
+        assert.ok(argv.includes('ControlPath=/tmp/ssh-paste.AbCd1234/s'));
+        assert.ok(argv.includes('ControlMaster=no'));
+        assert.ok(argv.includes('ProxyCommand=/usr/bin/false'));
+        assert.ok(argv.includes('BatchMode=yes'));
+        assert.equal(argv[argv.length - 2], m.MUX_HOST);
+        assert.equal(argv[argv.length - 1], m.uploadCommand('a'.repeat(32), 40, 'png', '7d', 10080, '/data/x'));
+        assert.throws(() => m.muxSshArguments('relative/s'), /bad control socket/);
+    });
+    const muxWatcher = (w, homeDir) => m.newWatcher(w.P, { sshPath: 'ssh-a', sshVersion: [9, 6], parsed: m.splitSshArguments(['alice@h']), window: TerminalA,
+        token: 'feedfacefeedface', mux: { socket: '/tmp/ssh-paste.AbCd1234/s', homeDir: homeDir || null } });
+    await t.test('does nothing until the user has logged in, then handles an image copied before', () => {
+        const w = newWorld(), png = fakePng(1), W = muxWatcher(w);
+        w.focus(TerminalA);
+        w.copy(png);
+        for (let i = 0; i < 6; i++) { w.clock += 250; m.watcherTick(W); }
+        assert.equal(w.uploads.length, 0);
+        assert.equal(w.writes.length, 0);
+        assert.equal(w.muxChecks.length, 3, 'checked every half second over 1.5 s');
+        w.muxReady = true;
+        for (let i = 0; i < 4; i++) { w.clock += 250; m.watcherTick(W); }
+        assert.equal(w.uploads.length, 1, 'the image copied before the login');
+        assert.ok(w.uploads[0].Arguments.includes('ControlPath=/tmp/ssh-paste.AbCd1234/s'));
+        assert.equal(w.entry.Text, pathFor(png));
+    });
+    await t.test('reads the folder for --dir ~/... through the session once it is up', () => {
+        const w = newWorld(), png = fakePng(1), W = muxWatcher(w, '~/shots');
+        w.prefix['ssh-a'] = '/home/alice/shots';
+        w.muxReady = true;
+        w.focus(TerminalA);
+        w.copy(png);
+        w.ticks(W, 3);
+        assert.equal(W.Dir, '/home/alice/shots');
+        assert.equal(w.entry.Text, pathFor(png, '/home/alice/shots'));
+    });
+    await t.test('says why paste is off when the folder cannot be read', () => {
+        const w = newWorld(), W = muxWatcher(w, '~/shots');
+        w.muxReady = true;
+        w.muxHomeError = 'ssh exited with 255: boom';
+        w.focus(TerminalA);
+        w.copy(fakePng(1));
+        w.ticks(W, 3);
+        assert.equal(w.uploads.length, 0);
+        assert.equal(m.failureSummary(W), 'ssh-paste: screenshot paste was off for this session: cannot ask alice@h for its home folder (ssh exited with 255: boom); give an absolute --dir');
+    });
+    await t.test('stops for the session when the server allows one session per connection', () => {
+        const w = newWorld(), W = muxWatcher(w);
+        w.muxReady = true;
+        w.failNext = 5;
+        w.failText = 'ssh exited with 255: mux_client_request_session: session request failed: Session open refused by peer';
+        w.focus(TerminalA);
+        w.copy(fakePng(1));
+        w.ticks(W, 4);
+        w.copy(fakePng(2));
+        w.clock += 3600000;
+        w.ticks(W, 4);
+        assert.equal(w.uploads.length, 1);
+        assert.match(W.Blocked, /alice@h refused a second session on this connection/);
     });
 });
 

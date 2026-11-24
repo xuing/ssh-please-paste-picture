@@ -26,7 +26,7 @@ Programs other than the terminal still paste the image: the clipboard holds both
 
 1. **It only runs while you are connected.** When an interactive `ssh` session starts, ssh-paste starts watching the clipboard. When the session ends, it stops. `scp`, `sftp` and `git` over SSH never get it: in ssh mode their connections only pass through ssh-paste's relay, which forwards the bytes unchanged.
 2. **It waits until you switch to that window.** Only then does it upload the image. That is why Ctrl+V is instant: the upload is usually done before you press it, and a paste during the upload waits for it (up to 30 seconds).
-3. **It uploads over a second, separate ssh connection,** with your own keys and settings, to the same server as the session. It sends the image bytes and nothing else. The server needs only `sh` and a few standard tools; nothing is installed there.
+3. **It uploads over a second, separate ssh connection,** with your own keys and settings, to the same server as the session. (On macOS in wrapper mode it opens a channel on the connection you logged in to instead, so a server that asks for a password asks only once.) It sends the image bytes and nothing else. The server needs only `sh` and a few standard tools; nothing is installed there.
 4. **The file is named after its content** (a hash of the image), so the same screenshot is uploaded once, and two users with the same image never overwrite each other's files.
 5. **When you switch away or disconnect,** the clipboard goes back to the plain image. (In ssh mode on Windows, `ssh` ends the relay at once, so the path can stay until your next copy.)
 

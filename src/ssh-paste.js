@@ -223,11 +223,61 @@ function uploadSshArguments(parsed, hash, size, opts) {
     var folder = opts.dir || DEFAULT_DIR;
     if (!testServerDirectory(folder) || folder.charAt(0) === '~') throw new Error('bad --dir: ' + folder);
     var argv = serverSshArguments(parsed, opts);
-    // The folder in single quotes, as the remote login shell reads the command.
+    argv.push(uploadCommand(hash, size, ext, keep, keepMinutes, folder));
+    return argv;
+}
+
+function uploadCommand(hash, size, ext, keep, keepMinutes, folder) {
+    // The command the server runs for one upload. The folder in single quotes, as the
+    // remote login shell reads the command.
     var command = "sh -c '" + REMOTE_SCRIPT + "' ssh-paste " + hash + ' ' + size + ' ' + ext + ' ' + keepMinutes + " '" + folder + "'";
     var cls = keepClass(keep);
-    argv.push(cls ? command + ' ' + cls : command);
-    return argv;
+    return cls ? command + ' ' + cls : command;
+}
+
+// Wrapper mode on macOS makes the session itself the ControlMaster of a private socket,
+// so uploads open a channel on the connection the user already logged in to: a server
+// that asks for a password or a code asks once, as always (kitty's kitten ssh does the
+// same). The mux client needs no config (-F none): it sends its command over the socket,
+// not the destination, so the host is a fixed name; ProxyCommand=/usr/bin/false makes it
+// fail at once instead of opening a new connection when the master is gone.
+var MUX_HOST = 'ssh-paste-mux';
+
+function muxSshArguments(socket) {
+    if (!/^\/[A-Za-z0-9._\/-]+$/.test(String(socket))) throw new Error('bad control socket: ' + socket);
+    return ['-F', 'none', '-T', '-x', '-o', 'BatchMode=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=' + socket,
+        '-o', 'ProxyCommand=/usr/bin/false', '-o', 'RequestTTY=no', '-o', 'ForwardAgent=no', '-o', 'ClearAllForwardings=yes',
+        '-o', 'LogLevel=ERROR', MUX_HOST];
+}
+
+function muxUploadArguments(socket, hash, size, opts) {
+    // uploadSshArguments for an upload through the session's own connection.
+    opts = opts || {};
+    var ext = opts.ext || 'png';
+    if (!/^[0-9a-f]{32}$/.test(String(hash))) throw new Error('bad image hash: ' + hash);
+    if (IMAGE_EXTENSIONS.indexOf(ext) < 0) throw new Error('bad image extension: ' + ext);
+    var keep = opts.keep || DEFAULT_KEEP;
+    var folder = opts.dir || DEFAULT_DIR;
+    if (!testServerDirectory(folder) || folder.charAt(0) === '~') throw new Error('bad --dir: ' + folder);
+    return muxSshArguments(socket).concat([uploadCommand(hash, size, ext, keep, keepMinutesOf(keep), folder)]);
+}
+
+function muxEligible(parsed, effective) {
+    // Whether the session may become the master of our private socket: the user has no
+    // multiplexing of their own for it (on the command line or in the config ssh -G shows),
+    // and ssh -G was read. Anything else keeps today's separate connections.
+    if (!parsed || !effective || effective.controlmaster === undefined) return false;
+    var mine = ['controlmaster', 'controlpath', 'controlpersist', 'forkafterauthentication'];
+    for (var i = 0; i < parsed.Options.length; i++) {
+        var o = parsed.Options[i];
+        if (o.Flag === 'M' || o.Flag === 'S' || o.Flag === 'O' || o.Flag === 'f') return false;
+        if (o.Flag === 'o' && mine.indexOf(sshOptionKey(o.Value)) >= 0) return false;
+    }
+    if (String(effective.controlmaster).toLowerCase() !== 'false' && String(effective.controlmaster).toLowerCase() !== 'no') return false;
+    if (effective.controlpath !== undefined && String(effective.controlpath).toLowerCase() !== 'none') return false;
+    if (effective.controlpersist !== undefined && String(effective.controlpersist).toLowerCase() !== 'no') return false;
+    if (effective.forkafterauthentication !== undefined && String(effective.forkafterauthentication).toLowerCase() !== 'no') return false;
+    return true;
 }
 
 function serverSshArguments(parsed, opts) {
@@ -325,6 +375,7 @@ function sshFailure(text) {
         return { kind: 'auth', methods: methods, keyLogin: methods.indexOf('publickey') >= 0, typed: typed };
     }
     if (/Too many authentication failures/.test(text)) return { kind: 'toomany' };
+    if (/Session open refused by peer|mux_client_request_session: session request failed/.test(text)) return { kind: 'muxrefused' };
     if (/Host key verification failed/.test(text)) return { kind: 'hostkey' };
     if (/Could not resolve hostname|Connection refused|Connection timed out|No route to host|Network is unreachable|Operation timed out/.test(text)) return { kind: 'network' };
     return null;
@@ -333,7 +384,7 @@ function sshFailure(text) {
 function failureFinal(f) {
     // Test-FailureFinal: trying again in this session cannot help: the server takes only
     // methods that a person types. Anything else may change while the session runs.
-    return !!f && f.kind === 'auth' && f.typed;
+    return !!f && ((f.kind === 'auth' && f.typed) || f.kind === 'muxrefused');
 }
 
 function loginAdvice(f, host, here) {
@@ -343,6 +394,7 @@ function loginAdvice(f, host, here) {
     if (f.kind === 'auth' && f.keyLogin) return host + ' did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add' + (here ? '' : '; ssh-paste --doctor ' + host + ' shows how');
     if (f.kind === 'auth' && f.typed) return host + ' wants a password or a one-time code (' + f.methods.join(',') + '), which uploads cannot type, so ssh-paste cannot upload to it';
     if (f.kind === 'toomany') return host + ' closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config';
+    if (f.kind === 'muxrefused') return host + ' refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none ' + host + ' uploads over new connections';
     if (f.kind === 'hostkey') return 'ssh could not verify the host key of ' + host + ': run ssh ' + host + ' to see why (a new host asks you to accept its key)';
     return null;
 }
@@ -361,7 +413,11 @@ function formatShellWords(words) {
     return words.map(function (w) { return /^[A-Za-z0-9._@%+=:,\/-]+$/.test(w) ? w : "'" + w.replace(/'/g, "'\\''") + "'"; }).join(' ');
 }
 
-function enableRefusal(host, errorText) {
+// On a Mac, wrapper mode pastes where uploads cannot log in on their own: they share the
+// connection the user logged in to (see muxEligible).
+var WRAPPER_HINT = '  Or paste there without a key: ssh-paste HOST (wrapper mode) shares the connection you log in to.';
+
+function enableRefusal(host, errorText, wrapperCan) {
     // Get-EnableRefusal: what --enable says instead of enabling host, whose uploads were
     // refused; null when the check logged in or could not tell (then the host is enabled).
     var f = sshFailure(errorText);
@@ -373,6 +429,7 @@ function enableRefusal(host, errorText) {
     }
     var lines = [advice];
     if (f.kind === 'auth' && f.keyLogin) lines = lines.concat(keySetupLines(host));
+    if (f.kind === 'auth' && wrapperCan) lines.push(WRAPPER_HINT.replace(/HOST/g, formatShellWords([host])));
     return lines;
 }
 
@@ -816,7 +873,8 @@ function newWatcher(P, o) {
         P: P, SshPath: o.sshPath, SshVersion: o.sshVersion || null, Parsed: o.parsed, NoProxy: !!o.noProxy, Pin: o.pin || null,
         Keep: keep, KeepMinutes: minutes, Class: keepClass(keep), Dir: dir, CacheHours: uploadCacheHours(minutes),
         Window: o.window, Token: o.token, Debug: !!o.debug,
-        LastSeq: -1, LastForeground: 0, State: null, WakeAt: Infinity, Uploaded: {}, Failed: {}, Blocked: null, Inflight: null
+        LastSeq: -1, LastForeground: 0, State: null, WakeAt: Infinity, Uploaded: {}, Failed: {}, Blocked: null, Inflight: null,
+        Mux: o.mux ? { Socket: o.mux.socket, Ready: false, NextCheck: 0, HomeDir: o.mux.homeDir || null } : null
     };
 }
 
@@ -849,6 +907,33 @@ function uploadFailing(W, state) {
     return stateItems(state).some(function (item) { return Object.prototype.hasOwnProperty.call(W.Failed, item.Hash); });
 }
 
+function muxReady(W) {
+    // Whether the session's connection can carry uploads yet, checked at most every half
+    // second. The first time it can, the folder for --dir ~/... is read through it, and
+    // the pasteboard is looked at again, so an image copied before the login counts.
+    var P = W.P;
+    var now = P.now();
+    if (now < W.Mux.NextCheck) return false;
+    W.Mux.NextCheck = now + 500;
+    if (!P.muxCheck(W.Mux.Socket)) return false;
+    if (W.Mux.HomeDir) {
+        try {
+            W.Dir = absoluteDirectory(W.Mux.HomeDir, P.muxHome(W.Mux.Socket));
+        } catch (e) {
+            // A server that refuses the extra channel refuses uploads too: say that, not "give a path".
+            var f = sshFailure(e.message);
+            W.Blocked = f && f.kind === 'muxrefused' ? loginAdvice(f, W.Parsed.Destination)
+                : 'cannot ask ' + W.Parsed.Destination + ' for its home folder (' + e.message + '); give an absolute --dir';
+        }
+        W.Mux.HomeDir = null;
+    }
+    W.Mux.Ready = true;
+    W.LastSeq = -1;
+    W.LastForeground = 0;
+    P.log('the session shares its connection for uploads: ' + W.Mux.Socket);
+    return true;
+}
+
 function uploadedItemPath(W, item, since) {
     // Upload once per file. A failed upload is retried after 30 s, 1 min, 2 min
     // and so on (beeping only the first time). An upload is redone after a few
@@ -873,8 +958,8 @@ function uploadedItemPath(W, item, since) {
     }
     var pending = { Item: item, At: now, Handle: null };
     try {
-        var argv = uploadSshArguments(W.Parsed, item.Hash, item.Size, { noProxy: W.NoProxy, sshVersion: W.SshVersion, pin: W.Pin, ext: item.Ext,
-            keep: W.Keep || DEFAULT_KEEP, dir: W.Dir || DEFAULT_DIR });
+        var uploadOpts = { noProxy: W.NoProxy, sshVersion: W.SshVersion, pin: W.Pin, ext: item.Ext, keep: W.Keep || DEFAULT_KEEP, dir: W.Dir || DEFAULT_DIR };
+        var argv = W.Mux ? muxUploadArguments(W.Mux.Socket, item.Hash, item.Size, uploadOpts) : uploadSshArguments(W.Parsed, item.Hash, item.Size, uploadOpts);
         if (W.Debug) {
             // -v makes ssh say on stderr how far it got; LogLevel=ERROR is ours, so
             // drop it together with its -o (a lone -o would take the next option as
@@ -1011,6 +1096,8 @@ function watcherTick(W) {
         finishInflight(W);
         return;
     }
+    // Sharing the session's connection: nothing to do until the user has logged in.
+    if (W.Mux && !W.Mux.Ready && !muxReady(W)) return;
     var fg = P.foreground();
     if (!fg) return;
     var seq = P.changeCount();
@@ -1082,9 +1169,9 @@ function restoreClipboard(W) {
 
 function failureSummary(W) {
     if (!W) return null;
+    if (W.Blocked) return 'ssh-paste: screenshot paste was off for this session: ' + W.Blocked;
     var keys = Object.keys(W.Failed);
     if (keys.length === 0) return null;
-    if (W.Blocked) return 'ssh-paste: screenshot paste was off for this session: ' + W.Blocked;
     var last = keys.map(function (k) { return W.Failed[k]; }).sort(function (a, b) { return a.At - b.At; })[keys.length - 1];
     var advice = loginAdvice(sshFailure(last.Message), W.Parsed.Destination);
     return 'ssh-paste: ' + keys.length + ' screenshot upload(s) failed: ' + (advice || last.Message);
@@ -1472,6 +1559,22 @@ function macPlatform(sessionDebug) {
     P.changeCount = function () { return Number(pb.changeCount); };
     P.log = debugLog;
     P.beep = function () { $.NSBeep(); };
+    P.muxCheck = function (socket) {
+        // ssh -O check through the socket: the session has logged in and listens.
+        if (!$.NSFileManager.defaultManager.fileExistsAtPath(socket)) return false;
+        var ssh = P.watcher ? P.watcher.SshPath : '/usr/bin/ssh';
+        try {
+            return runCapture(ssh, ['-F', 'none', '-o', 'ControlPath=' + socket, '-O', 'check', MUX_HOST], 5).code === 0;
+        } catch (e) { return false; }
+    };
+    P.muxHome = function (socket) {
+        var ssh = P.watcher ? P.watcher.SshPath : '/usr/bin/ssh';
+        var r = runCapture(ssh, muxSshArguments(socket).concat(['echo $HOME']), 10);
+        var lines = String(r.out || '').split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
+        var line = lines.length > 0 ? lines[lines.length - 1].trim() : '';
+        if (r.code !== 0 || line.charAt(0) !== '/') throw new Error('ssh exited with ' + r.code + ': ' + String(r.err || '').trim());
+        return line;
+    };
 
     P.readState = function () {
         // One snapshot of the pasteboard: the change count, the image or the
@@ -1718,7 +1821,7 @@ function startWatcher(o) {
     var window = o.bound.window;
     var P = macPlatform(debug);
     var W = newWatcher(P, { sshPath: o.sshPath, sshVersion: sshVersionOf(o.sshPath), parsed: o.parsed, noProxy: o.noProxy, pin: o.pin,
-        window: window, token: randomHex(16), debug: debug, settings: o.settings });
+        window: window, token: randomHex(16), debug: debug, settings: o.settings, mux: o.mux });
     P.watcher = W;
     debugLog('watching ' + terminal.bundle + ' (pid ' + terminal.pid + ', from ' + terminal.from + ') window ' + window);
     return W;
@@ -1767,8 +1870,16 @@ function watchWrapper(args) {
             try {
                 // The same reading as --enable and --proxy, so the folder is normalized (no / at the end).
                 var settings = readPasteSettings(given);
-                if (settings.Dir && settings.Dir.charAt(0) === '~') settings.Dir = absoluteDirectory(settings.Dir, serverHome(ssh, parsed));
-                W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed, settings: settings });
+                var mux = null;
+                if (muxEligible(parsed, effective)) {
+                    // The launcher reads DIR/mux and makes the session the master of DIR/s.
+                    mux = { socket: dir + '/s', homeDir: settings.Dir && settings.Dir.charAt(0) === '~' ? settings.Dir : null };
+                    if (mux.homeDir) settings.Dir = null;   // read through the session once it is up
+                } else if (settings.Dir && settings.Dir.charAt(0) === '~') {
+                    settings.Dir = absoluteDirectory(settings.Dir, serverHome(ssh, parsed));
+                }
+                W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed, settings: settings, mux: mux });
+                if (mux) fm.createFileAtPathContentsAttributes(dir + '/mux', $.NSData.data, $());
                 warn('ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Cmd+V.');
             } catch (e) {
                 warn('ssh-paste: screenshot paste is off: ' + e.message);
@@ -1973,7 +2084,7 @@ function enableHosts(args) {
         if (ssh === null) ssh = sshPath();
         if (!Object.prototype.hasOwnProperty.call(logins, h)) logins[h] = testServerLogin(ssh, splitSshArguments([h]), true);
         // A host whose uploads the server refuses is not enabled: ssh mode could never paste there.
-        var refusal = enableRefusal(h, logins[h].error);
+        var refusal = enableRefusal(h, logins[h].error, muxEligible(splitSshArguments([h]), effectiveSshConfig(ssh, [h])));
         if (refusal) { problems = problems.concat(refusal); return; }
         var before = pair[1];
         var after = { Keep: settings.Keep || before.Keep, Dir: settings.Dir || before.Dir };
@@ -2097,7 +2208,8 @@ function doctor(args) {
     data.writeToFileAtomically(file, true);
     var hashOut = runCapture('/usr/bin/shasum', ['-a', '256', file], 20);
     var hash = (parseShasum(hashOut.out) || '').substring(0, 32);
-    var sshMode = sshModeSettings(effectiveSshConfig(ssh, args));
+    var effective = effectiveSshConfig(ssh, args);
+    var sshMode = sshModeSettings(effective);
     var started = nowMs();
     try {
         // The settings ssh mode uses for this connection, so the test prunes as an upload would.
@@ -2125,6 +2237,9 @@ function doctor(args) {
             var setup = keySetupTarget(parsed);
             keySetupLines(setup.Target).forEach(say);
             if (setup.Dropped) say('  Add the other ssh options this host needs to the ssh-copy-id line.');
+        }
+        if (failure && failure.kind === 'auth' && muxEligible(parsed, effective)) {
+            say(WRAPPER_HINT.replace(/HOST/g, formatShellWords(args)));
         } else if (!advice) {
             say('Uploads use a second, non-interactive ssh connection, so the server must');
             say('accept your key without a prompt: a key without a passphrase, or a key loaded');
@@ -2232,7 +2347,8 @@ if (typeof module !== 'undefined' && module.exports) {
         DEFAULT_KEEP: DEFAULT_KEEP, DEFAULT_DIR: DEFAULT_DIR, keepMinutesOf: keepMinutesOf, testServerDirectory: testServerDirectory,
         readPasteSettings: readPasteSettings, proxySettings: proxySettings, replyPathPattern: replyPathPattern, uploadCacheHours: uploadCacheHours,
         settingsGroups: settingsGroups, disableMessage: disableMessage, sshModeSettings: sshModeSettings,
-        sshFailure: sshFailure, failureFinal: failureFinal, loginAdvice: loginAdvice, loginReport: loginReport, keySetupLines: keySetupLines, keySetupTarget: keySetupTarget, enableRefusal: enableRefusal, formatShellWords: formatShellWords, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
+        sshFailure: sshFailure, failureFinal: failureFinal, loginAdvice: loginAdvice, loginReport: loginReport, keySetupLines: keySetupLines, keySetupTarget: keySetupTarget, enableRefusal: enableRefusal,
+        muxEligible: muxEligible, muxSshArguments: muxSshArguments, muxUploadArguments: muxUploadArguments, uploadCommand: uploadCommand, MUX_HOST: MUX_HOST, formatShellWords: formatShellWords, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
         serverSshArguments: serverSshArguments,
         SSH_FLAGS_NO_ARG: SSH_FLAGS_NO_ARG, SSH_FLAGS_WITH_ARG: SSH_FLAGS_WITH_ARG, SSH_KEEP_NO_ARG: SSH_KEEP_NO_ARG,
         SSH_KEEP_WITH_ARG: SSH_KEEP_WITH_ARG, SSH_DROP_OPTIONS: SSH_DROP_OPTIONS, TERM_PROGRAM_BUNDLES: TERM_PROGRAM_BUNDLES,

@@ -120,6 +120,26 @@ not accepted yet) with a warning. Your ssh config applies to that connection as
 to any other: `StrictHostKeyChecking accept-new`, for example, records a new
 host's key.
 
+Wrapper mode on macOS shares the session's connection instead, when you use no
+multiplexing of your own (no `-M`, `-S`, `-O`, `-f` or `Control*` option, and
+`ssh -G` shows `ControlMaster` off with no `ControlPath`):
+
+- The launcher makes a folder `/tmp/ssh-paste.XXXXXXXX` (mode 700) and runs
+  ssh with `ControlMaster=yes`, `ControlPersist=no` and `ControlPath` set to
+  the socket `s` in it, so the session is the master and ends with you. The
+  folder goes when the launcher exits.
+- Each upload is a mux client of that socket: `ssh -F none` (none of your
+  config), `ControlMaster=no`, `ProxyCommand=/usr/bin/false` (it fails at once
+  instead of opening a new connection when the master is gone), `BatchMode=yes`,
+  and the options below. It opens a channel on your connection, so it reaches
+  the same server and needs no login of its own.
+- The watcher writes no path until `ssh -O check` on the socket succeeds, that
+  is, until you have logged in. `--dir ~/...` is resolved through the socket.
+- At logout, ssh waits for an upload that is still in progress before it
+  returns.
+- A server that allows one session per connection (`MaxSessions 1`) refuses
+  the channel; paste stops for the session and says so.
+
 - `-T`, `-x`, and `RequestTTY=no` disable terminals and X11 forwarding.
 - `BatchMode=yes` disables password, passphrase, and unknown host key prompts.
   Host keys are still checked against `known_hosts`.
