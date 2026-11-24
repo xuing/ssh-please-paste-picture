@@ -162,6 +162,14 @@ case $(cat "$work/p7") in
     *) fail "unexpected paste: $(cat "$work/p7")" ;;
 esac
 
+section 'EXPERIMENT: which way of writing file URLs another process reads'
+activate Calculator com.apple.calculator
+for m in item-ref item-path objects-path objects-ref; do
+    SSH_PASTE_FINDER_MODE=$m pb finder "$work/shot.png" "$work/shot.jpg" 2> /dev/null
+    sleep 0.3
+    echo "        EXPERIMENT $m: $(pb file-paths | grep -vc '^$') file(s) read; items: $(pb items)"
+done
+
 section 'image files copied in Finder'
 echo 'ok 1' > "$work/mode"
 # Copied while another app is in front, so the copy can be read before the watcher acts.

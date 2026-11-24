@@ -49,20 +49,30 @@ function run(argv) {
         // writeObjects are provided lazily, and this process exits at once, so another
         // process then read only some of them, or none (CI: macOS 15 and 26). Finder
         // keeps running, so it can provide its data late.
+        // EXPERIMENT (not for main): SSH_PASTE_FINDER_MODE picks how the URLs are written.
+        var mode = $.NSProcessInfo.processInfo.environment.objectForKey('SSH_PASTE_FINDER_MODE');
+        mode = mode.isNil() ? 'item-ref' : mode.js;
         var items = [];
         var names = [];
         for (var i = 1; i < argv.length; i++) {
             var plain = $.NSURL.fileURLWithPath(argv[i]);
             var ref = plain.fileReferenceURL;
-            err('finder: ' + argv[i] + ' -> ' + (ref.isNil() ? 'no reference URL' : ref.absoluteString.js));
-            var fileItem = $.NSPasteboardItem.alloc.init;
-            fileItem.setStringForType((ref.isNil() ? plain : ref).absoluteString, 'public.file-url');
-            items.push(fileItem);
+            var url = (mode === 'item-path' || mode === 'objects-path' || ref.isNil()) ? plain : ref;
+            err('finder (' + mode + '): ' + argv[i] + ' -> ' + url.absoluteString.js);
+            if (mode === 'objects-path' || mode === 'objects-ref') { items.push(url); }
+            else {
+                var fileItem = $.NSPasteboardItem.alloc.init;
+                fileItem.setStringForType(url.absoluteString, 'public.file-url');
+                items.push(fileItem);
+            }
             names.push(argv[i].replace(/^.*\//, ''));
         }
-        var namesItem = $.NSPasteboardItem.alloc.init;
-        namesItem.setStringForType($(names.join('\r')), 'public.utf8-plain-text');
-        items.push(namesItem);
+        if (mode === 'objects-path' || mode === 'objects-ref') { items.push($(names.join('\r'))); }
+        else {
+            var namesItem = $.NSPasteboardItem.alloc.init;
+            namesItem.setStringForType($(names.join('\r')), 'public.utf8-plain-text');
+            items.push(namesItem);
+        }
         write(items);
         err('finder: wrote ' + items.length + ' items; the pasteboard has ' + Number(pb.pasteboardItems.count) + ' items');
     } else if (cmd === 'text') {
