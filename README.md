@@ -110,14 +110,31 @@ Runs `ssh` with all your options, `-J` included. A remote command without `-t` (
 ### All commands
 
 ```
-ssh-paste --enable HOST [HOST...]   make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)
-ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)
-ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config
-ssh-paste --doctor [HOST]           check this computer and test an upload to HOST
-ssh-paste --update                  install the latest release
-ssh-paste --uninstall               remove ssh-paste and everything it changed
+ssh-paste --enable [OPTIONS] HOST...    make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)
+ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)
+ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config
+ssh-paste --doctor [HOST]               check this computer and test an upload to HOST
+ssh-paste --update                      install the latest release
+ssh-paste --uninstall                   remove ssh-paste and everything it changed
 ssh-paste --version | --help
+
+OPTIONS (images on the server; per host for --enable):
+  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never
+  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)
 ```
+
+### Where images go on the server, and for how long
+
+By default an image goes to `/tmp`, and each upload deletes your images there that are older than a day. Choose both per host:
+
+```sh
+ssh-paste --enable --keep 7d --dir '~/screenshots' myhost   # keep a week, in your home folder
+ssh-paste --enable --keep never myhost                      # never delete
+ssh-paste --keep 2h myhost                                  # wrapper mode, this session only
+```
+
+`--keep` takes a time of at least 10 minutes (`30m`, `2h`, `7d`) or `never`; `--dir` takes `/path` or `~/path` (quote the `~`, so that your shell leaves it for the server). `~` is the home folder on the server: `--enable` asks the server for it once and writes the full path into your ssh config (wrapper mode asks when the session starts). If ssh-paste cannot log in to ask, give the full path instead. A folder other than `/tmp` is made (mode 700) when missing and must be yours alone: owned by you, not a link, not writable by group or others, no ACL (when the server cannot tell, it refuses the folder). Only the folder itself is checked, so choose one under folders that only you and root can change, such as your home folder. Running `--enable` again for a host changes only the options you give. An upload deletes only images of its own `--keep` that are older than it; the name says which (`ssh-paste-k7d-<hash>.png`, no mark for the default), so images that one host keeps longer are never deleted by another. Deletion happens during an upload, so images stay at least that long.
+
 
 ### Update and remove
 
@@ -129,7 +146,7 @@ ssh-paste --version | --help
 
 Under Scoop and Homebrew, `--update` and `--uninstall` print the package manager's command, and `--enable` writes a path that updates keep (`apps\ssh-paste\current`, or Homebrew's `opt` path). `scoop uninstall` runs `--disable` itself; with Homebrew run `ssh-paste --uninstall` first, or ssh keeps calling the removed command. With Scoop's `no_junction` setting, `--enable` refuses: use wrapper mode.
 
-Uploaded images stay in the server's `/tmp`. To delete yours:
+Uploaded images stay in the server's `/tmp` (or your `--dir` folder). To delete yours from `/tmp`:
 
 ```powershell
 ssh myhost "rm -f /tmp/ssh-paste-*"
@@ -208,7 +225,7 @@ The same commands, with Cmd+V. A zsh launcher (`ssh-paste-mac`) and a JavaScript
 <summary>Session filtering, uploads, retries, clipboard</summary>
 
 - **Session filtering:** only interactive sessions watch the clipboard (from the arguments and `ssh -G`); `scp`, `sftp`, `git` and VS Code Remote-SSH pass through. Skips `-T`, `-N`, `-W`, `-f`, `-n`, `-s`, `-G`, `-V`, `-O`, `-Q`, non-`-t` commands (`ssh myhost ls`, `git`, `RemoteCommand`), `RequestTTY no`, `SessionType` not `default`, `StdinNull yes`; wrapper mode on an enabled host runs `ssh` directly.
-- **Uploads:** up to 64 MB, when the session window comes to the front (polled every 250 ms), not on paste. A paste during the upload waits up to 30 seconds. Each image uploads once per session, again after 6 hours. A failure plays the Windows error sound once, retries every 30 seconds while in front (up to 30 minutes), and is summarized at exit. Missing or blocked APIs print `ssh-paste: screenshot paste is off: <reason>`; `ssh` still runs.
+- **Uploads:** up to 64 MB, when the session window comes to the front (polled every 250 ms), not on paste. A paste during the upload waits up to 30 seconds. Each image uploads once per session, again after 6 hours (or half of `--keep`, if shorter). A failure plays the Windows error sound once, retries every 30 seconds while in front (up to 30 minutes), and is summarized at exit. Missing or blocked APIs print `ssh-paste: screenshot paste is off: <reason>`; `ssh` still runs.
 - **Clipboard:** entries with both an image and text or files (Excel, Word, Explorer) are skipped. Original screenshots stay in Win+V history; only the rewrites are excluded.
 
 </details>
@@ -253,11 +270,11 @@ Then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`
 | `--enable` | a block atop `~/.ssh/config` (`%USERPROFILE%\.ssh\config`; creates the file and `.ssh` if missing) | `--disable` or `--uninstall`, which also deletes the config and `.ssh` if `ssh-paste` created them and they are empty |
 | Windows clipboard | image, path, `SshPaste.Owner`, `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory=0`, `CanUploadToCloudClipboard=0` | the plain image comes back when you switch away or exit ([Known limitations](#known-limitations)); markers stay until your next copy |
 
-No administrator rights, services, tasks, launch agents, login items, daemons, PowerShell profiles, or settings; Windows install and uninstall briefly set a user variable so new windows see the new `Path`. No passwords, keys or telemetry; downloads come only from `github.com` and `raw.githubusercontent.com`. On the server it writes only `/tmp/ssh-paste-*.png`.
+No administrator rights, services, tasks, launch agents, login items, daemons, PowerShell profiles, or settings files (`--keep` and `--dir` live in the `--enable` block); Windows install and uninstall briefly set a user variable so new windows see the new `Path`. No passwords, keys or telemetry; downloads come only from `github.com` and `raw.githubusercontent.com`. On the server it writes only `ssh-paste-*` files in `/tmp` or your `--dir` folder.
 
 ### Files on the server
 
-`/tmp/ssh-paste-<hash>.png` (first 128 bits of the PNG's SHA-256, hex), mode 600; `/tmp/ssh-paste-<hash>-<uid>.png` if another user owns that name. An identical file is reused. Each upload deletes your own such files older than a day. Nothing runs between uploads or after uninstall; the OS clears `/tmp` (often at reboot).
+`/tmp/ssh-paste-<hash>.png` (first 128 bits of the PNG's SHA-256, hex), or the same name in the `--dir` folder, mode 600, with `k<keep>-` before the hash for a `--keep` other than the default; `ssh-paste-<hash>-<uid>.png` if another user owns that name. An identical file is reused. Each upload deletes your own such files of its `--keep` older than it (a day by default). Nothing runs between uploads or after uninstall; the OS clears `/tmp` (often at reboot).
 
 <details>
 <summary>Antivirus and policy limits</summary>

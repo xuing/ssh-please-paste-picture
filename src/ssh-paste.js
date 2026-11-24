@@ -28,20 +28,28 @@ var IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
 var MAX_COPIED_FILES = 20;
 var RETRY_FAILED_SECONDS = 30;
 var UPLOAD_CACHE_HOURS = 6;
+// --keep and --dir (ssh-paste --enable, wrapper mode): how long the server keeps your
+// images, and in which folder. The defaults are what ssh-paste always did.
+var DEFAULT_KEEP = '1d';
+var DEFAULT_DIR = '/tmp';
 var PROMISE_WAIT_SECONDS = 30;
 var TICK_SECONDS = 0.25;
 var UPDATE_BASE = 'https://github.com/xuing/ssh-please-paste-picture/releases/latest/download';
 
 // Runs on the server through `sh -c`, with $1 = content hash (32 hex digits, made
-// by us), $2 = byte count and $3 = file extension. The same text as
-// $script:RemoteScript in src/ssh-paste.ps1; a test fails when the two differ.
-var REMOTE_SCRIPT = 'umask 077; set -fC; n=$2; e=${3:-png}; ' +
-    't=$(mktemp /tmp/ssh-paste-tmp.XXXXXXXXXX 2> /dev/null) || { t=/tmp/ssh-paste-tmp.$$; : > $t; } || exit 3; ' +
+// by us), $2 = byte count, $3 = file extension, $4 = minutes to keep this class of
+// images (0: keep them), $5 = the absolute folder (/tmp when absent) and $6 = the class (k7d- in ssh-paste-k7d-<hash>.png; empty for --keep 1d). The same text as $script:RemoteScript in src/ssh-paste.ps1 (which says more);
+// a test fails when the two differ.
+var REMOTE_SCRIPT = 'umask 077; set -fC; n=$2; e=${3:-png}; k=${4:-1440}; d=${5:-/tmp}; c=${6:-}; u=$(id -u); a=[A-Za-z0-9]; h=[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]; ' +
+    '[ -d $d ] || mkdir -p $d 2> /dev/null || { echo nodir; exit 5; }; ' +
+    'if [ $d = /tmp ]; then :; elif [ -h $d ]; then echo notprivate; exit 6; elif [ -O $d ]; then m=$(ls -ld $d 2> /dev/null); case ${m%% *} in d????-??-? | d????-??-?. | d????-??-?@) ;; *) echo notprivate; exit 6;; esac; else echo notprivate; exit 6; fi; ' +
+    't=$(mktemp $d/ssh-paste-tmp.XXXXXXXXXX 2> /dev/null) || { echo nodir; exit 3; }; ' +
     'cat >> $t; s=$(wc -c < $t); if [ $s -eq $n ]; then :; else rm -f $t; echo short $s; exit 4; fi; ' +
-    'for x in png jpg jpeg gif webp bmp; do find /tmp -maxdepth 1 -user $(id -u) -name ssh-paste-????????????????????????????????*.$x -mmin +1440 -exec rm -f {} + 2> /dev/null; done; ' +
-    'find /tmp -maxdepth 1 -user $(id -u) -name ssh-paste-tmp.* -mmin +1440 -exec rm -f {} + 2> /dev/null; ' +
-    'for f in /tmp/ssh-paste-$1.$e /tmp/ssh-paste-$1-$(id -u).$e; do ' +
-    'if [ -h $f ]; then :; elif [ -f $f ] && [ -O $f ] && cmp -s $t $f; then rm -f $t; touch $f; echo $n $f; exit 0; fi; ' +
+    'if [ $k -gt 0 ] 2> /dev/null; then for x in png jpg jpeg gif webp bmp; do for p in ssh-paste-$c$h.$x ssh-paste-$c$h-$u.$x; do ' +
+    'find $d/ -maxdepth 1 -type f -user $u -name $p -mmin +$k -exec rm -f {} + 2> /dev/null; done; done; fi; ' +
+    'find $d/ -maxdepth 1 -type f -user $u -name ssh-paste-tmp.$a$a$a$a$a$a$a$a$a$a -mmin +1440 -exec rm -f {} + 2> /dev/null; ' +
+    'for f in $d/ssh-paste-$c$1.$e $d/ssh-paste-$c$1-$u.$e; do ' +
+    'if [ -h $f ]; then :; elif [ -f $f ] && [ -O $f ] && cmp -s $t $f && touch -c $f && [ -f $f ]; then rm -f $t; echo $n $f; exit 0; fi; ' +
     'if [ -d $f ]; then continue; fi; ' +
     'if mv -f $t $f 2> /dev/null && [ -f $f ]; then echo $n $f; exit 0; fi; done; rm -f $t; exit 1';
 
@@ -204,13 +212,31 @@ function parseSshVersion(text) {
 }
 
 function uploadSshArguments(parsed, hash, size, opts) {
-    // Arguments for the separate, non-interactive upload connection. Our options
-    // come first because ssh uses the first value it sees for each option; the
-    // user's options keep their place before or after the destination.
+    // Arguments for the separate, non-interactive upload connection: those of
+    // serverSshArguments, then the upload command.
     opts = opts || {};
     var ext = opts.ext || 'png';
     if (!/^[0-9a-f]{32}$/.test(String(hash))) throw new Error('bad image hash: ' + hash);
     if (IMAGE_EXTENSIONS.indexOf(ext) < 0) throw new Error('bad image extension: ' + ext);
+    var keep = opts.keep || DEFAULT_KEEP;
+    var keepMinutes = keepMinutesOf(keep);
+    var folder = opts.dir || DEFAULT_DIR;
+    if (!testServerDirectory(folder) || folder.charAt(0) === '~') throw new Error('bad --dir: ' + folder);
+    var argv = serverSshArguments(parsed, opts);
+    // The folder in single quotes, as the remote login shell reads the command.
+    var command = "sh -c '" + REMOTE_SCRIPT + "' ssh-paste " + hash + ' ' + size + ' ' + ext + ' ' + keepMinutes + " '" + folder + "'";
+    var cls = keepClass(keep);
+    argv.push(cls ? command + ' ' + cls : command);
+    return argv;
+}
+
+function serverSshArguments(parsed, opts) {
+    // Arguments for a separate, non-interactive connection to the server of the session
+    // (uploads, and the home folder for --dir ~/...), up to the destination and its
+    // options; the caller adds the command. Our options come first because ssh uses the
+    // first value it sees for each option; the user's options keep their place before or
+    // after the destination.
+    opts = opts || {};
     var argv = ['-T', '-x',
         '-o', 'BatchMode=yes', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
         '-o', 'RemoteCommand=none', '-o', 'RequestTTY=no', '-o', 'ForwardAgent=no',
@@ -245,25 +271,48 @@ function uploadSshArguments(parsed, hash, size, opts) {
         }
         target.push('-' + o.Flag, String(o.Value));
     });
-    argv = argv.concat(before, [String(parsed.Destination)], after);
-    argv.push("sh -c '" + REMOTE_SCRIPT + "' ssh-paste " + hash + ' ' + size + ' ' + ext);
-    return argv;
+    return argv.concat(before, [String(parsed.Destination)], after);
 }
 
-function readUploadReply(output, expectedSize, hash, ext) {
+function absoluteDirectory(dir, home) {
+    // --dir with ~ made absolute with the home folder on the server; any other --dir as it is.
+    if (dir.charAt(0) !== '~') return dir;
+    var abs = String(home).replace(/\/+$/, '') + dir.substring(1);
+    if (abs.charAt(0) !== '/' || !testServerDirectory(abs)) {
+        throw new Error('the home folder on the server (' + home + ') makes ' + abs + ', which --dir cannot use; give an absolute --dir');
+    }
+    return abs;
+}
+
+function serverHome(ssh, parsed) {
+    // The home folder on the server, for --dir ~/...: one ssh connection, as an upload makes.
+    var r = runCapture(ssh, serverSshArguments(parsed, { sshVersion: sshVersionOf(ssh) }).concat(['echo $HOME']), 30);
+    var lines = String(r.out || '').split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
+    var line = lines.length > 0 ? lines[lines.length - 1].trim() : '';
+    if (r.code !== 0 || line.charAt(0) !== '/') {
+        throw new Error('cannot ask ' + parsed.Destination + ' for its home folder (ssh exited ' + r.code + ': ' + String(r.err || '').trim() + '); give an absolute --dir, or check the login with ssh-paste --doctor ' + parsed.Destination);
+    }
+    return line;
+}
+
+function readUploadReply(output, expectedSize, hash, ext, dir, cls) {
     // The last non-empty line of the reply is "<size> <path>".
     ext = ext || 'png';
+    dir = dir || DEFAULT_DIR;
+    cls = cls || '';
     var lines = String(output === null || output === undefined ? '' : output).split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
     if (lines.length === 0) throw new Error('the server sent no reply (is sh available there?)');
     var last = lines[lines.length - 1].trim();
     var m = /^short (\d+)$/.exec(last);
     if (m) throw new Error('the server received ' + m[1] + ' of ' + expectedSize + ' bytes');
+    if (last === 'nodir') throw new Error('the server cannot write to the folder ' + dir + ' (--dir)');
+    if (last === 'notprivate') throw new Error('the folder ' + dir + ' on the server is not yours alone (owned by you, not a link, not writable by group or others); use /tmp or such a folder');
     m = /^(\d+) (\/\S+)$/.exec(last);
     if (!m) throw new Error('unexpected reply from the server: ' + last);
     var size = Number(m[1]);
     var path = m[2];
     if (size !== Number(expectedSize)) throw new Error('size mismatch: sent ' + expectedSize + ' bytes, server has ' + size);
-    if (!new RegExp('^/tmp/ssh-paste-' + hash + '(-[0-9]+)?\\.' + ext + '$').test(path)) throw new Error('unexpected path from the server: ' + path);
+    if (!new RegExp(replyPathPattern(dir, hash, ext, cls)).test(path)) throw new Error('unexpected path from the server: ' + path);
     return path;
 }
 
@@ -285,10 +334,99 @@ function uploadOutcome(r) {
         return { error: 'ssh exited with ' + r.code + ': ' + err };
     }
     try {
-        return { path: readUploadReply(r.out, r.size, r.hash, r.ext) };
+        return { path: readUploadReply(r.out, r.size, r.hash, r.ext, r.dir, r.cls) };
     } catch (e) {
         return { error: e.message };
     }
+}
+
+function regexEscape(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function replyPathPattern(dir, hash, ext, cls) {
+    // The paths the server may answer for this image: <folder>/ssh-paste-<class><hash>[-<uid>].<ext>,
+    // in exactly the --dir folder.
+    return '^' + regexEscape(dir) + '/ssh-paste-' + regexEscape(cls || '') + hash + '(-[0-9]+)?\\.' + ext + '$';
+}
+
+function keepClass(keep) {
+    // The part of the file name that says which --keep made it: empty for the default
+    // (the names of every earlier release), else k<keep>- such as k7d- or knever-.
+    return (!keep || keep === DEFAULT_KEEP) ? '' : 'k' + keep + '-';
+}
+
+function keepMinutesOf(keep) {
+    // --keep: 30m, 2h, 7d, or never (0: the server keeps every image). From 10 minutes
+    // (a path must stay good for a while after the paste; the cache, half of it, then
+    // outlasts the longest upload, 5 minutes) to 3650 days.
+    if (keep === 'never') return 0;
+    var m = /^([1-9][0-9]{0,6})([mhd])$/.exec(String(keep));
+    if (!m) throw new Error('--keep takes a time like 30m, 2h or 7d, or never: ' + keep);
+    var minutes = Number(m[1]) * (m[2] === 'h' ? 60 : m[2] === 'd' ? 1440 : 1);
+    if (minutes < 10) throw new Error('--keep is at least 10m: ' + keep);
+    if (minutes > 5256000) throw new Error('--keep is at most 3650d: ' + keep);
+    return minutes;
+}
+
+function testServerDirectory(dir) {
+    // --dir: a folder on the server, absolute or under ~ (the home folder there): names of
+    // letters, digits and . _ - only, none of them . or .., no // and no / at the end.
+    if (typeof dir !== 'string' || dir.length === 0 || dir.length > 200) return false;
+    return /^(~|~?(\/(?!\.\.?(\/|$))[A-Za-z0-9._-]+)+)$/.test(dir);
+}
+
+function readPasteSettings(argv) {
+    // The leading --keep TIME and --dir DIR (each at most once) of --enable, wrapper mode
+    // and --proxy: Keep and Dir (null when not given) and the arguments after them.
+    var r = { Keep: null, Dir: null, Rest: [] };
+    var i = 0;
+    while (i < argv.length && (argv[i] === '--keep' || argv[i] === '--dir')) {
+        var name = argv[i];
+        if (i + 1 >= argv.length) throw new Error(name + ' needs a value');
+        var value = String(argv[i + 1]);
+        if (name === '--keep') {
+            if (r.Keep !== null) throw new Error('--keep is given twice');
+            keepMinutesOf(value);
+            r.Keep = value;
+        } else {
+            if (r.Dir !== null) throw new Error('--dir is given twice');
+            if (value.length > 1) value = value.replace(/\/+$/, '') || '/';
+            if (!testServerDirectory(value)) {
+                throw new Error('--dir takes a folder on the server, /... or ~/... (quote ~ so that your shell keeps it), with letters, digits and . _ - / only: ' + value);
+            }
+            r.Dir = value;
+        }
+        i += 2;
+    }
+    r.Rest = argv.slice(i);
+    return r;
+}
+
+function proxySettings(proxyCommand) {
+    // --keep and --dir of a ProxyCommand line that --enable wrote (the defaults when absent).
+    // Only the words after --proxy count: a path before it may hold anything.
+    var s = { Keep: DEFAULT_KEEP, Dir: DEFAULT_DIR };
+    var text = String(proxyCommand || '');
+    var at = text.lastIndexOf(' --proxy ');
+    if (at < 0) return s;
+    var tail = text.substring(at);
+    var m = / --keep '?([^' ]+)'?/.exec(tail);
+    if (m) s.Keep = m[1];
+    m = / --dir '?([^' ]+)'?/.exec(tail);
+    if (m) s.Dir = m[1];
+    return s;
+}
+
+function formatPasteSettings(s) {
+    return 'images in ' + s.Dir + ' on the server, ' + (s.Keep === 'never' ? 'never deleted' : 'kept ' + s.Keep);
+}
+
+function uploadCacheHours(keepMinutes) {
+    // How long a path is pasted again without a new upload. The server may delete the file
+    // once it is keepMinutes old, so this stays well under that.
+    if (!(keepMinutes > 0)) return UPLOAD_CACHE_HOURS;
+    return Math.min(UPLOAD_CACHE_HOURS, keepMinutes / 120);
 }
 
 function testHostAlias(name) {
@@ -305,7 +443,7 @@ function imageFileExtension(path) {
     return IMAGE_EXTENSIONS.indexOf(ext) >= 0 ? ext : null;
 }
 
-function proxyCommandLine(launcher) {
+function proxyCommandLine(launcher, keep, dir) {
     // The ProxyCommand that --enable writes. ssh runs it as `$SHELL -c "exec ..."`
     // under the user's login shell, so it is one absolute path in single quotes
     // (POSIX quoting, the same in sh, bash and zsh) and three ssh tokens. ssh
@@ -315,34 +453,64 @@ function proxyCommandLine(launcher) {
     var quoted = "'" + launcher.replace(/%/g, '%%').replace(/'/g, "'\\''") + "'";
     // %h and %n are quoted: a Host alias may contain [ and ], which zsh would
     // take for a file pattern. ssh refuses quotes in a host name.
-    return quoted + " --proxy '%h' %p '%n'";
+    // --keep and --dir only when they are not the defaults, so a block from an older release
+    // reads the same; in single quotes, so the shell keeps a ~ for the server.
+    var line = quoted + " --proxy '%h' %p '%n'";
+    if (keep && keep !== DEFAULT_KEEP) line += " --keep '" + keep + "'";
+    if (dir && dir !== DEFAULT_DIR) line += " --dir '" + dir + "'";
+    return line;
 }
 
 function getManagedBlock(configText) {
-    // Hosts, ProxyCommand and "created the file" flag from our block, if any.
-    var info = { Hosts: [], ProxyCommand: null, CreatedFile: false, Present: false };
+    // Our block: its groups (each a Host line with its ProxyCommand; hosts with the same
+    // --keep and --dir share one), all their hosts, and the "created the file" flag.
+    var info = { Hosts: [], Groups: [], ProxyCommand: null, CreatedFile: false, Present: false };
     if (!configText) return info;
     var inBlock = false;
+    var current = null;
     configText.split(/\r?\n/).forEach(function (line) {
         if (line === BLOCK_BEGIN) { inBlock = true; info.Present = true; return; }
         if (line === BLOCK_END) { inBlock = false; return; }
         if (!inBlock) return;
         if (line === BLOCK_CREATED_FILE) { info.CreatedFile = true; return; }
         var m = /^Host\s+(.+)$/i.exec(line);
-        if (m && info.Hosts.length === 0) {
-            info.Hosts = m[1].trim().split(/\s+/).filter(function (h) { return h !== '*'; });
+        if (m) {
+            var hosts = m[1].trim().split(/\s+/).filter(function (h) { return h !== '*'; });
+            current = null;
+            if (hosts.length > 0) { current = { Hosts: hosts, ProxyCommand: null }; info.Groups.push(current); }
             return;
         }
         m = /^\s+ProxyCommand\s+(.+)$/i.exec(line);
-        if (m && info.ProxyCommand === null) info.ProxyCommand = m[1].trim();
+        if (m && current && current.ProxyCommand === null) current.ProxyCommand = m[1].trim();
     });
+    info.Groups.forEach(function (g) { info.Hosts = info.Hosts.concat(g.Hosts); });
+    if (info.Groups.length > 0) info.ProxyCommand = info.Groups[0].ProxyCommand;
     return info;
 }
 
-function setManagedBlock(configText, hosts, proxyCommand, createdFile) {
-    // Returns the config text with our block removed and, if hosts is non-empty,
-    // a fresh block put first (ssh uses the first value it finds). The trailing
-    // "Host *" keeps any global options that follow in effect for every host.
+function settingsGroups(want, launcher) {
+    // Hosts (in order) with the same settings share one Host line and ProxyCommand.
+    // want: [[host, { Keep, Dir }], ...].
+    var groups = [];
+    var index = {};
+    want.forEach(function (pair) {
+        var s = pair[1];
+        var key = s.Keep + ' ' + s.Dir;
+        if (!Object.prototype.hasOwnProperty.call(index, key)) {
+            index[key] = groups.length;
+            groups.push({ Hosts: [], ProxyCommand: proxyCommandLine(launcher, s.Keep, s.Dir) });
+        }
+        groups[index[key]].Hosts.push(pair[0]);
+    });
+    return groups;
+}
+
+function setManagedBlock(configText, hosts, proxyCommand, createdFile, groups) {
+    // Returns the config text with our block removed and, if a group has hosts, a
+    // fresh block put first (ssh uses the first value it finds): one Host line and
+    // ProxyCommand per group. The trailing "Host *" keeps any global options that
+    // follow in effect for every host. hosts and proxyCommand make one group.
+    if (!groups) groups = [{ Hosts: hosts || [], ProxyCommand: proxyCommand }];
     configText = configText || '';
     var newline = configText.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
     var kept = [];
@@ -358,10 +526,12 @@ function setManagedBlock(configText, hosts, proxyCommand, createdFile) {
     });
     if (inBlock) throw new Error('the ssh-paste block in the ssh config has no end marker; fix it by hand');
     var rest = kept.join(newline);
-    if (!hosts || hosts.length === 0) return rest;
+    var used = groups.filter(function (g) { return g && g.Hosts && g.Hosts.length > 0; });
+    if (used.length === 0) return rest;
     var block = [BLOCK_BEGIN];
     if (createdFile) block.push(BLOCK_CREATED_FILE);
-    block.push('Host ' + hosts.join(' '), '    ProxyCommand ' + proxyCommand, '    ProxyUseFdpass no', 'Host *', BLOCK_END);
+    used.forEach(function (g) { block.push('Host ' + g.Hosts.join(' '), '    ProxyCommand ' + g.ProxyCommand, '    ProxyUseFdpass no'); });
+    block.push('Host *', BLOCK_END);
     var text = block.join(newline);
     if (rest.length === 0) return text + newline;
     return text + newline + rest;
@@ -484,13 +654,17 @@ function usage() {
         '    ssh-paste myhost',
         '',
         'All commands:',
-        '  ssh-paste --enable HOST [HOST...]   make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)',
-        '  ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)',
-        '  ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config',
-        '  ssh-paste --doctor [HOST]           check this computer and test an upload to HOST',
-        '  ssh-paste --update                  install the latest release',
-        '  ssh-paste --uninstall               remove ssh-paste and everything it changed',
+        '  ssh-paste --enable [OPTIONS] HOST...    make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)',
+        '  ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)',
+        '  ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config',
+        '  ssh-paste --doctor [HOST]               check this computer and test an upload to HOST',
+        '  ssh-paste --update                      install the latest release',
+        '  ssh-paste --uninstall                   remove ssh-paste and everything it changed',
         '  ssh-paste --version | --help',
+        '',
+        'OPTIONS (images on the server; per host for --enable):',
+        '  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never',
+        '  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)',
         '',
         'https://github.com/xuing/ssh-please-paste-picture'
     ].join('\n');
@@ -512,7 +686,7 @@ function usage() {
 //                           or nothing (null)
 //   P.canAnswer(text)       the pasteboard holds our entry with this text and a
 //                           paste of it gets the text
-//   P.startUpload(ssh, argv, item, timeoutSeconds) -> handle (throws when ssh
+//   P.startUpload(ssh, argv, item, timeoutSeconds, dir, cls) -> handle (throws when ssh
 //                           cannot start)
 //   P.finishUpload(handle)  undefined while it runs, then { path } or { error }
 //   P.beep(), P.log(text)
@@ -522,8 +696,14 @@ function usage() {
 // ---------------------------------------------------------------------------
 
 function newWatcher(P, o) {
+    var s = o.settings || {};
+    var keep = s.Keep || DEFAULT_KEEP;
+    var dir = s.Dir || DEFAULT_DIR;
+    if (!testServerDirectory(dir) || dir.charAt(0) === '~') throw new Error('bad --dir: ' + dir);
+    var minutes = keepMinutesOf(keep);
     return {
         P: P, SshPath: o.sshPath, SshVersion: o.sshVersion || null, Parsed: o.parsed, NoProxy: !!o.noProxy, Pin: o.pin || null,
+        Keep: keep, KeepMinutes: minutes, Class: keepClass(keep), Dir: dir, CacheHours: uploadCacheHours(minutes),
         Window: o.window, Token: o.token, Debug: !!o.debug,
         LastSeq: -1, LastForeground: 0, State: null, WakeAt: Infinity, Uploaded: {}, Failed: {}, Inflight: null
     };
@@ -537,6 +717,10 @@ function setWakeAt(W, at) {
     if (at < W.WakeAt) W.WakeAt = at;
 }
 
+function cacheMs(W) {
+    return (W.CacheHours === undefined ? UPLOAD_CACHE_HOURS : W.CacheHours) * 3600000;
+}
+
 function expectedText(W, state) {
     // The text Cmd+V should paste, known before the upload: each file is named
     // after its content. An earlier upload's real path wins (it can carry a
@@ -544,8 +728,8 @@ function expectedText(W, state) {
     var now = W.P.now();
     return stateItems(state).map(function (item) {
         var done = W.Uploaded[item.Hash];
-        if (done && now - done.At < UPLOAD_CACHE_HOURS * 3600000) return done.Path;
-        return '/tmp/ssh-paste-' + item.Hash + '.' + item.Ext;
+        if (done && now - done.At < cacheMs(W)) return done.Path;
+        return (W.Dir || DEFAULT_DIR) + '/ssh-paste-' + (W.Class || '') + item.Hash + '.' + item.Ext;
     }).join(' ');
 }
 
@@ -553,16 +737,19 @@ function uploadFailing(W, state) {
     return stateItems(state).some(function (item) { return Object.prototype.hasOwnProperty.call(W.Failed, item.Hash); });
 }
 
-function uploadedItemPath(W, item) {
+function uploadedItemPath(W, item, since) {
     // Upload once per file. A failed upload is retried after 30 s, 1 min, 2 min
     // and so on (beeping only the first time). An upload is redone after a few
     // hours so the server's day-old cleanup never removes a path we paste.
+    // An upload that ended at or after since (the start of this batch) counts for
+    // the batch at any age, so each file is uploaded at most once per batch, as in
+    // one pass of Get-UploadedPath, even when the batch outlasts the cache.
     // Returns the path, null, or { Pending } when an upload was started.
     var P = W.P;
     var now = P.now();
     var done = W.Uploaded[item.Hash];
-    if (done && now - done.At < UPLOAD_CACHE_HOURS * 3600000) {
-        setWakeAt(W, done.At + UPLOAD_CACHE_HOURS * 3600000);
+    if (done && ((since !== undefined && done.At >= since) || now - done.At < cacheMs(W))) {
+        setWakeAt(W, done.At + cacheMs(W));
         return done.Path;
     }
     var failed = W.Failed[item.Hash];
@@ -572,7 +759,8 @@ function uploadedItemPath(W, item) {
     }
     var pending = { Item: item, At: now, Handle: null };
     try {
-        var argv = uploadSshArguments(W.Parsed, item.Hash, item.Size, { noProxy: W.NoProxy, sshVersion: W.SshVersion, pin: W.Pin, ext: item.Ext });
+        var argv = uploadSshArguments(W.Parsed, item.Hash, item.Size, { noProxy: W.NoProxy, sshVersion: W.SshVersion, pin: W.Pin, ext: item.Ext,
+            keep: W.Keep || DEFAULT_KEEP, dir: W.Dir || DEFAULT_DIR });
         if (W.Debug) {
             // -v makes ssh say on stderr how far it got; LogLevel=ERROR is ours, so
             // drop it together with its -o (a lone -o would take the next option as
@@ -583,7 +771,7 @@ function uploadedItemPath(W, item) {
         }
         // 30 s plus 1 s per 256 KB, at most 5 minutes: big images on slow links need longer.
         var timeout = Math.min(300, 30 + Math.ceil(item.Size / 262144));
-        pending.Handle = P.startUpload(W.SshPath, argv, item, timeout);
+        pending.Handle = P.startUpload(W.SshPath, argv, item, timeout, W.Dir || DEFAULT_DIR, W.Class || '');
         return { Pending: pending };
     } catch (e) {
         recordUpload(W, pending, { error: e.message });
@@ -595,9 +783,11 @@ function recordUpload(W, pending, outcome) {
     var P = W.P;
     var hash = pending.Item.Hash;
     if (outcome.path) {
-        W.Uploaded[hash] = { Path: outcome.path, At: pending.At };
+        // The cache counts from the end of the upload: a slow upload is not stale at once.
+        var doneAt = P.now();
+        W.Uploaded[hash] = { Path: outcome.path, At: doneAt };
         delete W.Failed[hash];
-        setWakeAt(W, pending.At + UPLOAD_CACHE_HOURS * 3600000);
+        setWakeAt(W, doneAt + cacheMs(W));
         return;
     }
     var failed = W.Failed[hash];
@@ -609,7 +799,7 @@ function recordUpload(W, pending, outcome) {
     if (count === 1) { try { P.beep(); } catch (e) { /* no sound is fine */ } }
 }
 
-function uploadedPath(W, state) {
+function uploadedPath(W, state, since) {
     // The text to paste for this pasteboard state: the remote path of the image,
     // or the paths of all copied image files separated by spaces. null until
     // every one is uploaded; { Pending } while an upload runs.
@@ -617,7 +807,7 @@ function uploadedPath(W, state) {
     var paths = [];
     var items = stateItems(state);
     for (var i = 0; i < items.length; i++) {
-        var r = uploadedItemPath(W, items[i]);
+        var r = uploadedItemPath(W, items[i], since);
         if (r !== null && typeof r === 'object') return r;
         if (r === null) return null;
         paths.push(r);
@@ -638,7 +828,7 @@ function advanceInflight(W) {
             recordUpload(W, f.Pending, outcome);
             f.Pending = null;
         }
-        var r = uploadedPath(W, f.State);
+        var r = uploadedPath(W, f.State, f.Since);
         if (r !== null && typeof r === 'object') { f.Pending = r.Pending; continue; }
         f.Path = r;
         f.Ready = true;
@@ -737,7 +927,7 @@ function watcherTick(W) {
             P.log('promised the path before the upload: ' + expected);
         }
         W.Inflight = { State: state, Expected: expected, Wrote: wrote, Shown: shown, OtherSession: otherSession, Foreground: fg,
-            Pending: null, Ready: false, Path: null, Completed: false };
+            Pending: null, Ready: false, Path: null, Completed: false, Since: P.now() };
         if (!advanceInflight(W)) return;
         finishInflight(W);
         return;
@@ -1001,6 +1191,15 @@ function effectiveSshConfig(path, args) {
         if (r.code === 0) return parseSshG(r.out);
     } catch (e) { /* unknown */ }
     return null;
+}
+
+function sshModeSettings(effective) {
+    // Get-SshModeSettings: ssh mode's --keep and --dir for a connection, read from the
+    // ProxyCommand that ssh -G says ssh will run; null when that is not ssh-paste's relay.
+    // ssh's own reading counts, not our block: -F, Include and an earlier Host win there.
+    var proxy = effective && effective.proxycommand ? String(effective.proxycommand) : '';
+    if (!/ssh-paste/.test(proxy) || proxy.indexOf(' --proxy ') < 0) return null;
+    return proxySettings(proxy);
 }
 
 // --- windows and the terminal ----------------------------------------------
@@ -1299,10 +1498,12 @@ function macPlatform(sessionDebug) {
         }
     };
 
-    P.startUpload = function (ssh, argv, item, timeoutSeconds) {
+    P.startUpload = function (ssh, argv, item, timeoutSeconds, dir, cls) {
         keep[item.File] = true;
         var h = startTask(ssh, argv, { stdinFile: item.File });
         h.item = item;
+        h.dir = dir || DEFAULT_DIR;
+        h.cls = cls || '';
         h.timeoutSeconds = timeoutSeconds;
         h.deadline = nowMs() + timeoutSeconds * 1000;
         h.killAt = 0;
@@ -1324,7 +1525,7 @@ function macPlatform(sessionDebug) {
         var r = finishTask(h);
         if (sessionDebug && r.err) debugLog('ssh said: ' + r.err.trim().split(/\r?\n/).slice(-20).join(' | '));
         return uploadOutcome({ code: r.code, out: r.out, err: r.err, timedOut: !!h.killAt, timeoutSeconds: h.timeoutSeconds,
-            size: h.item.Size, hash: h.item.Hash, ext: h.item.Ext });
+            size: h.item.Size, hash: h.item.Hash, ext: h.item.Ext, dir: h.dir, cls: h.cls });
     };
 
     P.stopUploads = function () {
@@ -1396,7 +1597,7 @@ function startWatcher(o) {
     var window = o.bound.window;
     var P = macPlatform(debug);
     var W = newWatcher(P, { sshPath: o.sshPath, sshVersion: sshVersionOf(o.sshPath), parsed: o.parsed, noProxy: o.noProxy, pin: o.pin,
-        window: window, token: randomHex(16), debug: debug });
+        window: window, token: randomHex(16), debug: debug, settings: o.settings });
     P.watcher = W;
     debugLog('watching ' + terminal.bundle + ' (pid ' + terminal.pid + ', from ' + terminal.from + ') window ' + window);
     return W;
@@ -1421,10 +1622,14 @@ function endWatcher(W) {
 function watchWrapper(args) {
     // Wrapper mode, started by the launcher before it runs ssh: decide, say so,
     // write DIR/ready, then watch until DIR/stop appears or the launcher is gone.
+    // args: DIR, the launcher's pid, ssh, --keep and --dir ('' when not given), ssh's arguments.
     var dir = args[0];
     var parent = Number(args[1]);
     var ssh = args[2];
-    var sshArgs = args.slice(3);
+    var given = [];
+    if (args[3]) given.push('--keep', args[3]);
+    if (args[4]) given.push('--dir', args[4]);
+    var sshArgs = args.slice(5);
     var fm = $.NSFileManager.defaultManager;
     var W = null;
     var parsed = null;
@@ -1432,12 +1637,17 @@ function watchWrapper(args) {
     try { parsed = splitSshArguments(sshArgs); } catch (e) { parsed = null; }
     if (parsed && parsed.Destination) {
         var effective = effectiveSshConfig(ssh, sshArgs);
-        var proxy = effective && effective.proxycommand ? effective.proxycommand : '';
-        if (/ssh-paste/.test(proxy) && /--proxy/.test(proxy)) {
+        if (sshModeSettings(effective) !== null) {
             // ssh mode already serves this connection; a second watcher would upload twice.
+            if (given.length > 0) {
+                warn('ssh-paste: ssh mode serves ' + parsed.Destination + ', with its own --keep and --dir; change them with ssh-paste --enable --keep TIME --dir DIR ' + parsed.Destination);
+            }
         } else if (testInteractiveSsh(parsed, effective)) {
             try {
-                W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed });
+                // The same reading as --enable and --proxy, so the folder is normalized (no / at the end).
+                var settings = readPasteSettings(given);
+                if (settings.Dir && settings.Dir.charAt(0) === '~') settings.Dir = absoluteDirectory(settings.Dir, serverHome(ssh, parsed));
+                W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed, settings: settings });
                 warn('ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Cmd+V.');
             } catch (e) {
                 warn('ssh-paste: screenshot paste is off: ' + e.message);
@@ -1466,6 +1676,14 @@ function watchProxy(args) {
     var alias = args[2];
     var sshPid = Number(args[3]);
     var parent = Number(args[4]);
+    // --keep and --dir from the ProxyCommand line. A bad one must not stop the connection:
+    // it only turns paste off.
+    var settings = null;
+    var settingsError = null;
+    try {
+        settings = readPasteSettings(args.slice(5));
+        if (settings.Rest.length > 0) throw new Error('unknown --proxy arguments: ' + settings.Rest.join(' '));
+    } catch (e) { settingsError = e.message; }
     var W = null;
     var bound = bindTerminal(sshPid);
     try {
@@ -1494,7 +1712,8 @@ function watchProxy(args) {
         // under the name the session itself used.
         var keyAlias = port !== '22' ? '[' + host + ']:' + port : host;
         if (effective && effective.hostkeyalias) keyAlias = effective.hostkeyalias;
-        W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed, noProxy: true, pin: { HostName: host, Port: port, HostKeyAlias: keyAlias } });
+        if (settingsError) throw new Error(settingsError);
+        W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed, noProxy: true, pin: { HostName: host, Port: port, HostKeyAlias: keyAlias }, settings: settings });
     } catch (e) {
         warn('ssh-paste: screenshot paste is off: ' + e.message);
         return 0;
@@ -1584,42 +1803,76 @@ function hostResolves(name) {
     } catch (e) { return false; }
 }
 
-function enableHosts(hosts) {
-    if (!hosts || hosts.length === 0) throw new Error('usage: ssh-paste --enable HOST [HOST...]');
+function enableHosts(args) {
+    // ssh-paste --enable [--keep TIME] [--dir DIR] HOST...: the settings go to the hosts given;
+    // a host that is already enabled keeps the settings that are not given.
+    var settings = readPasteSettings(args || []);
+    var hosts = settings.Rest;
+    if (hosts.length === 0) throw new Error('usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]');
+    if (settings.Dir) warnLocalHome(settings.Dir);
     var configPath = sshConfigPath();
     var old = readConfig(configPath);
     var text = old ? old.text : null;
     var block = getManagedBlock(text);
-    var managed = block.Hosts.slice();
-    var proxy = proxyCommandLine(launcherPath());
+    var want = [];
+    var find = function (h) { for (var k = 0; k < want.length; k++) if (want[k][0] === h) return want[k]; return null; };
+    block.Groups.forEach(function (g) {
+        var s = proxySettings(g.ProxyCommand);
+        g.Hosts.forEach(function (h) { if (!find(h)) want.push([h, s]); });
+    });
     var added = [];
+    var changed = [];
     hosts.forEach(function (h) {
         if (!testHostAlias(h)) throw new Error('use a host name or a Host alias from ~/.ssh/config (no user@, no options): ' + h);
-        if (managed.indexOf(h) >= 0 || added.indexOf(h) >= 0) return;
-        var resolved = resolvedSshConfig(h);
-        var hostName = resolved.hostname || h;
-        if (!hostResolves(hostName)) throw new Error('cannot find the host ' + hostName + ' (from ' + h + '). Check the name, or add it to ~/.ssh/config, then run --enable again');
-        ['proxyjump', 'proxycommand'].forEach(function (key) {
-            if (resolved[key] && resolved[key] !== 'none') {
-                throw new Error(h + ' already uses ' + key + ' (' + resolved[key] + '); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste ' + h);
-            }
-        });
-        added.push(h);
+        var pair = find(h);
+        if (!pair) {
+            var resolved = resolvedSshConfig(h);
+            var hostName = resolved.hostname || h;
+            if (!hostResolves(hostName)) throw new Error('cannot find the host ' + hostName + ' (from ' + h + '). Check the name, or add it to ~/.ssh/config, then run --enable again');
+            ['proxyjump', 'proxycommand'].forEach(function (key) {
+                if (resolved[key] && resolved[key] !== 'none') {
+                    throw new Error(h + ' already uses ' + key + ' (' + resolved[key] + '); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste ' + h);
+                }
+            });
+            pair = [h, { Keep: DEFAULT_KEEP, Dir: DEFAULT_DIR }];
+            want.push(pair);
+            added.push(h);
+        }
+        var before = pair[1];
+        var after = { Keep: settings.Keep || before.Keep, Dir: settings.Dir || before.Dir };
+        if (settings.Dir && settings.Dir.charAt(0) === '~') {
+            // ~ is the home folder on that server, asked for once, so the block holds an
+            // absolute path and the path to paste is known before an upload.
+            after.Dir = absoluteDirectory(settings.Dir, serverHome(sshPath(), splitSshArguments([h])));
+            say(h + ': ' + settings.Dir + ' is ' + after.Dir + ' there');
+        }
+        if (added.indexOf(h) < 0 && changed.indexOf(h) < 0 && (after.Keep !== before.Keep || after.Dir !== before.Dir)) changed.push(h);
+        pair[1] = after;
     });
-    var all = managed.concat(added);
+    var groups = settingsGroups(want, launcherPath());
     var createdFile = block.CreatedFile || old === null;
-    if (added.length > 0) {
-        updateSshConfig(configPath, old, setManagedBlock(text, all, proxy, createdFile), false);
-        say('Enabled for: ' + added.join(', '));
+    if (added.length > 0 || changed.length > 0) {
+        updateSshConfig(configPath, old, setManagedBlock(text, null, null, createdFile, groups), false);
+        if (added.length > 0) say('Enabled for: ' + added.join(', '));
+        if (changed.length > 0) say('Changed for: ' + changed.join(', '));
     } else {
-        say('Already enabled; nothing changed.');
+        say('Already enabled with these settings; nothing changed.');
     }
+    hosts.forEach(function (h) { say(h + ': ' + formatPasteSettings(find(h)[1])); });
     say('This block is at the top of ' + configPath + ':');
     say('');
-    setManagedBlock('', all, proxy, createdFile).replace(/\s+$/, '').split(/\r?\n/).forEach(function (line) { say('    ' + line); });
+    setManagedBlock('', null, null, createdFile, groups).replace(/\s+$/, '').split(/\r?\n/).forEach(function (line) { say('    ' + line); });
     say('');
-    say('Now connect as usual: ssh ' + (added.length > 0 ? added[0] : all[0]));
+    say('Now connect as usual: ssh ' + (added.length > 0 ? added[0] : hosts[0]));
     return 0;
+}
+
+function warnLocalHome(dir) {
+    // zsh turns an unquoted ~/x into this Mac's home folder before ssh-paste sees it.
+    var home = homeDirectory().replace(/\/+$/, '');
+    if (home && (dir === home || dir.indexOf(home + '/') === 0)) {
+        warn('ssh-paste: --dir ' + dir + ' is a folder of this Mac; if you meant the home folder on the server, quote the ~: --dir \'~' + dir.substring(home.length) + '\'');
+    }
 }
 
 function disableHosts(hosts) {
@@ -1629,8 +1882,11 @@ function disableHosts(hosts) {
     var block = getManagedBlock(text);
     if (!block.Present) { say('ssh-paste is not enabled for any host.'); return 0; }
     var keep = (!hosts || hosts.length === 0) ? [] : block.Hosts.filter(function (h) { return hosts.indexOf(h) < 0; });
-    var proxy = block.ProxyCommand || proxyCommandLine(launcherPath());
-    var newText = setManagedBlock(text, keep, proxy, block.CreatedFile);
+    // Each remaining host keeps its group's line as it is.
+    var groups = block.Groups.map(function (g) {
+        return { Hosts: g.Hosts.filter(function (h) { return keep.indexOf(h) >= 0; }), ProxyCommand: g.ProxyCommand || proxyCommandLine(launcherPath()) };
+    });
+    var newText = setManagedBlock(text, null, null, block.CreatedFile, groups);
     if (keep.length === 0 && block.CreatedFile && newText.trim().length === 0) {
         updateSshConfig(configPath, old, null, true);
         var dir = configPath.replace(/\/[^\/]*$/, '');
@@ -1640,8 +1896,17 @@ function disableHosts(hosts) {
     } else {
         updateSshConfig(configPath, old, newText, false);
     }
-    say('Disabled for: ' + block.Hosts.filter(function (h) { return keep.indexOf(h) < 0; }).join(', '));
+    say(disableMessage(block.Hosts, hosts));
     return 0;
+}
+
+function disableMessage(managed, asked) {
+    // Get-DisableMessage: the hosts --disable removed (all when none are named), or that
+    // none of the named hosts was enabled. Host aliases are case-sensitive, as in ssh.
+    var all = !asked || asked.length === 0;
+    var removed = managed.filter(function (h) { return all || asked.indexOf(h) >= 0; });
+    if (removed.length === 0) return 'ssh-paste is not enabled for: ' + asked.join(', ');
+    return 'Disabled for: ' + removed.join(', ');
 }
 
 // --- --doctor ---------------------------------------------------------------
@@ -1687,9 +1952,12 @@ function doctor(args) {
     data.writeToFileAtomically(file, true);
     var hashOut = runCapture('/usr/bin/shasum', ['-a', '256', file], 20);
     var hash = (parseShasum(hashOut.out) || '').substring(0, 32);
+    var sshMode = sshModeSettings(effectiveSshConfig(ssh, args));
     var started = nowMs();
     try {
-        var argv = uploadSshArguments(parsed, hash, bytes.length, { sshVersion: sshVersionOf(ssh) });
+        // The settings ssh mode uses for this connection, so the test prunes as an upload would.
+        var settings = sshMode || { Keep: DEFAULT_KEEP, Dir: DEFAULT_DIR };
+        var argv = uploadSshArguments(parsed, hash, bytes.length, { sshVersion: sshVersionOf(ssh), keep: settings.Keep, dir: settings.Dir });
         var h = startTask(ssh, argv, { stdinFile: file });
         var deadline = nowMs() + 30000;
         var timedOut = false;
@@ -1698,7 +1966,7 @@ function doctor(args) {
             sleepSeconds(0.02);
         }
         var r = finishTask(h);
-        var outcome = uploadOutcome({ code: r.code, out: r.out, err: r.err, timedOut: timedOut, timeoutSeconds: 30, size: bytes.length, hash: hash, ext: 'png' });
+        var outcome = uploadOutcome({ code: r.code, out: r.out, err: r.err, timedOut: timedOut, timeoutSeconds: 30, size: bytes.length, hash: hash, ext: 'png', dir: settings.Dir, cls: keepClass(settings.Keep) });
         if (outcome.error) throw new Error(outcome.error);
         report(true, 'upload to ' + parsed.Destination + ': ' + outcome.path + ' (' + ((nowMs() - started) / 1000).toFixed(1) + ' s)');
     } catch (e) {
@@ -1709,9 +1977,8 @@ function doctor(args) {
         say('in ssh-agent (ssh-add --apple-use-keychain). Password-only logins cannot work.');
         return 1;
     }
-    var cfg = readConfig(sshConfigPath());
-    if (getManagedBlock(cfg ? cfg.text : null).Hosts.indexOf(parsed.Destination) >= 0) {
-        report(true, 'ssh mode: enabled, "ssh ' + parsed.Destination + '" pastes screenshots');
+    if (sshMode) {
+        report(true, 'ssh mode: enabled, "ssh ' + args.join(' ') + '" pastes screenshots (' + formatPasteSettings(sshMode) + ')');
     } else {
         say('  info  ssh mode is off for ' + parsed.Destination + '. Turn it on: ssh-paste --enable ' + parsed.Destination + '   (or use: ssh-paste ' + parsed.Destination + ')');
     }
@@ -1765,6 +2032,7 @@ function main(argv) {
         case '--watch-proxy': return watchProxy(rest);
         case '--watch-wrapper': return watchWrapper(rest);
         case '--enable': return enableHosts(rest);
+        case '--check-settings': return checkSettings(rest);
         case '--disable': return disableHosts(rest);
         case '--doctor': return doctor(rest);
         case '--update': return update(rest);
@@ -1774,6 +2042,17 @@ function main(argv) {
             warn('ssh-paste: unknown command ' + argv[0] + '; run ssh-paste --help');
             return 2;
     }
+}
+
+function checkSettings(args) {
+    // The launcher's check of wrapper mode's --keep TIME --dir DIR ('' when not given),
+    // before it runs ssh: a bad value stops it with the reason.
+    if (args[0]) keepMinutesOf(args[0]);
+    if (args[1]) {
+        if (!testServerDirectory(args[1])) readPasteSettings(['--dir', args[1]]);
+        warnLocalHome(args[1]);
+    }
+    return 0;
 }
 
 // osascript calls run(argv).
@@ -1795,6 +2074,10 @@ if (typeof module !== 'undefined' && module.exports) {
         VERSION: VERSION, MARKER_TYPE: MARKER_TYPE, BLOCK_BEGIN: BLOCK_BEGIN, BLOCK_END: BLOCK_END, BLOCK_CREATED_FILE: BLOCK_CREATED_FILE,
         REMOTE_SCRIPT: REMOTE_SCRIPT, IMAGE_EXTENSIONS: IMAGE_EXTENSIONS, MAX_COPIED_FILES: MAX_COPIED_FILES, MAX_IMAGE_BYTES: MAX_IMAGE_BYTES,
         RETRY_FAILED_SECONDS: RETRY_FAILED_SECONDS, UPLOAD_CACHE_HOURS: UPLOAD_CACHE_HOURS, PROMISE_WAIT_SECONDS: PROMISE_WAIT_SECONDS,
+        DEFAULT_KEEP: DEFAULT_KEEP, DEFAULT_DIR: DEFAULT_DIR, keepMinutesOf: keepMinutesOf, testServerDirectory: testServerDirectory,
+        readPasteSettings: readPasteSettings, proxySettings: proxySettings, replyPathPattern: replyPathPattern, uploadCacheHours: uploadCacheHours,
+        settingsGroups: settingsGroups, disableMessage: disableMessage, sshModeSettings: sshModeSettings, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
+        serverSshArguments: serverSshArguments,
         SSH_FLAGS_NO_ARG: SSH_FLAGS_NO_ARG, SSH_FLAGS_WITH_ARG: SSH_FLAGS_WITH_ARG, SSH_KEEP_NO_ARG: SSH_KEEP_NO_ARG,
         SSH_KEEP_WITH_ARG: SSH_KEEP_WITH_ARG, SSH_DROP_OPTIONS: SSH_DROP_OPTIONS, TERM_PROGRAM_BUNDLES: TERM_PROGRAM_BUNDLES,
         splitSshArguments: splitSshArguments, destinationHost: destinationHost, sshOptionKey: sshOptionKey, testInteractiveSsh: testInteractiveSsh, parseSshG: parseSshG,

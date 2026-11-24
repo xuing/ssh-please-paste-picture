@@ -110,14 +110,31 @@ ssh-paste -t myhost claude
 ### 全部命令
 
 ```
-ssh-paste --enable HOST [HOST...]   make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)
-ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)
-ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config
-ssh-paste --doctor [HOST]           check this computer and test an upload to HOST
-ssh-paste --update                  install the latest release
-ssh-paste --uninstall               remove ssh-paste and everything it changed
+ssh-paste --enable [OPTIONS] HOST...    make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)
+ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)
+ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config
+ssh-paste --doctor [HOST]               check this computer and test an upload to HOST
+ssh-paste --update                      install the latest release
+ssh-paste --uninstall                   remove ssh-paste and everything it changed
 ssh-paste --version | --help
+
+OPTIONS (images on the server; per host for --enable):
+  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never
+  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)
 ```
+
+### 服务器上图片存在哪、留多久
+
+默认存到 `/tmp`，每次上传时会顺手删掉你在那里超过一天的图片。两样都可以按主机设置：
+
+```sh
+ssh-paste --enable --keep 7d --dir '~/screenshots' myhost   # keep a week, in your home folder
+ssh-paste --enable --keep never myhost                      # never delete
+ssh-paste --keep 2h myhost                                  # wrapper mode, this session only
+```
+
+`--keep` 可以写至少 10 分钟的时间（`30m`、`2h`、`7d`）或 `never`；`--dir` 可以写 `/path` 或 `~/path`（`~` 要加引号，免得被本机 shell 展开成你电脑上的家目录）。`~` 指服务器上的家目录：`--enable` 时会连一次服务器问清楚，把完整路径写进 ssh 配置（wrapper 模式在会话开始时问）。如果 ssh-paste 登录不上去问，就请直接写完整路径。`/tmp` 以外的目录不存在时会自动创建（权限 700），而且必须只属于你：归你所有、不是链接、组和其他人都不可写、没有 ACL（服务器看不出来的时候，就当作不安全，拒绝使用）。它只检查这个目录本身，不检查上级目录，所以请选一个上级目录只有你和 root 能改的位置，比如你的家目录下面。对同一台主机再次 `--enable` 时，只改你这次给出的选项。每次上传只删和自己同一种 `--keep`、并且超过这个时间的图；文件名会标明是哪一种（`ssh-paste-k7d-<hash>.png`，默认的不加标记），所以一台主机想多留的图，不会被另一台主机删掉。删除发生在上传的时候，所以图片至少会留这么久。
+
 
 ### 升级与卸载
 
@@ -129,7 +146,7 @@ ssh-paste --version | --help
 
 用 Scoop 或 Homebrew 装的，`--update` 和 `--uninstall` 只会打印对应的包管理器命令；`--enable` 写入的路径升级后依然有效（`apps\ssh-paste\current`，或 Homebrew 的 `opt` 路径）。`scoop uninstall` 会自己运行 `--disable`；Homebrew 做不到，所以要先运行 `ssh-paste --uninstall`，否则 ssh 连那些主机时还会去调用已经删掉的命令。开了 Scoop 的 `no_junction` 设置时，`--enable` 会拒绝，请用 wrapper 模式。
 
-上传的图片会一直留在服务器的 `/tmp` 里。要删掉你的图片：
+上传的图片会留在服务器的 `/tmp`（或你设的 `--dir` 目录）里。要删掉你在 `/tmp` 里的图片：
 
 ```powershell
 ssh myhost "rm -f /tmp/ssh-paste-*"
@@ -208,7 +225,7 @@ macOS：`sh ~/.local/share/ssh-paste/install.sh --uninstall`，或 `curl -fsSL h
 <summary>会话识别、上传、重试、剪贴板</summary>
 
 - **会话识别**：只有交互式会话才会监视剪贴板（根据参数和 `ssh -G` 判断）；`scp`、`sftp`、`git` 和 VS Code Remote-SSH 直接放行。以下情况跳过：`-T`、`-N`、`-W`、`-f`、`-n`、`-s`、`-G`、`-V`、`-O`、`-Q`，不带 `-t` 的远程命令（`ssh myhost ls`、`git`、`RemoteCommand`），`RequestTTY no`，`SessionType` 不是 `default`，`StdinNull yes`；对已启用的主机用 wrapper 模式时直接运行 `ssh`。
-- **上传**：最大 64 MB，在会话窗口切到前台时上传（每 250 ms 检查一次），不是在粘贴时。上传途中粘贴最多等 30 秒。同一张图每个会话只传一次，6 小时后再传。失败时播放一次 Windows 错误提示音，窗口在前台时每 30 秒重试（最多 30 分钟），退出时汇总。缺少或被拦截的 API 会打印 `ssh-paste: screenshot paste is off: <reason>`，`ssh` 照常运行。
+- **上传**：最大 64 MB，在会话窗口切到前台时上传（每 250 ms 检查一次），不是在粘贴时。上传途中粘贴最多等 30 秒。同一张图每个会话只传一次，6 小时后再传（`--keep` 的一半更短时，按那个时间）。失败时播放一次 Windows 错误提示音，窗口在前台时每 30 秒重试（最多 30 分钟），退出时汇总。缺少或被拦截的 API 会打印 `ssh-paste: screenshot paste is off: <reason>`，`ssh` 照常运行。
 - **剪贴板**：同时含图片和文本或文件的条目（Excel、Word、资源管理器）会跳过。原始截图仍在 Win+V 历史里，只有 `ssh-paste` 改写的内容被排除。
 
 </details>
@@ -253,11 +270,11 @@ gh attestation verify install.ps1 -R xuing/ssh-please-paste-picture
 | `--enable` | `~/.ssh/config`（`%USERPROFILE%\.ssh\config`）开头的一段配置（文件和 `.ssh` 不存在时会创建） | `--disable` 或 `--uninstall`；如果 config 和 `.ssh` 是 `ssh-paste` 创建的且已变空，一并删除 |
 | Windows 剪贴板 | 图片、路径、`SshPaste.Owner`、`ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory=0`、`CanUploadToCloudClipboard=0` | 切走或退出时恢复成纯图片（见[已知限制](#已知限制)）；这些标记留到你下次复制 |
 
-除此之外没有任何改动：不需要管理员权限，没有服务、计划任务、launch agent、登录项、守护进程，不改 PowerShell profile，也没有配置文件。Windows 上安装和卸载会临时设置一个用户变量，让新开的窗口拿到新的 `Path`。不保存密码或密钥，不发送遥测；只从 `github.com` 和 `raw.githubusercontent.com` 下载。服务器上只写 `/tmp/ssh-paste-*.png`。
+除此之外没有任何改动：不需要管理员权限，没有服务、计划任务、launch agent、登录项、守护进程，不改 PowerShell profile，也没有配置文件（`--keep` 和 `--dir` 记在 `--enable` 那段配置里）。Windows 上安装和卸载会临时设置一个用户变量，让新开的窗口拿到新的 `Path`。不保存密码或密钥，不发送遥测；只从 `github.com` 和 `raw.githubusercontent.com` 下载。服务器上只在 `/tmp` 或你的 `--dir` 目录里写 `ssh-paste-*` 文件。
 
 ### 服务器上的文件
 
-`/tmp/ssh-paste-<hash>.png`（PNG 的 SHA-256 前 128 位，十六进制），权限 600；这个名字被别的用户占用时改用 `/tmp/ssh-paste-<hash>-<uid>.png`。内容相同的文件会直接复用。每次上传会删掉你自己超过一天的这类文件。上传之间和卸载之后什么都不运行；`/tmp` 由系统清理（通常在重启时）。
+`/tmp/ssh-paste-<hash>.png`（PNG 的 SHA-256 前 128 位，十六进制），或 `--dir` 目录下的同名文件，权限 600；`--keep` 不是默认值时，hash 前面会加上 `k<keep>-`；这个名字被别的用户占用时改用 `ssh-paste-<hash>-<uid>.png`。内容相同的文件会直接复用。每次上传会删掉你自己同一种 `--keep`、超过这个时间（默认一天）的这类文件。上传之间和卸载之后什么都不运行；`/tmp` 由系统清理（通常在重启时）。
 
 <details>
 <summary>杀毒软件与策略限制</summary>

@@ -90,10 +90,28 @@ check "$("$cmd" --version)" 0.0.0-dev 'ssh-paste --version'
 "$cmd" --enable ssh-paste-e2e > "$work/enable.out" 2>&1 || { fail '--enable'; cat "$work/enable.out"; }
 if head -n 1 "$HOME/.ssh/config" | grep -qF '# >>> ssh-paste'; then pass 'the block is at the top of ~/.ssh/config'; else fail "no block: $(cat "$HOME/.ssh/config")"; fi
 if grep -qF "    ProxyCommand '$HOME/.local/share/ssh-paste/bin/ssh-paste' --proxy '%h' %p '%n'" "$HOME/.ssh/config"; then pass 'the ProxyCommand runs the installed command'; else fail "ProxyCommand: $(grep ProxyCommand "$HOME/.ssh/config")"; fi
+# On macOS /tmp is a symbolic link to /private/tmp: the upload's prune must still
+# find our old image there, and leave a name it did not make.
+if [ -h /tmp ]; then pass '/tmp is a symbolic link here'; else fail '/tmp is not a link, so the link case is not tested'; fi
+rnd=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
+old=/tmp/ssh-paste-$rnd.png
+near=/tmp/ssh-paste-$rnd-7-notes.png
+: > "$old"; : > "$near"
+touch -t "$(date -v-3d +%Y%m%d%H%M)" "$old" "$near"
 "$cmd" --doctor ssh-paste-e2e > "$work/doctor.out" 2>&1
 if grep -q '^  ok    upload to ssh-paste-e2e: /tmp/ssh-paste-[0-9a-f]\{32\}\.png' "$work/doctor.out"; then pass '--doctor uploads'; else fail "--doctor: $(cat "$work/doctor.out")"; fi
+if [ -e "$old" ]; then fail "the upload did not prune $old (3 days old) through the /tmp link"; else pass 'the upload pruned our 3-day-old image in /tmp (a link on macOS)'; fi
+if [ -e "$near" ]; then pass 'it kept a name it did not make'; else fail "it deleted $near"; fi
+rm -f "$old" "$near"
 if grep -q 'ssh mode: enabled' "$work/doctor.out"; then pass '--doctor sees ssh mode'; else fail '--doctor does not see ssh mode'; fi
 check "$(ssh -o BatchMode=yes ssh-paste-e2e echo relayed)" relayed 'a command through the ssh mode relay'
+
+section '--enable --dir ~/...: the home folder on the server, asked once'
+# shellcheck disable=SC2088 # the ~ is for the server, so it stays unexpanded
+"$cmd" --enable --dir '~/ssh-paste-e2e-dir' ssh-paste-e2e > "$work/enable2.out" 2>&1 || { fail '--enable --dir ~/...'; cat "$work/enable2.out"; }
+if grep -qF -- "--dir '$HOME/ssh-paste-e2e-dir'" "$HOME/.ssh/config"; then pass "~ became the server's home folder: $HOME"; else fail "ssh config: $(grep ProxyCommand "$HOME/.ssh/config")"; fi
+"$cmd" --enable --dir /tmp ssh-paste-e2e > /dev/null 2>&1 || fail '--enable --dir /tmp'
+if grep -qF -- '--dir' "$HOME/.ssh/config"; then fail "--dir /tmp was written: $(grep ProxyCommand "$HOME/.ssh/config")"; else pass 'back to /tmp, the default, which is not written'; fi
 # With debug on, the relay's watcher logs its decision, so this fails both when a
 # watcher starts and when the decision is never made.
 before=$(watchers)
