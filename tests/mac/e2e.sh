@@ -184,6 +184,9 @@ ssh -o "ControlPath=$cp" -O exit ssh-paste-e2e 2> /dev/null || true
 # command line ends with the ssh command line too), $3...: ssh-paste's arguments.
 wrapper_session() {
     name=$1 pattern=$2; shift 2
+    # Text on the pasteboard first: an image left from the section before would be
+    # uploaded when the session starts (as it should), and count as a fourth upload.
+    pb text "before the $name session"
     logins_before=$(grep -c 'Accepted publickey' "$work/sshd.log")
     before=$(watchers)
     terminal_run "$name" "export SSH_PASTE_DEBUG=1
