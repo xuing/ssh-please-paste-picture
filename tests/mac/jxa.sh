@@ -168,9 +168,18 @@ echo 'ok 1' > "$work/mode"
 activate Calculator com.apple.calculator
 pb finder "$work/shot.png" "$work/shot.jpg"
 echo "        what the copy put on the pasteboard: $(pb items)"
-# Another process must read both file URLs (pb.js writes their data at once).
-pb file-paths | grep -v '^$' > "$work/held"
-held=$(wc -l < "$work/held" | tr -d ' ')
+# Another process must read both file URLs (pb.js writes their data at once). A run on
+# macOS 15 once read only the first: read again for up to 5 s and say how it went, to
+# tell a pasteboard that shows its items late from one that lost an item.
+reads=''
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pb file-paths | grep -v '^$' > "$work/held"
+    held=$(wc -l < "$work/held" | tr -d ' ')
+    reads="$reads $held"
+    [ "$held" -ge 2 ] && break
+    sleep 0.5
+done
+echo "        files another process read, attempt by attempt:$reads"
 check "$held" 2 'another process reads both copied files from the pasteboard'
 want=
 while IFS= read -r f; do want="$want /tmp/ssh-paste-$(sha16 "$f").${f##*.}"; done < "$work/held"
