@@ -162,6 +162,24 @@ case $(cat "$work/p7") in
     *) fail "unexpected paste: $(cat "$work/p7")" ;;
 esac
 
+section 'a large photo copied in Finder: the path is there half a second after the switch'
+# Decoding a large JPEG to PNG took 1.5 s on a Mac; a Cmd+V in that time pasted the
+# local path (iTerm2 asked "Paste Files"). The watcher now offers the photo's own bytes.
+echo 'ok 1' > "$work/mode"
+sips -z 6000 8000 "$work/shot.png" --out "$work/big.png" > /dev/null
+sips -s format jpeg "$work/big.png" --out "$work/big.jpg" > /dev/null
+activate Calculator com.apple.calculator
+for _ in 1 2 3 4 5; do
+    pb finder "$work/big.jpg" 2> /dev/null
+    [ "$(pb file-paths | grep -vc '^$')" -ge 1 ] && break
+done
+sleep 1   # the time a person takes to switch: the watcher reads the copy meanwhile
+want=/tmp/ssh-paste-$(sha16 "$work/big.jpg").jpg
+activate Terminal com.apple.Terminal
+sleep 0.5
+check "$(pbpaste)" "$want" 'Cmd+V half a second after the switch gets the remote path'
+case $(pb dump) in *'"public.jpeg"'*) pass 'the photo is offered as its own JPEG bytes' ;; *) fail "no JPEG: $(pb dump)" ;; esac
+
 section 'image files copied in Finder'
 echo 'ok 1' > "$work/mode"
 # Copied while another app is in front, so the copy can be read before the watcher acts.
