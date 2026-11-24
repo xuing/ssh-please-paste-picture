@@ -446,6 +446,8 @@ function Get-SshFailure {
         return @{ Kind = 'auth'; Methods = $methods; KeyLogin = (@($methods) -ccontains 'publickey'); Typed = $typed }
     }
     if ($Text -cmatch 'Too many authentication failures') { return @{ Kind = 'toomany' } }
+    # A shared connection (macOS wrapper mode) whose server allows one session per connection.
+    if ($Text -cmatch 'Session open refused by peer|mux_client_request_session: session request failed') { return @{ Kind = 'muxrefused' } }
     if ($Text -cmatch 'Host key verification failed') { return @{ Kind = 'hostkey' } }
     if ($Text -cmatch 'Could not resolve hostname|Connection refused|Connection timed out|No route to host|Network is unreachable|Operation timed out') { return @{ Kind = 'network' } }
     return $null
@@ -457,7 +459,7 @@ function Test-FailureFinal {
     # runs: a key loaded with ssh-add, a renewed Kerberos ticket, a fixed known_hosts.
     param($Failure)
     if ($null -eq $Failure) { return $false }
-    return ($Failure.Kind -ceq 'auth' -and $Failure.Typed)
+    return (($Failure.Kind -ceq 'auth' -and $Failure.Typed) -or $Failure.Kind -ceq 'muxrefused')
 }
 
 function Get-LoginAdvice {
@@ -476,6 +478,9 @@ function Get-LoginAdvice {
     }
     if ($Failure.Kind -ceq 'toomany') {
         return ('{0} closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config' -f $HostName)
+    }
+    if ($Failure.Kind -ceq 'muxrefused') {
+        return ('{0} refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none {0} uploads over new connections' -f $HostName)
     }
     if ($Failure.Kind -ceq 'hostkey') {
         return ('ssh could not verify the host key of {0}: run ssh {0} to see why (a new host asks you to accept its key)' -f $HostName)
@@ -1766,8 +1771,9 @@ function Restore-Clipboard {
 
 function Get-FailureSummary {
     param($W)
-    if ($null -eq $W -or $W.Failed.Count -eq 0) { return $null }
+    if ($null -eq $W) { return $null }
     if (Get-WatcherValue $W 'Blocked' $null) { return ('ssh-paste: screenshot paste was off for this session: ' + $W.Blocked) }
+    if ($W.Failed.Count -eq 0) { return $null }
     $last = @($W.Failed.Values | Sort-Object { $_.At })[-1]
     $parsed = Get-WatcherValue $W 'Parsed' $null
     $destination = ''

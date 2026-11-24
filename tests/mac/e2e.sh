@@ -175,22 +175,48 @@ if wait_for 30 no_process 'ssh-paste.js --watch-proxy'; then pass 'the watcher s
 if ssh -o "ControlPath=$cp" -O check ssh-paste-e2e 2> /dev/null; then pass 'while the ControlPersist master still runs'; else fail 'no master left, so ControlPersist was not tested'; fi
 ssh -o "ControlPath=$cp" -O exit ssh-paste-e2e 2> /dev/null || true
 
-section 'wrapper mode: ssh-paste with ProxyCommand=none'
-before=$(watchers)
-terminal_run wrapper "export SSH_PASTE_DEBUG=1
-exec '$cmd' -o ProxyCommand=none ssh-paste-e2e"
-if wait_for 40 more_watchers "$before"; then pass 'wrapper mode started a watcher'; else fail 'no watcher'; fi
-screencapture -c -x -R 0,0,320,200
-pb save-png "$work/clip2.png"
-want=/tmp/ssh-paste-$(sha16 "$work/clip2.png").png
-wait_for 20 entry_is "$want" || fail "no entry: $(pb dump)"
-paste_timed "$work/p2"
-check "$(cat "$work/p2")" "$want" 'pbpaste gets the remote path'
-if cmp -s "$work/clip2.png" "$want"; then pass 'the file on the server has the screenshot bytes'; else fail "$want is missing or differs"; fi
-# Anchored: the watcher's own command line ends with the ssh command line too.
-pkill -f '^/usr/bin/ssh -o ProxyCommand=none ssh-paste-e2e$'
-if wait_for 20 no_process 'ssh-paste.js --watch-wrapper'; then pass 'the watcher stopped'; else fail 'the watcher still runs'; fi
-check "$(pbpaste)" '' 'the plain image is back'
+# One wrapper session that pastes three different screenshots, each checked byte for
+# byte on the server; prints how many logins the server accepted during it.
+# $1: a name, $2: the ssh command line as pkill matches it (anchored: the watcher's own
+# command line ends with the ssh command line too), $3...: ssh-paste's arguments.
+wrapper_session() {
+    name=$1 pattern=$2; shift 2
+    logins_before=$(grep -c 'Accepted publickey' "$work/sshd.log")
+    before=$(watchers)
+    terminal_run "$name" "export SSH_PASTE_DEBUG=1
+exec '$cmd' $*"
+    if wait_for 40 more_watchers "$before"; then pass "$name: wrapper mode started a watcher"; else fail "$name: no watcher"; fi
+    for size in 320,200 300,180 280,160; do
+        screencapture -c -x -R "0,0,$size"
+        pb save-png "$work/$name-$size.png"
+        want=/tmp/ssh-paste-$(sha16 "$work/$name-$size.png").png
+        wait_for 40 entry_is "$want" || fail "$name: no entry for $size: $(pb dump)"
+        paste_timed "$work/$name-$size.paste"
+        check "$(cat "$work/$name-$size.paste")" "$want" "$name: pbpaste gets the remote path of image $size"
+        if cmp -s "$work/$name-$size.png" "$want"; then pass "$name: the server has the bytes of image $size"; else fail "$name: $want is missing or differs"; fi
+    done
+    # The session still runs here: count the sockets of ours it listens on.
+    sockets=$(find /private/tmp -maxdepth 2 -path '/private/tmp/ssh-paste.*/s' -type s | wc -l | tr -d ' ')
+    pkill -f "$pattern"
+    if wait_for 20 no_process 'ssh-paste.js --watch-wrapper'; then pass "$name: the watcher stopped"; else fail "$name: the watcher still runs"; fi
+    check "$(pbpaste)" '' "$name: the plain image is back"
+    logins=$(( $(grep -c 'Accepted publickey' "$work/sshd.log") - logins_before ))
+}
+
+section 'wrapper mode: the session is the master; uploads share its connection'
+# /private/tmp: find does not enter the /tmp link on macOS.
+folders_before=$(find /private/tmp -maxdepth 1 -name 'ssh-paste.*' -type d | wc -l | tr -d ' ')
+wrapper_session shared '^/usr/bin/ssh -o ControlMaster=yes -o ControlPersist=no -o ControlPath=/tmp/ssh-paste[.][A-Za-z0-9]*/s -o ProxyCommand=none ssh-paste-e2e$' -o ProxyCommand=none ssh-paste-e2e
+check "$sockets" 1 'the session listened on its socket in /tmp/ssh-paste.*/s'
+check "$logins" 1 'one login for the session and its three uploads'
+if grep -q 'shares its connection' "$(debuglog)"; then pass 'the watcher used the shared connection'; else fail 'the watcher never used the shared connection'; fi
+if wait_for 10 sh -c "[ \"\$(find /private/tmp -maxdepth 1 -name 'ssh-paste.*' -type d | wc -l | tr -d ' ')\" = $folders_before ]"; then pass 'the launcher removed its folder and the socket'; else fail "a /tmp/ssh-paste.* folder is left: $(find /private/tmp -maxdepth 1 -name 'ssh-paste.*' -type d)"; fi
+
+section 'wrapper mode with -S none: separate connections, as before'
+# The proof that the count above can fail: without the shared connection, each upload logs in.
+wrapper_session separate '^/usr/bin/ssh -S none -o ProxyCommand=none ssh-paste-e2e$' -S none -o ProxyCommand=none ssh-paste-e2e
+check "$sockets" 0 'no socket of ours with -S none'
+check "$logins" 4 'one login for the session and one for each upload'
 
 section '--disable and --uninstall'
 "$cmd" --disable ssh-paste-e2e > /dev/null

@@ -260,6 +260,7 @@
     {"Name":"a command's own status, worded like ssh","Text":"ssh exited with 1: Permission denied (policy).","Kind":null,"Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
     {"Name":"a command on the server, not ssh","Text":"ssh exited with 1: mkdir: Permission denied (read-only snapshot)","Kind":null,"Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
     {"Name":"too many keys offered","Text":"Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures","Kind":"toomany","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
+    {"Name":"one session per connection (sshd MaxSessions 1)","Text":"ssh exited with 255: mux_client_request_session: session request failed: Session open refused by peer","Kind":"muxrefused","Methods":null,"KeyLogin":null,"Typed":null,"Final":true},
     {"Name":"host key not verified","Text":"No ED25519 host key is known for build and you have requested strict checking.\r\nHost key verification failed.","Kind":"hostkey","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
     {"Name":"name does not resolve","Text":"ssh: Could not resolve hostname nope: Name or service not known","Kind":"network","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
     {"Name":"connection refused","Text":"ssh: connect to host 10.0.0.5 port 22: Connection refused","Kind":"network","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
@@ -272,6 +273,7 @@
     {"Name":"a key would do","HostName":"build","Said":"xu@build: Permission denied (publickey,password).","Expected":"build did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor build shows how"},
     {"Name":"a password or a code only","HostName":"hpc","Said":"xu@hpc: Permission denied (password,keyboard-interactive).","Expected":"hpc wants a password or a one-time code (password,keyboard-interactive), which uploads cannot type, so ssh-paste cannot upload to it"},
     {"Name":"too many keys offered","HostName":"lab","Said":"Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures","Expected":"lab closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config"},
+    {"Name":"one session per connection","HostName":"lab","Said":"ssh exited with 255: mux_client_request_session: session request failed: Session open refused by peer","Expected":"lab refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none lab uploads over new connections"},
     {"Name":"host key not verified","HostName":"new","Said":"Host key verification failed.","Expected":"ssh could not verify the host key of new: run ssh new to see why (a new host asks you to accept its key)"},
     {"Name":"cannot reach it","HostName":"lab","Said":"ssh: connect to host lab port 22: Connection timed out\nmore","Expected":"could not check the login to lab now (ssh: connect to host lab port 22: Connection timed out); ssh-paste --doctor lab tests it"},
     {"Name":"no answer in time","HostName":"lab","Said":"ssh did not finish in 30 seconds","Expected":"could not check the login to lab now (ssh did not finish in 30 seconds); ssh-paste --doctor lab tests it"}
@@ -286,6 +288,7 @@
     {"Name":"a command's own status, worded like ssh","Said":"ssh exited with 1: Permission denied (policy).","Refuse":false},
     {"Name":"ssh's own refusal, with its status","Said":"ssh exited with 255: xu@build: Permission denied (publickey).","Refuse":true},
     {"Name":"host key not verified yet","Said":"Host key verification failed.","Refuse":false},
+    {"Name":"one session per connection","Said":"ssh exited with 255: mux_client_request_session: session request failed: Session open refused by peer","Refuse":false},
     {"Name":"cannot reach it","Said":"ssh: connect to host lab port 22: Connection refused","Refuse":false},
     {"Name":"no answer in time","Said":"ssh did not finish in 30 seconds","Refuse":false}
   ],

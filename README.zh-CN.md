@@ -156,7 +156,7 @@ ssh-copy-id -i ~/.ssh/id_ed25519.pub myhost
 ssh-paste --doctor myhost
 ```
 
-`ssh-keygen` 的每个问题直接按回车；如果提示 key 文件已经存在，回答 `n` 跳过即可。Windows 上的 key 不设 passphrase，因为 `ssh-agent` 服务默认关闭，要管理员才能打开（以管理员身份运行 `Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service`，再以自己的身份运行 `ssh-add`）。如果你平时用 `ssh -i KEY` 登录，或者 `~/.ssh/config` 里给这台主机指定了 `IdentityFile`，就换用那把 key，并在 `Host` 配置里用 `IdentityFile` 写明，这样 ssh 模式也会用它。macOS 上可以设 passphrase，再运行 `ssh-add --apple-use-keychain ~/.ssh/id_ed25519`（重启后怎么保持加载，见 [GitHub 的说明](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)）。只接受密码或一次性验证码、不接受 key 的服务器，没法上传。
+`ssh-keygen` 的每个问题直接按回车；如果提示 key 文件已经存在，回答 `n` 跳过即可。Windows 上的 key 不设 passphrase，因为 `ssh-agent` 服务默认关闭，要管理员才能打开（以管理员身份运行 `Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service`，再以自己的身份运行 `ssh-add`）。如果你平时用 `ssh -i KEY` 登录，或者 `~/.ssh/config` 里给这台主机指定了 `IdentityFile`，就换用那把 key，并在 `Host` 配置里用 `IdentityFile` 写明，这样 ssh 模式也会用它。macOS 上可以设 passphrase，再运行 `ssh-add --apple-use-keychain ~/.ssh/id_ed25519`（重启后怎么保持加载，见 [GitHub 的说明](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)）。macOS 上还有一个不用 key 的办法：`ssh-paste myhost`（wrapper 模式）会让你的会话同时充当一条私有的"主连接"（如果你自己已经在配置里用了 `ControlMaster`/`ControlPath`，或者用了 `-S`、`-M`，就保持你的设置，不这样做），上传共用你登录的那条连接，密码或验证码照常只输一次。ssh 模式和 Windows（自带的 OpenSSH 不支持共用连接）需要 key；只接受密码或一次性验证码、不接受 key 的服务器，在这两种情况下没法上传。
 
 ### 升级与卸载
 
