@@ -95,6 +95,17 @@ jobs:
         with:
           persist-credentials: false
 
+      # The tests run the server script and the key setup command through every login shell
+      # they find (sh, bash, dash, zsh, fish, ksh, tcsh); the runner has only the first three.
+      - name: Install the other login shells
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          sudo timeout 240 apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive timeout 240 apt-get install -y -qq zsh fish ksh tcsh
+          for s in zsh fish ksh tcsh; do command -v "$s"; done
+
       - name: Run Pester
         run: |
           if ($env:OS -eq 'Windows_NT') { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force }
