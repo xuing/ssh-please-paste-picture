@@ -61,9 +61,9 @@ HOST`), as follows. Below, `/tmp` stands for that folder.
 
 - `--dir` takes `/...` or `~/...` with names of letters, digits and `. _ -`
   only (no `.` or `..`, no `//`), so it needs no quoting on the server. For
-  `~`, the client asks the server for its home folder once (`echo $HOME`, over
-  a connection with the upload's options) when you run `--enable`, or when a
-  wrapper-mode session starts, and uses the absolute path from then on; a home
+  `~`, the client uses the home folder that the server answered to `echo $HOME`
+  (over a connection with the upload's options) when you ran `--enable`, or
+  asks when a wrapper-mode session starts, and uses the absolute path from then on; a home
   folder that does not give a valid path is refused. The server makes a
   missing folder with mode 700, and the answer must name exactly that folder.
 - A folder other than `/tmp` must be yours alone: owned by you, not a symbolic
@@ -111,7 +111,10 @@ HOST`), as follows. Below, `/tmp` stands for that folder.
 ### The upload connection
 
 Each upload runs a separate `ssh` (`ssh.exe` on Windows) with these options
-placed before yours, since `ssh` uses the first value it sees:
+placed before yours, since `ssh` uses the first value it sees. `--enable` makes
+one such connection to each host it names, running only `echo $HOME`, to check
+that uploads can log in and to learn the home folder for `--dir ~/...`; it
+says when the server asks for a password, and enables the host either way.
 
 - `-T`, `-x`, and `RequestTTY=no` disable terminals and X11 forwarding.
 - `BatchMode=yes` disables password, passphrase, and unknown host key prompts.

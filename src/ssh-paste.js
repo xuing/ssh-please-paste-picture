@@ -284,15 +284,100 @@ function absoluteDirectory(dir, home) {
     return abs;
 }
 
-function serverHome(ssh, parsed) {
-    // The home folder on the server, for --dir ~/...: one ssh connection, as an upload makes.
-    var r = runCapture(ssh, serverSshArguments(parsed, { sshVersion: sshVersionOf(ssh) }).concat(['echo $HOME']), 30);
+function testServerLogin(ssh, parsed, noProxy) {
+    // Test-ServerLogin: one connection as an upload makes (no prompt): home when it logs in,
+    // else error, what ssh said. --enable runs it once for each host it names, with noProxy
+    // as ssh mode's uploads connect (not through the relay of an older block).
+    var r;
+    try {
+        r = runCapture(ssh, serverSshArguments(parsed, { sshVersion: sshVersionOf(ssh), noProxy: !!noProxy }).concat(['echo $HOME']), 30);
+    } catch (e) { return { home: null, error: e.message }; }
     var lines = String(r.out || '').split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
     var line = lines.length > 0 ? lines[lines.length - 1].trim() : '';
-    if (r.code !== 0 || line.charAt(0) !== '/') {
-        throw new Error('cannot ask ' + parsed.Destination + ' for its home folder (ssh exited ' + r.code + ': ' + String(r.err || '').trim() + '); give an absolute --dir, or check the login with ssh-paste --doctor ' + parsed.Destination);
+    if (r.code === 0 && line.charAt(0) === '/') return { home: line, error: null };
+    var err = String(r.err || '').trim();
+    return { home: null, error: err || 'ssh exited ' + r.code + ', and the server sent no home folder' };
+}
+
+function serverHome(ssh, parsed) {
+    // The home folder on the server, for --dir ~/... in wrapper mode.
+    var login = testServerLogin(ssh, parsed);
+    if (login.home === null) throw new Error(homeError(parsed.Destination, login.error));
+    return login.home;
+}
+
+function homeError(host, errorText) {
+    return 'cannot ask ' + host + ' for its home folder (' + loginReport(host, errorText) + '); give an absolute --dir';
+}
+
+function sshFailure(text) {
+    // Get-SshFailure: what an ssh error says. kind auth (methods as ssh lists them; keyLogin:
+    // a key would do; typed: every method needs a person to type), toomany, hostkey,
+    // network, or null. Only ssh's own list of method names counts.
+    text = String(text || '');
+    var m = /Permission denied \(([a-z][a-z0-9@.-]*(,[a-z][a-z0-9@.-]*)*)\)\./.exec(text);
+    if (m) {
+        var methods = m[1].split(',');
+        var typed = methods.every(function (x) { return x === 'password' || x === 'keyboard-interactive'; });
+        return { kind: 'auth', methods: methods, keyLogin: methods.indexOf('publickey') >= 0, typed: typed };
     }
-    return line;
+    if (/Too many authentication failures/.test(text)) return { kind: 'toomany' };
+    if (/Host key verification failed/.test(text)) return { kind: 'hostkey' };
+    if (/Could not resolve hostname|Connection refused|Connection timed out|No route to host|Network is unreachable|Operation timed out/.test(text)) return { kind: 'network' };
+    return null;
+}
+
+function failureFinal(f) {
+    // Test-FailureFinal: trying again in this session cannot help: the server takes only
+    // methods that a person types. Anything else may change while the session runs.
+    return !!f && f.kind === 'auth' && f.typed;
+}
+
+function loginAdvice(f, host) {
+    // Get-LoginAdvice: one line on why uploads to host cannot log in, or null.
+    if (!f) return null;
+    if (f.kind === 'auth' && f.keyLogin) return host + ' did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor ' + host + ' shows how';
+    if (f.kind === 'auth' && f.typed) return host + ' wants a password or a one-time code (' + f.methods.join(',') + '), which uploads cannot type, so ssh-paste cannot upload to it';
+    if (f.kind === 'toomany') return host + ' closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config';
+    if (f.kind === 'hostkey') return 'ssh could not verify the host key of ' + host + ': run ssh ' + host + ' to see why (a new host asks you to accept its key)';
+    return null;
+}
+
+function loginReport(host, errorText) {
+    // Get-LoginReport: the line --enable prints about a host.
+    if (!errorText) return host + ': uploads log in without a password';
+    var advice = loginAdvice(sshFailure(errorText), host);
+    if (advice) return advice;
+    var first = String(errorText).split(/\r?\n/).filter(function (l) { return l.trim().length > 0; })[0] || '';
+    return 'could not check the login to ' + host + ' now (' + first.trim() + '); ssh-paste --doctor ' + host + ' tests it';
+}
+
+function keySetupTarget(parsed) {
+    // Get-KeySetupTarget: [-p PORT] [USER@]HOST from the --doctor arguments, which ssh and
+    // ssh-copy-id both read alike; dropped says other options were left out.
+    var user = null, port = null, dropped = false;
+    parsed.Options.forEach(function (o) {
+        if (o.Flag === 'l') { if (user === null) user = o.Value; }
+        else if (o.Flag === 'p') { if (port === null) port = o.Value; }
+        else dropped = true;
+    });
+    var target = parsed.Destination;
+    if (user !== null && target.indexOf('@') < 0 && target.indexOf('ssh://') !== 0) target = user + '@' + target;
+    if (port !== null) target = '-p ' + port + ' ' + target;
+    return { Target: target, Dropped: dropped };
+}
+
+function keySetupLines(hostArgs) {
+    // The commands that set up a key, as --doctor prints them (Get-KeySetupLines is the
+    // Windows twin). macOS has ssh-copy-id; a key with a passphrase works through ssh-agent.
+    return [
+        '  Set up a key (once; ssh-copy-id asks your password one last time):',
+        '    ssh-keygen -t ed25519',
+        '    ssh-copy-id ' + hostArgs,
+        '    ssh-paste --doctor ' + hostArgs,
+        '  ssh-keygen: press Enter at each question; if the key file exists already, answer n.',
+        '  With a passphrase, also run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519'
+    ];
 }
 
 function readUploadReply(output, expectedSize, hash, ext, dir, cls) {
@@ -705,7 +790,7 @@ function newWatcher(P, o) {
         P: P, SshPath: o.sshPath, SshVersion: o.sshVersion || null, Parsed: o.parsed, NoProxy: !!o.noProxy, Pin: o.pin || null,
         Keep: keep, KeepMinutes: minutes, Class: keepClass(keep), Dir: dir, CacheHours: uploadCacheHours(minutes),
         Window: o.window, Token: o.token, Debug: !!o.debug,
-        LastSeq: -1, LastForeground: 0, State: null, WakeAt: Infinity, Uploaded: {}, Failed: {}, Inflight: null
+        LastSeq: -1, LastForeground: 0, State: null, WakeAt: Infinity, Uploaded: {}, Failed: {}, Blocked: null, Inflight: null
     };
 }
 
@@ -734,6 +819,7 @@ function expectedText(W, state) {
 }
 
 function uploadFailing(W, state) {
+    if (W.Blocked) return true;
     return stateItems(state).some(function (item) { return Object.prototype.hasOwnProperty.call(W.Failed, item.Hash); });
 }
 
@@ -745,6 +831,8 @@ function uploadedItemPath(W, item, since) {
     // the batch at any age, so each file is uploaded at most once per batch, as in
     // one pass of Get-UploadedPath, even when the batch outlasts the cache.
     // Returns the path, null, or { Pending } when an upload was started.
+    // After a failure that trying again cannot fix, this session uploads nothing more.
+    if (W.Blocked) return null;
     var P = W.P;
     var now = P.now();
     var done = W.Uploaded[item.Hash];
@@ -795,6 +883,11 @@ function recordUpload(W, pending, outcome) {
     var now = P.now();
     W.Failed[hash] = { Message: outcome.error, At: now, Count: count };
     P.log('upload failed (' + count + 'x, ' + pending.Item.Size + ' bytes): ' + outcome.error);
+    var failure = sshFailure(outcome.error);
+    if (failureFinal(failure)) {
+        W.Blocked = loginAdvice(failure, W.Parsed.Destination);
+        P.log('no more uploads in this session: ' + W.Blocked);
+    }
     setWakeAt(W, now + retryDelaySeconds(count) * 1000);
     if (count === 1) { try { P.beep(); } catch (e) { /* no sound is fine */ } }
 }
@@ -965,8 +1058,10 @@ function failureSummary(W) {
     if (!W) return null;
     var keys = Object.keys(W.Failed);
     if (keys.length === 0) return null;
+    if (W.Blocked) return 'ssh-paste: screenshot paste was off for this session: ' + W.Blocked;
     var last = keys.map(function (k) { return W.Failed[k]; }).sort(function (a, b) { return a.At - b.At; })[keys.length - 1];
-    return 'ssh-paste: ' + keys.length + ' screenshot upload(s) failed: ' + last.Message;
+    var advice = loginAdvice(sshFailure(last.Message), W.Parsed.Destination);
+    return 'ssh-paste: ' + keys.length + ' screenshot upload(s) failed: ' + (advice || last.Message);
 }
 
 function formatWatchState(W, s) {
@@ -1807,7 +1902,8 @@ function enableHosts(args) {
     // ssh-paste --enable [--keep TIME] [--dir DIR] HOST...: the settings go to the hosts given;
     // a host that is already enabled keeps the settings that are not given.
     var settings = readPasteSettings(args || []);
-    var hosts = settings.Rest;
+    // Each host once, in order; aliases are case-sensitive, as in ssh.
+    var hosts = settings.Rest.filter(function (h, i) { return settings.Rest.indexOf(h) === i; });
     if (hosts.length === 0) throw new Error('usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]');
     if (settings.Dir) warnLocalHome(settings.Dir);
     var configPath = sshConfigPath();
@@ -1822,6 +1918,8 @@ function enableHosts(args) {
     });
     var added = [];
     var changed = [];
+    var logins = {};
+    var ssh = null;
     hosts.forEach(function (h) {
         if (!testHostAlias(h)) throw new Error('use a host name or a Host alias from ~/.ssh/config (no user@, no options): ' + h);
         var pair = find(h);
@@ -1838,12 +1936,17 @@ function enableHosts(args) {
             want.push(pair);
             added.push(h);
         }
+        // Check once, as an upload would log in, so a host that asks for a password is known
+        // now and not at the first paste; the same connection reads the home folder for ~.
+        if (ssh === null) ssh = sshPath();
+        if (!Object.prototype.hasOwnProperty.call(logins, h)) logins[h] = testServerLogin(ssh, splitSshArguments([h]), true);
         var before = pair[1];
         var after = { Keep: settings.Keep || before.Keep, Dir: settings.Dir || before.Dir };
         if (settings.Dir && settings.Dir.charAt(0) === '~') {
             // ~ is the home folder on that server, asked for once, so the block holds an
             // absolute path and the path to paste is known before an upload.
-            after.Dir = absoluteDirectory(settings.Dir, serverHome(sshPath(), splitSshArguments([h])));
+            if (logins[h].home === null) throw new Error(homeError(h, logins[h].error));
+            after.Dir = absoluteDirectory(settings.Dir, logins[h].home);
             say(h + ': ' + settings.Dir + ' is ' + after.Dir + ' there');
         }
         if (added.indexOf(h) < 0 && changed.indexOf(h) < 0 && (after.Keep !== before.Keep || after.Dir !== before.Dir)) changed.push(h);
@@ -1858,7 +1961,10 @@ function enableHosts(args) {
     } else {
         say('Already enabled with these settings; nothing changed.');
     }
-    hosts.forEach(function (h) { say(h + ': ' + formatPasteSettings(find(h)[1])); });
+    hosts.forEach(function (h) {
+        say(h + ': ' + formatPasteSettings(find(h)[1]));
+        say(loginReport(h, logins[h].error));
+    });
     say('This block is at the top of ' + configPath + ':');
     say('');
     setManagedBlock('', null, null, createdFile, groups).replace(/\s+$/, '').split(/\r?\n/).forEach(function (line) { say('    ' + line); });
@@ -1972,9 +2078,19 @@ function doctor(args) {
     } catch (e) {
         report(false, 'upload to ' + parsed.Destination + ': ' + e.message);
         say('');
-        say('Uploads use a second, non-interactive ssh connection, so the server must');
-        say('accept your key without a prompt: a key without a passphrase, or a key loaded');
-        say('in ssh-agent (ssh-add --apple-use-keychain). Password-only logins cannot work.');
+        var failure = sshFailure(e.message);
+        var advice = loginAdvice(failure, parsed.Destination);
+        if (advice) say(advice);
+        if (failure && failure.kind === 'auth' && failure.keyLogin) {
+            say('');
+            var setup = keySetupTarget(parsed);
+            keySetupLines(setup.Target).forEach(say);
+            if (setup.Dropped) say('  Add the other ssh options this host needs to the ssh-copy-id line.');
+        } else if (!advice) {
+            say('Uploads use a second, non-interactive ssh connection, so the server must');
+            say('accept your key without a prompt: a key without a passphrase, or a key loaded');
+            say('in ssh-agent (ssh-add --apple-use-keychain). Password-only logins cannot work.');
+        }
         return 1;
     }
     if (sshMode) {
@@ -2076,7 +2192,8 @@ if (typeof module !== 'undefined' && module.exports) {
         RETRY_FAILED_SECONDS: RETRY_FAILED_SECONDS, UPLOAD_CACHE_HOURS: UPLOAD_CACHE_HOURS, PROMISE_WAIT_SECONDS: PROMISE_WAIT_SECONDS,
         DEFAULT_KEEP: DEFAULT_KEEP, DEFAULT_DIR: DEFAULT_DIR, keepMinutesOf: keepMinutesOf, testServerDirectory: testServerDirectory,
         readPasteSettings: readPasteSettings, proxySettings: proxySettings, replyPathPattern: replyPathPattern, uploadCacheHours: uploadCacheHours,
-        settingsGroups: settingsGroups, disableMessage: disableMessage, sshModeSettings: sshModeSettings, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
+        settingsGroups: settingsGroups, disableMessage: disableMessage, sshModeSettings: sshModeSettings,
+        sshFailure: sshFailure, failureFinal: failureFinal, loginAdvice: loginAdvice, loginReport: loginReport, keySetupLines: keySetupLines, keySetupTarget: keySetupTarget, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
         serverSshArguments: serverSshArguments,
         SSH_FLAGS_NO_ARG: SSH_FLAGS_NO_ARG, SSH_FLAGS_WITH_ARG: SSH_FLAGS_WITH_ARG, SSH_KEEP_NO_ARG: SSH_KEEP_NO_ARG,
         SSH_KEEP_WITH_ARG: SSH_KEEP_WITH_ARG, SSH_DROP_OPTIONS: SSH_DROP_OPTIONS, TERM_PROGRAM_BUNDLES: TERM_PROGRAM_BUNDLES,

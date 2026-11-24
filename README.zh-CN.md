@@ -138,6 +138,26 @@ ssh-paste --keep 2h myhost                                  # wrapper mode, this
 `--keep` 可以写至少 10 分钟的时间（`30m`、`2h`、`7d`）或 `never`；`--dir` 可以写 `/path` 或 `~/path`（`~` 要加引号，免得被本机 shell 展开成你电脑上的家目录）。`~` 指服务器上的家目录：`--enable` 时会连一次服务器问清楚，把完整路径写进 ssh 配置（wrapper 模式在会话开始时问）。如果 ssh-paste 登录不上去问，就请直接写完整路径。`/tmp` 以外的目录不存在时会自动创建（权限 700），而且必须只属于你：归你所有、不是链接、组和其他人都不可写、没有 ACL（服务器看不出来的时候，就当作不安全，拒绝使用）。它只检查这个目录本身，不检查上级目录，所以请选一个上级目录只有你和 root 能改的位置，比如你的家目录下面。对同一台主机再次 `--enable` 时，只改你这次给出的选项。每次上传只删和自己同一种 `--keep`、并且超过这个时间的图；文件名会标明是哪一种（`ssh-paste-k7d-<hash>.png`，默认的不加标记），所以一台主机想多留的图，不会被另一台主机删掉。删除发生在上传的时候，所以图片至少会留这么久。
 
 
+### 服务器要密码怎么办
+
+上传是在后台自己登录的，不能弹出密码提示，所以服务器得接受你的 key。`--enable` 和 `--doctor` 会检查这一点，并告诉你该怎么做。配置 key（只需一次；第二条命令最后一次问你密码）：
+
+```powershell
+# Windows, in PowerShell
+ssh-keygen -t ed25519
+Get-Content $HOME\.ssh\id_ed25519.pub | ssh myhost "umask 077; mkdir -p .ssh; touch .ssh/authorized_keys; echo >> .ssh/authorized_keys; tr -d '\r\000' >> .ssh/authorized_keys"
+ssh-paste --doctor myhost
+```
+
+```sh
+# macOS
+ssh-keygen -t ed25519
+ssh-copy-id myhost
+ssh-paste --doctor myhost
+```
+
+`ssh-keygen` 的每个问题直接按回车；如果提示 key 文件已经存在，回答 `n` 跳过即可。Windows 上的 key 不设 passphrase，因为 `ssh-agent` 服务默认关闭，要管理员才能打开（以管理员身份运行 `Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service`，再以自己的身份运行 `ssh-add`）。macOS 上可以设 passphrase，再运行 `ssh-add --apple-use-keychain ~/.ssh/id_ed25519`（重启后怎么保持加载，见 [GitHub 的说明](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)）。只接受密码或一次性验证码、不接受 key 的服务器，没法上传。
+
 ### 升级与卸载
 
 | 安装方式 | 升级 | 卸载 |
@@ -176,14 +196,7 @@ macOS：`sh ~/.local/share/ssh-paste/install.sh --uninstall`，或 `curl -fsSL h
 
 - **Windows 10 或 11**，自带的 PowerShell 5.1 即可（和 PowerShell 7 共存没问题），配 Windows Terminal（推荐）或经典控制台。
 - **OpenSSH 客户端**（`ssh.exe` / `ssh`），安装程序会检查。Windows 上在 **设置 > 系统 > 可选功能** 里添加 `"OpenSSH Client"`，或以管理员身份运行 `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0`。
-- **免交互的密钥登录**：上传用的 `ssh` 带 `BatchMode=yes`，只能密码登录的主机会失败。请用没有 passphrase 的密钥，或者 `ssh-agent`：
-
-  ```powershell
-  # once, in PowerShell as Administrator: start the agent now and at every boot
-  Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service
-  # then, as yourself: add your key (asks the passphrase once)
-  ssh-add
-  ```
+- **用 key 登录**：上传在后台自己登录、不弹提示（`BatchMode=yes`），所以服务器得接受你的 key，见[服务器要密码怎么办](#服务器要密码怎么办)。
 
 - **服务器**：`sh`、`cat`、`wc`、`find`、`cmp`、`mv`、`mktemp`，以及可写的 `/tmp`（登录 shell 可以是 `bash`、`zsh`、`fish` 或 `tcsh`）。
 
@@ -199,6 +212,7 @@ macOS：`sh ~/.local/share/ssh-paste/install.sh --uninstall`，或 `curl -fsSL h
 ## 已知限制
 
 - **焦点按窗口算，不按标签页算。** 会话运行期间，同一窗口里的每个标签页粘贴的都是路径，同一窗口里的另一个 SSH 标签页也可能先写入路径。请分开用不同的窗口。
+- **只接受密码或一次性验证码、不接受 key 的服务器**没法上传。
 - **Windows 上的 ssh 模式退出后，剪贴板里可能还是路径**，因为 `ssh` 会直接结束 `ProxyCommand`；下次复制就恢复正常。
 - **带 HTML 的图片会丢掉 HTML**：Chrome 的 **复制图片** 只留下图片和路径。
 - **Windows 上的 ssh 模式会给每次连接已启用的主机增加 PowerShell 启动时间**（`scp`、`sftp`、`git` 也一样）。

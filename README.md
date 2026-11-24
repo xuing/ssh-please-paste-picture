@@ -138,6 +138,26 @@ ssh-paste --keep 2h myhost                                  # wrapper mode, this
 `--keep` takes a time of at least 10 minutes (`30m`, `2h`, `7d`) or `never`; `--dir` takes `/path` or `~/path` (quote the `~`, so that your shell leaves it for the server). `~` is the home folder on the server: `--enable` asks the server for it once and writes the full path into your ssh config (wrapper mode asks when the session starts). If ssh-paste cannot log in to ask, give the full path instead. A folder other than `/tmp` is made (mode 700) when missing and must be yours alone: owned by you, not a link, not writable by group or others, no ACL (when the server cannot tell, it refuses the folder). Only the folder itself is checked, so choose one under folders that only you and root can change, such as your home folder. Running `--enable` again for a host changes only the options you give. An upload deletes only images of its own `--keep` that are older than it; the name says which (`ssh-paste-k7d-<hash>.png`, no mark for the default), so images that one host keeps longer are never deleted by another. Deletion happens during an upload, so images stay at least that long.
 
 
+### If the server asks for a password
+
+Uploads log in on their own, without a prompt, so the server must take your key. `--enable` and `--doctor` check this and say what to do. To set up a key (once; the second command asks your password one last time):
+
+```powershell
+# Windows, in PowerShell
+ssh-keygen -t ed25519
+Get-Content $HOME\.ssh\id_ed25519.pub | ssh myhost "umask 077; mkdir -p .ssh; touch .ssh/authorized_keys; echo >> .ssh/authorized_keys; tr -d '\r\000' >> .ssh/authorized_keys"
+ssh-paste --doctor myhost
+```
+
+```sh
+# macOS
+ssh-keygen -t ed25519
+ssh-copy-id myhost
+ssh-paste --doctor myhost
+```
+
+Press Enter at each `ssh-keygen` question; if it says the key file exists, answer `n` and go on. On Windows the key has no passphrase, because the `ssh-agent` service is off unless an administrator turns it on (as Administrator: `Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service`; then `ssh-add` as yourself). On macOS a passphrase is fine: also run `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` ([GitHub's guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent) shows how to keep it after a restart). A server that takes only a password or a one-time code, not a key, cannot take uploads.
+
 ### Update and remove
 
 | Installed with | Update | Remove |
@@ -176,14 +196,7 @@ By hand: delete the `# >>> ssh-paste` block in `~/.ssh/config`. Windows: remove 
 
 - **Windows 10 or 11** with the built-in PowerShell 5.1 (works alongside 7), and Windows Terminal (recommended) or the classic console.
 - **OpenSSH client** (`ssh.exe`/`ssh`); the installers check for it. On Windows add `"OpenSSH Client"` in **Settings > System > Optional features** (or as administrator: `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0`).
-- **Key login without a prompt:** uploads run `ssh` with `BatchMode=yes`, so password-only logins fail. Use a key without a passphrase, or `ssh-agent`:
-
-  ```powershell
-  # once, in PowerShell as Administrator: start the agent now and at every boot
-  Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service
-  # then, as yourself: add your key (asks the passphrase once)
-  ssh-add
-  ```
+- **Key login:** uploads log in without a prompt (`BatchMode=yes`), so the server must take your key: see [If the server asks for a password](#if-the-server-asks-for-a-password).
 
 - **Server:** `sh`, `cat`, `wc`, `find`, `cmp`, `mv`, `mktemp` and a writable `/tmp` (`bash`, `zsh`, `fish`, `tcsh` login shell).
 
@@ -200,6 +213,7 @@ The same commands, with Cmd+V. A zsh launcher (`ssh-paste-mac`) and a JavaScript
 
 - **Focus is per window, not per tab.** While a session runs, every tab in its window pastes the path, and another SSH tab there may set it first. Use separate windows.
 - **In ssh mode on Windows, the path may stay on the clipboard after exit**, because `ssh` ends the `ProxyCommand`; your next copy clears it.
+- **Servers that take only a password or a one-time code** (not a key) cannot take uploads.
 - **Images copied with HTML lose the HTML:** Chrome's **Copy image** keeps only the image and the path.
 - **ssh mode on Windows adds PowerShell startup time** to every connection to an enabled host (`scp`, `sftp` and `git` too).
 
