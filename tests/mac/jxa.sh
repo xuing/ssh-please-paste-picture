@@ -168,13 +168,10 @@ echo 'ok 1' > "$work/mode"
 activate Calculator com.apple.calculator
 pb finder "$work/shot.png" "$work/shot.jpg"
 echo "        what the copy put on the pasteboard: $(pb items)"
-# Another process sometimes sees only the first of the two file URLs that this writer
-# puts there (on macOS 15 most runs, on macOS 26 some). The watcher must offer every
-# file the pasteboard holds, so the test follows what it holds.
-pb file-paths > "$work/held"
+# Another process must read both file URLs (pb.js writes their data at once).
+pb file-paths | grep -v '^$' > "$work/held"
 held=$(wc -l < "$work/held" | tr -d ' ')
-if [ "$held" -lt 2 ]; then echo "        note: another process reads $held of the 2 copied files on this macOS"; fi
-if [ "$held" -lt 1 ]; then fail 'no copied file on the pasteboard'; fi
+check "$held" 2 'another process reads both copied files from the pasteboard'
 want=
 while IFS= read -r f; do want="$want /tmp/ssh-paste-$(sha16 "$f").${f##*.}"; done < "$work/held"
 want=${want# }
