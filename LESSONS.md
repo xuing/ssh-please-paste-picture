@@ -125,6 +125,19 @@ fix once and watch the test fail.
   run once with its fix reverted (run 45227788340) to see it fail.
 - Seen 1x (2026-11-24).
 
+**Check a platform rule in its documentation before a change relies on it,
+and make a missing secret fail loudly.** A rule recalled from memory is a
+guess, and GitHub hands a called workflow a secret that was not passed as an
+empty string, without an error.
+- d99008e: the review fix removed the `workflow_call` secret and the
+  caller's pass, on the belief that `environment:` on the job alone gives a
+  called workflow its environment secrets. GitHub's reuse-workflows page says
+  the caller must still pass it by name. In the v0.1.5 run (45320089524)
+  `actions/checkout` fell back to `github.token`, and the push to the tap was
+  denied (403). The fix passes the secret, marks it `required: true`, and a
+  step fails when it is empty.
+- Seen 1x (2026-11-24).
+
 **Keep the install and uninstall footprint test in CI.** It compares the real
 user profile before and after a full install, enable, disable and uninstall
 cycle. It finds what unit tests cannot see: a leak in state that only Windows
