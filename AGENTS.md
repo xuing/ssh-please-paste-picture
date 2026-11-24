@@ -30,7 +30,7 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 | `src/ssh-paste.ps1`, "Pure helpers" | proxy, upload, enable | `Split-SshArguments`, `Test-InteractiveSsh`, `Get-UploadSshArguments`, `Get-TrimmedPng`, `ConvertFrom-DropFiles`, `Read-UploadReply`, `Get-ManagedBlock`, `Set-ManagedBlock`. No Windows API, so tests cover them on any OS. |
 | `src/ssh-paste.ps1`, "Windows integration" | watcher, upload | `Initialize-Native` (P/Invoke), `Test-HostForeground`, `Read-ClipboardImage`, `Set-SshPasteClipboard`, `Send-Image` |
 | `src/ssh-paste.ps1`, "Clipboard watcher" | watcher | `New-Watcher`, `Invoke-WatcherTick` (one tick every 250 ms), `Sync-ClipboardText`, `Restore-Clipboard` |
-| `src/ssh-paste.ps1`, "Commands" | proxy, enable, install | `Invoke-Wrapper`, `Invoke-Proxy` (the ProxyCommand relay), `Update-SshConfig`, `Invoke-Enable`, `Invoke-Disable`, `Invoke-Doctor`, `Invoke-Uninstall`, `Invoke-Main` |
+| `src/ssh-paste.ps1`, "Commands" | proxy, enable, install | `Test-ScoopInstall` (Scoop owns updates and removal), `Get-ProxyScriptPath` (the apps\ssh-paste\current path under Scoop), `Invoke-Wrapper`, `Invoke-Proxy` (the ProxyCommand relay), `Update-SshConfig`, `Invoke-Enable`, `Invoke-Disable`, `Invoke-Doctor`, `Invoke-Uninstall`, `Invoke-Main` |
 | `install.ps1` | install | `Get-SourceFiles` (download or use the clone's `src`), the user PATH in the registry, `Invoke-Install`, `Invoke-Removal` |
 | `src/ssh-paste.cmd` | install | The launcher. `--uninstall` ends the batch context with `(goto)` before the script deletes the file. |
 | `src/ssh-paste.js`, "Pure helpers" | proxy, upload, enable | The macOS client's twins of the pure helpers above (`splitSshArguments`, `testInteractiveSsh`, `uploadSshArguments`, `readUploadReply`, `getManagedBlock`, `setManagedBlock`), plus `proxyCommandLine`, the pasteboard marker and `doctorPng`. No macOS API; node tests them. |
@@ -42,12 +42,13 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 | `tests/ssh-paste.Tests.ps1` | tests | Pester 5, one `Describe` per function. Tags: `Windows`, `Unix`, `E2E`. |
 | `tests/e2e-linux.sh` | tests | Starts a throwaway `sshd` on 127.0.0.1 and runs the `E2E` tests against it. |
 | `tests/footprint.ps1` | tests | Windows only. Installs, enables, disables and uninstalls on the real profile, then compares snapshots. |
+| `tests/scoop.ps1` | tests | Windows only (CI). The Scoop manifest with the real Scoop: install, `--enable`, `scoop update` keeps the ssh config block, `scoop uninstall` removes only its own block and stops when `--disable` fails, `no_junction`. |
 | `tests/cases.json` | tests | Test tables that the Pester tests and the node tests both run. |
 | `tests/mac/unit.test.js` | tests | node tests of `src/ssh-paste.js`: the shared tables, ports of the Pester cases, the watcher against a simulated pasteboard, and guards that keep both clients equal. |
 | `tests/mac/jxa.sh`, `e2e.sh`, `footprint.sh` | tests | macOS only (CI): the pasteboard and the watcher in Terminal.app with a stand-in ssh; a throwaway `sshd` with ssh mode and wrapper mode; install and uninstall against the real home folder. `pb.js` writes the pasteboard as other apps do. |
 | `tests/lint.ps1`, `check.ps1` | tests, ci | The lint checks, and the one local entry point that runs them with Pester. |
 | `verify/watcher/` | watcher | A TLA+ model of the clipboard watcher and `check.sh`, which model-checks it with TLC. Run it for any change to the watcher or `PendingClipboard`: [.claude/skills/verify-clipboard-watcher/SKILL.md](.claude/skills/verify-clipboard-watcher/SKILL.md). |
-| `.github/workflows/ci.yml`, `publish.yml`, `.github/scripts/*.sh` | ci, release | CI on 5.1, 7 on Windows and 7 on Linux, node on Linux, and macOS 15 and 26. `ci.yml` releases a green push to `main` (or a manual run on `main`) through `publish.yml`, which tags, builds, attests and publishes both clients. The scripts pick the version, write the notes and stamp the version. |
+| `.github/workflows/ci.yml`, `publish.yml`, `.github/scripts/*.sh` | ci, release | CI on 5.1, 7 on Windows and 7 on Linux, node on Linux, and macOS 15 and 26. `ci.yml` releases a green push to `main` (or a manual run on `main`) through `publish.yml`, which tags, builds, attests and publishes both clients, then writes the Homebrew formula (`homebrew-formula.sh`) and the Scoop manifest (`scoop-manifest.sh`) of the Latest release into xuing/homebrew-tap and xuing/scoop-bucket (`sync-package.sh`). The scripts pick the version, write the notes and stamp the version. |
 
 ## Commands
 

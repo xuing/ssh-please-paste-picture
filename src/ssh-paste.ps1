@@ -1708,7 +1708,7 @@ function Invoke-Enable {
     $text = Read-TextFile $configPath
     $block = Get-ManagedBlock $text
     $managed = @($block.Hosts)
-    $proxy = Get-ProxyCommandLine $PSCommandPath
+    $proxy = Get-ProxyCommandLine (Get-ProxyScriptPath $PSCommandPath)
     $added = @()
     foreach ($h in $Hosts) {
         if (-not (Test-HostAlias $h)) { throw "use a host name or a Host alias from ~/.ssh/config (no user@, no options): $h" }
@@ -1827,6 +1827,31 @@ function Invoke-Doctor {
 
 function Get-InstallDirectory {
     return (Join-Path $env:LOCALAPPDATA 'Programs\ssh-paste')
+}
+
+function Test-ScoopInstall {
+    # Scoop writes scoop-install.json (install.json before Scoop 0.6) next to the files of
+    # each version it installs (<scoop>\apps\ssh-paste\<version>, called through the
+    # apps\ssh-paste\current junction). Scoop then owns the files: scoop update and
+    # scoop uninstall.
+    param([string]$Directory)
+    if ([string]::IsNullOrEmpty($Directory)) { return $false }
+    foreach ($name in @('scoop-install.json', 'install.json')) {
+        if (Test-Path -LiteralPath (Join-Path $Directory $name) -PathType Leaf) { return $true }
+    }
+    return $false
+}
+
+function Get-ProxyScriptPath {
+    # The ssh-paste.ps1 that --enable writes into the ProxyCommand. Under Scoop it is the one
+    # in apps\ssh-paste\current, which scoop update keeps; a version folder goes away with
+    # scoop cleanup. Without that junction (Scoop's no_junction setting) no path lasts.
+    param([string]$ScriptPath)
+    $dir = Split-Path -Parent $ScriptPath
+    if (-not (Test-ScoopInstall $dir)) { return $ScriptPath }
+    $current = Join-Path (Join-Path (Split-Path -Parent $dir) 'current') 'ssh-paste.ps1'
+    if (Test-Path -LiteralPath $current -PathType Leaf) { return $current }
+    throw 'Scoop installed ssh-paste without the apps\ssh-paste\current junction (its no_junction setting), so no path to it stays after scoop update. Use wrapper mode instead: ssh-paste HOST'
 }
 
 function Remove-UserPathEntry {
@@ -1990,8 +2015,14 @@ function Invoke-Main {
         '--enable' { return (Invoke-Enable $rest) }
         '--disable' { return (Invoke-Disable $rest) }
         '--doctor' { return (Invoke-Doctor $rest) }
-        '--update' { return (Invoke-Update $rest) }
-        '--uninstall' { return (Invoke-Uninstall) }
+        '--update' {
+            if (Test-ScoopInstall $PSScriptRoot) { [Console]::Error.WriteLine('ssh-paste was installed with Scoop. Update it with: scoop update ssh-paste'); return 1 }
+            return (Invoke-Update $rest)
+        }
+        '--uninstall' {
+            if (Test-ScoopInstall $PSScriptRoot) { [Console]::Error.WriteLine('ssh-paste was installed with Scoop. Remove it with: scoop uninstall ssh-paste (it also runs ssh-paste --disable)'); return 1 }
+            return (Invoke-Uninstall)
+        }
         '--version' { Write-Host $script:Version; return 0 }
         '--help' { Write-Host (Get-Usage); return 0 }
         '-h' { Write-Host (Get-Usage); return 0 }

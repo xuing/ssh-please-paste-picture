@@ -153,6 +153,12 @@ The macOS client works as follows:
   the tap: its deploy key can write to `xuing/homebrew-tap` and no other
   repository, and it is a secret of an environment that only `main` can use.
 - See [macOS](README.md#macos) for everything the install changes.
+- `scoop install xuing/ssh-paste` (Windows) installs `ssh-paste.ps1` and
+  `ssh-paste.cmd` of the Latest release, and Scoop checks each against the
+  SHA-256 in the manifest, copied from the release's attested `SHA256SUMS` by
+  the same release job, with a deploy key that can write to
+  `xuing/scoop-bucket` only, held by an environment that only `main` can use.
+  `scoop uninstall` runs `ssh-paste --disable` before it deletes the files.
 
 ### Nothing stored
 
