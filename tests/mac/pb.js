@@ -48,8 +48,10 @@ function run(argv) {
         // Finder writes them, each item's data set before the write. Another process may
         // still read fewer file URLs than this writes: on the macOS 15 and 26 runners it
         // read 1 or 2 of 2 at random, before any watcher ran and with each of four ways of
-        // writing them (CI runs 45379702428 and 45380819293). Why is not known, nor whether
-        // a Mac that a person uses does the same. jxa.sh follows what it reads.
+        // writing them (CI runs 45379702428 and 45380819293). Why is not known. On a Mac that
+        // a person uses, `pb.js file-paths` read both files of a two-file copy made in Finder
+        // itself (once, 2026-11-24); this stand-in was not tried there. jxa.sh follows what
+        // it reads.
         var items = [];
         var names = [];
         for (var i = 1; i < argv.length; i++) {
