@@ -340,7 +340,8 @@ function Test-ServerLogin {
     if ($lines.Count -gt 0) { $line = $lines[$lines.Count - 1].Trim() }
     if ($r.ExitCode -eq 0 -and $line.StartsWith('/')) { return @{ Home = $line; Error = $null } }
     $err = ([string]$r.Err).Trim()
-    if (-not $err) { $err = ('ssh exited {0}, and the server sent no home folder' -f $r.ExitCode) }
+    if ($err) { $err = ('ssh exited with {0}: {1}' -f $r.ExitCode, $err) }
+    else { $err = ('ssh exited with {0}, and the server sent no home folder' -f $r.ExitCode) }
     return @{ Home = $null; Error = $err }
 }
 
@@ -437,6 +438,8 @@ function Get-SshFailure {
     # counts, not a "Permission denied (...)" from a command on the server.
     param([string]$Text)
     if ([string]::IsNullOrEmpty($Text)) { return $null }
+    # ssh exits 255 for its own errors; another status is the remote command's, whatever it said.
+    if ($Text -cmatch '^ssh exited with (\d+):' -and $Matches[1] -cne '255') { return $null }
     if ($Text -cmatch 'Permission denied \(([a-z][a-z0-9@.-]*(,[a-z][a-z0-9@.-]*)*)\)\.') {
         $methods = @($Matches[1] -split ',')
         $typed = @($methods | Where-Object { $_ -cne 'password' -and $_ -cne 'keyboard-interactive' }).Count -eq 0
@@ -459,11 +462,14 @@ function Test-FailureFinal {
 
 function Get-LoginAdvice {
     # One line on why uploads to HostName cannot log in, or $null when the error says nothing
-    # we can advise on. (loginAdvice in src/ssh-paste.js; tests/cases.json loginAdvice.)
-    param($Failure, [string]$HostName)
+    # we can advise on. -Here: the key commands follow, so the pointer to --doctor is left out.
+    # (loginAdvice in src/ssh-paste.js; tests/cases.json loginReports.)
+    param($Failure, [string]$HostName, [switch]$Here)
     if ($null -eq $Failure) { return $null }
     if ($Failure.Kind -ceq 'auth' -and $Failure.KeyLogin) {
-        return ('{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor {0} shows how' -f $HostName)
+        $line = ('{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add' -f $HostName)
+        if (-not $Here) { $line += ('; ssh-paste --doctor {0} shows how' -f $HostName) }
+        return $line
     }
     if ($Failure.Kind -ceq 'auth' -and $Failure.Typed) {
         return ('{0} wants a password or a one-time code ({1}), which uploads cannot type, so ssh-paste cannot upload to it' -f $HostName, (@($Failure.Methods) -join ','))
@@ -486,6 +492,30 @@ function Get-LoginReport {
     if ($advice) { return $advice }
     $first = @($ErrorText -split "`r?`n" | Where-Object { $_.Trim() })[0]
     return ('could not check the login to {0} now ({1}); ssh-paste --doctor {0} tests it' -f $HostName, $first.Trim())
+}
+
+function Format-ShellWords {
+    # Words as a command line to type again: plain when they hold only safe characters, else
+    # in single quotes (an inner ' doubled for PowerShell, '\'' for zsh in formatShellWords).
+    param([string[]]$Words)
+    return (@(foreach ($w in @($Words)) {
+                if ($w -cmatch '^[A-Za-z0-9._@%+=:,/-]+\z') { $w } else { "'" + $w.Replace("'", "''") + "'" }
+            }) -join ' ')
+}
+
+function Get-EnableRefusal {
+    # What --enable says instead of enabling HostName, whose uploads were refused (ssh mode
+    # cannot type a password): the reason and, when a key would do, the commands that set one
+    # up. $null when the check logged in or could not tell (network, host key, no answer):
+    # then the host is enabled. (enableRefusal in src/ssh-paste.js.)
+    param([string]$HostName, [string]$ErrorText)
+    $f = Get-SshFailure $ErrorText
+    if ($null -eq $f -or ($f.Kind -cne 'auth' -and $f.Kind -cne 'toomany')) { return $null }
+    $advice = Get-LoginAdvice $f $HostName -Here
+    if (-not $advice) { $advice = ('{0} refused the login for uploads ({1})' -f $HostName, @($ErrorText -split "`r?`n" | Where-Object { $_.Trim() })[0].Trim()) }
+    $lines = @($advice)
+    if ($f.Kind -ceq 'auth' -and $f.KeyLogin) { $lines += @(Get-KeySetupLines $HostName) }
+    return , $lines
 }
 
 function Get-KeySetupTarget {
@@ -517,7 +547,9 @@ function Get-KeySetupLines {
         ('    Get-Content $HOME\.ssh\id_ed25519.pub | ssh ' + $HostArgs + ' "' + $script:KeyInstallCommand + '"'),
         ('    ssh-paste --doctor ' + $HostArgs),
         '  ssh-keygen: press Enter at each question (no passphrase: Windows'' ssh-agent is off',
-        '  unless an administrator turns it on); if the key file exists already, answer n.')
+        '  unless an administrator turns it on); if the key file exists already, answer n.',
+        '  If you log in with ssh -i KEY, or ~/.ssh/config names an IdentityFile for this host,',
+        '  use that key instead, and name it with IdentityFile in the Host entry.')
 }
 
 function Get-ReplyPathPattern {
@@ -2082,7 +2114,9 @@ function Invoke-Enable {
     $added = @()
     $changed = @()
     $logins = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+    $problems = @()
     $ssh = $null
+    # Every name is checked before any connection, so a bad one stops the command at once.
     foreach ($h in $hosts) {
         if (-not (Test-HostAlias $h)) { throw "use a host name or a Host alias from ~/.ssh/config (no user@, no options): $h" }
         if (-not $want.Contains($h)) {
@@ -2097,6 +2131,10 @@ function Invoke-Enable {
                     throw ("{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}" -f $h, $key, $resolved[$key])
                 }
             }
+        }
+    }
+    foreach ($h in $hosts) {
+        if (-not $want.Contains($h)) {
             $want[$h] = @{ Keep = $script:DefaultKeep; Dir = $script:DefaultDir }
             $added += $h
         }
@@ -2104,6 +2142,9 @@ function Invoke-Enable {
         # now and not at the first paste; the same connection reads the home folder for ~.
         if ($null -eq $ssh) { $ssh = Get-SshPath; $sshVersion = Get-SshVersion $ssh }
         if (-not $logins.ContainsKey($h)) { $logins[$h] = Test-ServerLogin $ssh (Split-SshArguments @($h)) $sshVersion -NoProxy }
+        # A host whose uploads the server refuses is not enabled: ssh mode could never paste there.
+        $refusal = Get-EnableRefusal $h $logins[$h].Error
+        if ($null -ne $refusal) { $problems += $refusal; continue }
         $old = $want[$h]
         $new = @{ Keep = $old.Keep; Dir = $old.Dir }
         if ($null -ne $settings.Keep) { $new.Keep = $settings.Keep }
@@ -2112,13 +2153,17 @@ function Invoke-Enable {
             # absolute path and the path to paste is known before an upload.
             $new.Dir = $settings.Dir
             if ($new.Dir.StartsWith('~')) {
-                if ($null -eq $logins[$h].Home) { throw (Get-HomeError $h $logins[$h].Error) }
+                if ($null -eq $logins[$h].Home) { $problems += (Get-HomeError $h $logins[$h].Error); continue }
                 $new.Dir = ConvertTo-AbsoluteDirectory $settings.Dir $logins[$h].Home
                 Write-Info ('{0}: {1} is {2} there' -f $h, $settings.Dir, $new.Dir)
             }
         }
         if ($added -notcontains $h -and $changed -notcontains $h -and ($new.Keep -cne $old.Keep -or $new.Dir -cne $old.Dir)) { $changed += $h }
         $want[$h] = $new
+    }
+    if ($problems.Count -gt 0) {
+        # All or nothing: the reasons for every host, and the command to run again.
+        throw (@('nothing changed in ~/.ssh/config:') + $problems + @(('Then run again: ssh-paste --enable ' + (Format-ShellWords $Arguments))) -join [Environment]::NewLine)
     }
     $groups = @(Get-SettingsGroups $want (Get-ProxyScriptPath $PSCommandPath))
     $createdFile = $block.CreatedFile -or ($null -eq $text)
@@ -2228,7 +2273,7 @@ function Invoke-Doctor {
         Report $false ('upload to {0}: {1}' -f $parsed.Destination, $_.Exception.Message)
         Write-Host ''
         $failure = Get-SshFailure $_.Exception.Message
-        $advice = Get-LoginAdvice $failure $parsed.Destination
+        $advice = Get-LoginAdvice $failure $parsed.Destination -Here
         if ($advice) { Write-Host $advice }
         if ($null -ne $failure -and $failure.Kind -ceq 'auth' -and $failure.KeyLogin) {
             Write-Host ''

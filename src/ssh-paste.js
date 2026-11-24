@@ -296,7 +296,7 @@ function testServerLogin(ssh, parsed, noProxy) {
     var line = lines.length > 0 ? lines[lines.length - 1].trim() : '';
     if (r.code === 0 && line.charAt(0) === '/') return { home: line, error: null };
     var err = String(r.err || '').trim();
-    return { home: null, error: err || 'ssh exited ' + r.code + ', and the server sent no home folder' };
+    return { home: null, error: err ? 'ssh exited with ' + r.code + ': ' + err : 'ssh exited with ' + r.code + ', and the server sent no home folder' };
 }
 
 function serverHome(ssh, parsed) {
@@ -315,6 +315,9 @@ function sshFailure(text) {
     // a key would do; typed: every method needs a person to type), toomany, hostkey,
     // network, or null. Only ssh's own list of method names counts.
     text = String(text || '');
+    // ssh exits 255 for its own errors; another status is the remote command's, whatever it said.
+    var st = /^ssh exited with (\d+):/.exec(text);
+    if (st && st[1] !== '255') return null;
     var m = /Permission denied \(([a-z][a-z0-9@.-]*(,[a-z][a-z0-9@.-]*)*)\)\./.exec(text);
     if (m) {
         var methods = m[1].split(',');
@@ -333,10 +336,11 @@ function failureFinal(f) {
     return !!f && f.kind === 'auth' && f.typed;
 }
 
-function loginAdvice(f, host) {
-    // Get-LoginAdvice: one line on why uploads to host cannot log in, or null.
+function loginAdvice(f, host, here) {
+    // Get-LoginAdvice: one line on why uploads to host cannot log in, or null. here: the key
+    // commands follow, so the pointer to --doctor is left out.
     if (!f) return null;
-    if (f.kind === 'auth' && f.keyLogin) return host + ' did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor ' + host + ' shows how';
+    if (f.kind === 'auth' && f.keyLogin) return host + ' did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add' + (here ? '' : '; ssh-paste --doctor ' + host + ' shows how');
     if (f.kind === 'auth' && f.typed) return host + ' wants a password or a one-time code (' + f.methods.join(',') + '), which uploads cannot type, so ssh-paste cannot upload to it';
     if (f.kind === 'toomany') return host + ' closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config';
     if (f.kind === 'hostkey') return 'ssh could not verify the host key of ' + host + ': run ssh ' + host + ' to see why (a new host asks you to accept its key)';
@@ -350,6 +354,26 @@ function loginReport(host, errorText) {
     if (advice) return advice;
     var first = String(errorText).split(/\r?\n/).filter(function (l) { return l.trim().length > 0; })[0] || '';
     return 'could not check the login to ' + host + ' now (' + first.trim() + '); ssh-paste --doctor ' + host + ' tests it';
+}
+
+function formatShellWords(words) {
+    // Format-ShellWords: words as a command line to type again in zsh.
+    return words.map(function (w) { return /^[A-Za-z0-9._@%+=:,\/-]+$/.test(w) ? w : "'" + w.replace(/'/g, "'\\''") + "'"; }).join(' ');
+}
+
+function enableRefusal(host, errorText) {
+    // Get-EnableRefusal: what --enable says instead of enabling host, whose uploads were
+    // refused; null when the check logged in or could not tell (then the host is enabled).
+    var f = sshFailure(errorText);
+    if (!f || (f.kind !== 'auth' && f.kind !== 'toomany')) return null;
+    var advice = loginAdvice(f, host, true);
+    if (!advice) {
+        var first = String(errorText).split(/\r?\n/).filter(function (l) { return l.trim().length > 0; })[0] || '';
+        advice = host + ' refused the login for uploads (' + first.trim() + ')';
+    }
+    var lines = [advice];
+    if (f.kind === 'auth' && f.keyLogin) lines = lines.concat(keySetupLines(host));
+    return lines;
 }
 
 function keySetupTarget(parsed) {
@@ -373,10 +397,12 @@ function keySetupLines(hostArgs) {
     return [
         '  Set up a key (once; ssh-copy-id asks your password one last time):',
         '    ssh-keygen -t ed25519',
-        '    ssh-copy-id ' + hostArgs,
+        '    ssh-copy-id -i ~/.ssh/id_ed25519.pub ' + hostArgs,
         '    ssh-paste --doctor ' + hostArgs,
         '  ssh-keygen: press Enter at each question; if the key file exists already, answer n.',
-        '  With a passphrase, also run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519'
+        '  With a passphrase, also run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519',
+        '  If you log in with ssh -i KEY, or ~/.ssh/config names an IdentityFile for this host,',
+        '  use that key instead, and name it with IdentityFile in the Host entry.'
     ];
 }
 
@@ -1919,11 +1945,12 @@ function enableHosts(args) {
     var added = [];
     var changed = [];
     var logins = {};
+    var problems = [];
     var ssh = null;
+    // Every name is checked before any connection, so a bad one stops the command at once.
     hosts.forEach(function (h) {
         if (!testHostAlias(h)) throw new Error('use a host name or a Host alias from ~/.ssh/config (no user@, no options): ' + h);
-        var pair = find(h);
-        if (!pair) {
+        if (!find(h)) {
             var resolved = resolvedSshConfig(h);
             var hostName = resolved.hostname || h;
             if (!hostResolves(hostName)) throw new Error('cannot find the host ' + hostName + ' (from ' + h + '). Check the name, or add it to ~/.ssh/config, then run --enable again');
@@ -1932,6 +1959,11 @@ function enableHosts(args) {
                     throw new Error(h + ' already uses ' + key + ' (' + resolved[key] + '); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste ' + h);
                 }
             });
+        }
+    });
+    hosts.forEach(function (h) {
+        var pair = find(h);
+        if (!pair) {
             pair = [h, { Keep: DEFAULT_KEEP, Dir: DEFAULT_DIR }];
             want.push(pair);
             added.push(h);
@@ -1940,18 +1972,25 @@ function enableHosts(args) {
         // now and not at the first paste; the same connection reads the home folder for ~.
         if (ssh === null) ssh = sshPath();
         if (!Object.prototype.hasOwnProperty.call(logins, h)) logins[h] = testServerLogin(ssh, splitSshArguments([h]), true);
+        // A host whose uploads the server refuses is not enabled: ssh mode could never paste there.
+        var refusal = enableRefusal(h, logins[h].error);
+        if (refusal) { problems = problems.concat(refusal); return; }
         var before = pair[1];
         var after = { Keep: settings.Keep || before.Keep, Dir: settings.Dir || before.Dir };
         if (settings.Dir && settings.Dir.charAt(0) === '~') {
             // ~ is the home folder on that server, asked for once, so the block holds an
             // absolute path and the path to paste is known before an upload.
-            if (logins[h].home === null) throw new Error(homeError(h, logins[h].error));
+            if (logins[h].home === null) { problems.push(homeError(h, logins[h].error)); return; }
             after.Dir = absoluteDirectory(settings.Dir, logins[h].home);
             say(h + ': ' + settings.Dir + ' is ' + after.Dir + ' there');
         }
         if (added.indexOf(h) < 0 && changed.indexOf(h) < 0 && (after.Keep !== before.Keep || after.Dir !== before.Dir)) changed.push(h);
         pair[1] = after;
     });
+    if (problems.length > 0) {
+        // All or nothing: the reasons for every host, and the command to run again.
+        throw new Error(['nothing changed in ~/.ssh/config:'].concat(problems, ['Then run again: ssh-paste --enable ' + formatShellWords(args || [])]).join('\n'));
+    }
     var groups = settingsGroups(want, launcherPath());
     var createdFile = block.CreatedFile || old === null;
     if (added.length > 0 || changed.length > 0) {
@@ -2079,7 +2118,7 @@ function doctor(args) {
         report(false, 'upload to ' + parsed.Destination + ': ' + e.message);
         say('');
         var failure = sshFailure(e.message);
-        var advice = loginAdvice(failure, parsed.Destination);
+        var advice = loginAdvice(failure, parsed.Destination, true);
         if (advice) say(advice);
         if (failure && failure.kind === 'auth' && failure.keyLogin) {
             say('');
@@ -2193,7 +2232,7 @@ if (typeof module !== 'undefined' && module.exports) {
         DEFAULT_KEEP: DEFAULT_KEEP, DEFAULT_DIR: DEFAULT_DIR, keepMinutesOf: keepMinutesOf, testServerDirectory: testServerDirectory,
         readPasteSettings: readPasteSettings, proxySettings: proxySettings, replyPathPattern: replyPathPattern, uploadCacheHours: uploadCacheHours,
         settingsGroups: settingsGroups, disableMessage: disableMessage, sshModeSettings: sshModeSettings,
-        sshFailure: sshFailure, failureFinal: failureFinal, loginAdvice: loginAdvice, loginReport: loginReport, keySetupLines: keySetupLines, keySetupTarget: keySetupTarget, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
+        sshFailure: sshFailure, failureFinal: failureFinal, loginAdvice: loginAdvice, loginReport: loginReport, keySetupLines: keySetupLines, keySetupTarget: keySetupTarget, enableRefusal: enableRefusal, formatShellWords: formatShellWords, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
         serverSshArguments: serverSshArguments,
         SSH_FLAGS_NO_ARG: SSH_FLAGS_NO_ARG, SSH_FLAGS_WITH_ARG: SSH_FLAGS_WITH_ARG, SSH_KEEP_NO_ARG: SSH_KEEP_NO_ARG,
         SSH_KEEP_WITH_ARG: SSH_KEEP_WITH_ARG, SSH_DROP_OPTIONS: SSH_DROP_OPTIONS, TERM_PROGRAM_BUNDLES: TERM_PROGRAM_BUNDLES,

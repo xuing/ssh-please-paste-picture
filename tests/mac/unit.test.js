@@ -181,17 +181,27 @@ test('paste settings (--keep, --dir), the tables of tests/cases.json and the blo
     await t.test('gives the key setup commands [-p PORT] [USER@]HOST from the --doctor arguments (Get-KeySetupTarget)', () => {
         for (const c of cases.keySetupTargets) assert.deepEqual(m.keySetupTarget(m.splitSshArguments(c.SshArgs)), { Target: c.Target, Dropped: c.Dropped }, c.Name);
     });
+    await t.test('refuses --enable for a host only when the server refused the login (Get-EnableRefusal)', () => {
+        for (const c of cases.enableRefusals) assert.equal(m.enableRefusal('h', c.Said) !== null, c.Refuse, c.Name);
+        const lines = m.enableRefusal('build', 'xu@build: Permission denied (publickey,password).');
+        assert.equal(lines[0], 'build did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add');
+        assert.ok(lines.includes('    ssh-copy-id -i ~/.ssh/id_ed25519.pub build'));
+    });
+    await t.test('writes words as a command line to type again in zsh (Format-ShellWords)', () => {
+        for (const c of cases.shellWords) assert.equal(m.formatShellWords(c.Words), c.Expected, c.Name);
+        assert.equal(m.formatShellWords(["it's"]), "'it'\\''s'");
+    });
     await t.test('says whether uploads to a host log in, and what to do (Get-LoginReport)', () => {
         for (const c of cases.loginReports) assert.equal(m.loginReport(c.HostName, c.Said), c.Expected, c.Name);
     });
     await t.test('prints the commands that set up a key on macOS, as the READMEs show them', () => {
         const lines = m.keySetupLines('-p 2222 build');
         assert.ok(lines.includes('    ssh-keygen -t ed25519'));
-        assert.ok(lines.includes('    ssh-copy-id -p 2222 build'));
+        assert.ok(lines.includes('    ssh-copy-id -i ~/.ssh/id_ed25519.pub -p 2222 build'));
         assert.ok(lines.includes('    ssh-paste --doctor -p 2222 build'));
         for (const readme of ['README.md', 'README.zh-CN.md']) {
             const text = fs.readFileSync(path.join(__dirname, '..', '..', readme), 'utf8');
-            assert.ok(text.includes('ssh-copy-id myhost'), readme + ' shows ssh-copy-id');
+            assert.ok(text.includes('ssh-copy-id -i ~/.ssh/id_ed25519.pub myhost'), readme + ' shows ssh-copy-id');
             assert.ok(text.includes('ssh-add --apple-use-keychain ~/.ssh/id_ed25519'), readme + ' shows ssh-add');
         }
     });
