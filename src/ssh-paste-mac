@@ -6,11 +6,14 @@
 #                                 start the watcher next to the relay, then
 #                                 become the relay (nc). stdout is the SSH stream.
 #   ssh-paste --uninstall         run the installed install.sh --uninstall
+#                                 (Homebrew: --disable, then say brew uninstall)
 #   ssh-paste [ssh options] HOST  wrapper mode: watcher, then ssh, then stop it
 #   ssh-paste --enable|--disable|--doctor|--update|--version|--help   ssh-paste.js
 #
 # Installed as ~/.local/share/ssh-paste/bin/ssh-paste next to ../ssh-paste.js and
-# ../install.sh; in a clone it is src/ssh-paste-mac next to src/ssh-paste.js.
+# ../install.sh; in a clone it is src/ssh-paste-mac next to src/ssh-paste.js;
+# from Homebrew it is <prefix>/Cellar/ssh-paste/<version>/libexec/bin/ssh-paste
+# next to ../ssh-paste.js; ssh calls it as <prefix>/opt/ssh-paste/libexec/bin/ssh-paste.
 # Keep this file ASCII. https://github.com/xuing/ssh-please-paste-picture
 
 emulate -R zsh
@@ -19,6 +22,25 @@ root=${self:h:h}
 js=$root/ssh-paste.js
 [[ -f $js ]] || js=${self:h}/ssh-paste.js
 osascript=/usr/bin/osascript
+# The path ssh runs: --enable writes it into the ProxyCommand.
+launcher=$self
+
+# Homebrew owns its files, so brew updates and removes them. The Cellar path holds
+# the version and is gone after `brew upgrade`; the opt path stays.
+if [[ $self == */Cellar/ssh-paste/*/libexec/bin/ssh-paste ]]; then
+  launcher=${self%/Cellar/ssh-paste/*}/opt/ssh-paste/libexec/bin/ssh-paste
+  case ${1-} in
+    --update)
+      print -u2 'ssh-paste was installed with Homebrew. Update it with: brew upgrade ssh-paste'
+      exit 1
+      ;;
+    --uninstall)
+      SSH_PASTE_LAUNCHER=$launcher "$osascript" -l JavaScript "$js" --disable || exit 1
+      print 'ssh-paste was installed with Homebrew. Remove it with: brew uninstall ssh-paste'
+      exit 0
+      ;;
+  esac
+fi
 
 case ${1-} in
   --proxy)
@@ -43,8 +65,7 @@ case ${1-} in
     exec /bin/sh "$root/install.sh" --uninstall
     ;;
   ''|--enable|--disable|--doctor|--update|--version|--help|-h|--watch-*)
-    # --enable writes this path into the ProxyCommand line.
-    export SSH_PASTE_LAUNCHER=$self
+    export SSH_PASTE_LAUNCHER=$launcher
     exec "$osascript" -l JavaScript "$js" "$@"
     ;;
 esac

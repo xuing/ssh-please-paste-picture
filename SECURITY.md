@@ -146,6 +146,12 @@ The macOS client works as follows:
   launcher parses (`zsh -n`), then runs `ssh-paste --version`.
   `ssh-paste --update` checks the latest `install.sh` against `SHA256SUMS`
   before it runs it.
+- `brew install xuing/tap/ssh-paste` installs the same two files of the
+  release, `ssh-paste.js` and `ssh-paste-mac`, and Homebrew checks each
+  against the SHA-256 in the formula, which a release job copies from the
+  attested `SHA256SUMS` of the release marked Latest. Only that job can change
+  the tap: its deploy key can write to `xuing/homebrew-tap` and no other
+  repository, and it is a secret of an environment that only `main` can use.
 - See [macOS](README.md#macos) for everything the install changes.
 
 ### Nothing stored
