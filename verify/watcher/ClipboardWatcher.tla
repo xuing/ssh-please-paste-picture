@@ -78,6 +78,8 @@ VARIABLES
     uploaded,  \* $W.Uploaded: image -> remote path
     failed,    \* $W.Failed: images whose last upload failed
     due,       \* failed images whose retry time has come ($W.WakeAt)
+    stopped,   \* $W.Blocked: a failure that trying again cannot fix ended the session's
+               \* uploads (Test-FailureFinal: a server that takes only typed methods)
     alive,     \* the session (and with it its clipboard window) runs
     \* Each session's PendingClipboard window thread
     prom,      \* promiseOpen / textReady / promisedText
@@ -90,7 +92,7 @@ VARIABLES
 
 world == <<fg, cb, seq, busy, budget, paste, onServer>>
 locals == <<tfg, img, exp, wrote, keep, tookOver, syncText>>
-memory == <<st, lastSeq, lastFg, uploaded, failed, due, alive>>
+memory == <<st, lastSeq, lastFg, uploaded, failed, due, stopped, alive>>
 ghost == <<writes, lost, fresh, broken, badPaste>>
 vars == <<world, pc, locals, pub, memory, prom, ghost>>
 
@@ -128,6 +130,7 @@ Init ==
     /\ uploaded = [w \in Watchers |-> [i \in Images |-> None]]
     /\ failed = [w \in Watchers |-> {}]
     /\ due = [w \in Watchers |-> {}]
+    /\ stopped = [w \in Watchers |-> FALSE]
     /\ alive = [w \in Watchers |-> TRUE]
     /\ prom = [w \in Watchers |-> Closed]
     /\ writes = [w \in Watchers |-> 0]
@@ -367,14 +370,14 @@ SessionKilled(w) ==
     /\ Dies(w)
     /\ pub' = [pub EXCEPT ![w] = NoEntry]
     /\ UNCHANGED <<fg, cb, seq, busy, onServer, locals, st, lastSeq, lastFg, uploaded, failed,
-                   due, prom, lost>>
+                   due, stopped, prom, lost>>
 
 \* A failed upload's backoff (30 s, then 1 min, ...) runs out.
 RetryTimeComes(w, i) ==
     /\ i \in failed[w] \ due[w]
     /\ due' = [due EXCEPT ![w] = @ \cup {i}]
     /\ writes' = [v \in Watchers |-> 0]
-    /\ UNCHANGED <<world, pc, locals, pub, st, lastSeq, lastFg, uploaded, failed, alive, prom,
+    /\ UNCHANGED <<world, pc, locals, pub, st, lastSeq, lastFg, uploaded, failed, stopped, alive, prom,
                    lost, fresh, broken, badPaste>>
 
 -----------------------------------------------------------------------------
@@ -397,7 +400,7 @@ Tick(w) ==
           THEN \* ReadSnapshot throws "the clipboard is busy"; the loop's catch. This
                \* tick saw nothing, so it does not count for UserWaited.
                /\ lastSeq' = [lastSeq EXCEPT ![w] = 0]
-               /\ UNCHANGED <<world, pc, locals, pub, st, lastFg, uploaded, failed, due, alive,
+               /\ UNCHANGED <<world, pc, locals, pub, st, lastFg, uploaded, failed, due, stopped, alive,
                               prom, writes, lost, fresh, broken, badPaste>>
           ELSE LET s == IF needRead THEN Snap ELSE st[w]
                    i == s.content
@@ -405,12 +408,13 @@ Tick(w) ==
                    otherSession == s.marked /\ s.hasText /\ s.owner = fg /\ s.by # w
                    shown == /\ s.marked /\ s.hasText /\ s.val = e
                             /\ ~Has("shown_any_entry") => CanStillPaste(w, s)
-                   failing == i \in Images /\ i \in failed[w]
+                   \* Test-UploadFailing: true for every image once the session is stopped.
+                   failing == stopped[w] \/ (i \in Images /\ i \in failed[w])
                IN /\ fresh' = [fresh EXCEPT ![w] = TRUE]
                   /\ st' = [st EXCEPT ![w] = s]
                   /\ lastSeq' = [lastSeq EXCEPT ![w] = s.seq]
                   /\ lastFg' = [lastFg EXCEPT ![w] = fg]
-                  /\ UNCHANGED <<world, uploaded, failed, due, alive, writes, lost, broken,
+                  /\ UNCHANGED <<world, uploaded, failed, due, stopped, alive, writes, lost, broken,
                                  badPaste>>
                   /\ CASE i \notin Images ->
                             Finish(w) /\ UNCHANGED <<pub, prom>>
@@ -434,13 +438,15 @@ Tick(w) ==
                        [] OTHER ->
                             Finish(w) /\ UNCHANGED <<pub, prom>>
 
-\* Get-UploadedPath when no upload is needed: the cached path, or $null while
-\* a failed upload waits for its retry time. Otherwise the upload starts.
+\* Get-UploadedPath when no upload is needed: $null once the session is stopped
+\* (Get-UploadedItemPath checks $W.Blocked before the cache), the cached path, or
+\* $null while a failed upload waits for its retry time. Otherwise the upload starts.
 GetPath(w) ==
     /\ alive[w]
     /\ pc[w] = "getPath"
     /\ LET i == img[w] IN
-       IF uploaded[w][i] # None THEN Complete(w, uploaded[w][i])
+       IF stopped[w] THEN Complete(w, IF Has("stopped_claims_path") THEN exp[w] ELSE None)
+       ELSE IF uploaded[w][i] # None THEN Complete(w, uploaded[w][i])
        ELSE IF i \in failed[w] /\ i \notin due[w] THEN Complete(w, None)
        ELSE pc' = [pc EXCEPT ![w] = "upload"] /\ UNCHANGED <<locals, prom>>
     /\ UNCHANGED <<world, pub, memory, ghost>>
@@ -452,13 +458,16 @@ UploadEnds(w, r) ==
     /\ LET i == img[w]
            path == CASE r = "plain" -> Plain(i)
                      [] r = "alt" -> Alt(i, Host(w))
-                     [] r = "fail" -> None
+                     [] r \in {"fail", "final"} -> None
        IN /\ IF path # None
              THEN /\ onServer' = [onServer EXCEPT ![Host(w)] = @ \cup {path}]
                   /\ uploaded' = [uploaded EXCEPT ![w][i] = path]
                   /\ failed' = [failed EXCEPT ![w] = @ \ {i}]
              ELSE /\ failed' = [failed EXCEPT ![w] = @ \cup {i}]
                   /\ UNCHANGED <<onServer, uploaded>>
+          \* A failure that trying again cannot fix sets $W.Blocked (Test-FailureFinal on
+          \* ssh's stderr; the model leaves which failures those are open).
+          /\ stopped' = IF r = "final" THEN [stopped EXCEPT ![w] = TRUE] ELSE stopped
           /\ due' = [due EXCEPT ![w] = @ \ {i}]
           /\ Complete(w, path)
     /\ UNCHANGED <<fg, cb, seq, busy, budget, paste, pub, st, lastSeq, lastFg, alive, ghost>>
@@ -485,7 +494,7 @@ Sync(w) ==
                ELSE /\ Send(w, "writeSync",
                             Entry(c.content, IF t = None THEN None ELSE tfg[w], t, c, FALSE))
                     /\ UNCHANGED <<locals, lastSeq>>
-    /\ UNCHANGED <<world, st, lastFg, uploaded, failed, due, alive, ghost>>
+    /\ UNCHANGED <<world, st, lastFg, uploaded, failed, due, stopped, alive, ghost>>
 
 \* Restore-Clipboard on exit; then the process ends, and its window with it.
 Restore(w) ==
@@ -497,7 +506,7 @@ Restore(w) ==
                /\ UNCHANGED <<paste, broken, badPaste>>
           ELSE Dies(w) /\ UNCHANGED <<pub, prom>>
     /\ UNCHANGED <<fg, cb, seq, busy, budget, onServer, locals, st, lastSeq, lastFg, uploaded,
-                   failed, due, writes, lost, fresh>>
+                   failed, due, stopped, writes, lost, fresh>>
 
 -----------------------------------------------------------------------------
 (* A session's PendingClipboard window thread *)
@@ -533,7 +542,7 @@ WriteOk(w) ==
               /\ pc' = [pc EXCEPT ![w] = "dead"]   \* no paste waits: Write needed the clipboard
               /\ alive' = [alive EXCEPT ![w] = FALSE]
               /\ UNCHANGED <<locals, lastSeq>>
-    /\ UNCHANGED <<fg, busy, budget, paste, onServer, st, lastFg, uploaded, failed, due, fresh,
+    /\ UNCHANGED <<fg, busy, budget, paste, onServer, st, lastFg, uploaded, failed, due, stopped, fresh,
                    broken, badPaste>>
 
 \* Write gives up: 20 tries of OpenClipboard failed, because another program
@@ -551,7 +560,7 @@ WriteFails(w) ==
     /\ IF pc[w] = "writeRestore"
        THEN Dies(w) /\ UNCHANGED <<locals, lastSeq>>   \* Restore-Clipboard catches it
        ELSE FinishAndReread(w) /\ UNCHANGED <<alive, paste, broken, badPaste>>
-    /\ UNCHANGED <<fg, cb, seq, busy, budget, onServer, st, lastFg, uploaded, failed, due,
+    /\ UNCHANGED <<fg, cb, seq, busy, budget, onServer, st, lastFg, uploaded, failed, due, stopped,
                    writes, lost, fresh>>
 
 \* RenderText stops waiting: Resolve or Fail set textReady, or the promise
@@ -570,7 +579,7 @@ Render(w) ==
 
 WatcherThread(w) ==
     \/ Tick(w) \/ GetPath(w) \/ Sync(w) \/ Restore(w)
-    \/ \E r \in {"plain", "alt", "fail"} : UploadEnds(w, r)
+    \/ \E r \in {"plain", "alt", "fail", "final"} : UploadEnds(w, r)
 
 WindowThread(w) == WriteOk(w) \/ WriteFails(w) \/ Render(w)
 

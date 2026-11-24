@@ -60,6 +60,8 @@ mutant_runs=(
     "$ONE|{\"promise_before_empty\"}|INVARIANT|ReadyPathPastes|break"
     'one|4|{"i1", "i2"}|{"complete_only_on_success"}|PROPERTY|PasteAnswered|break'
     "$WINDOWS|{\"strip_any_owner\"}|INVARIANT|BoundedWrites|break"
+    # A stopped session ($W.Blocked, 1ebdc7a) that answers with the expected path instead of $null:
+    "$ONE|{\"stopped_claims_path\"}|INVARIANT|PastedPathExists|break"
     # The code before the model check's fixes:
     "$ONE|{\"write_ignores_seq\"}|INVARIANT|NoLostCopy|break"
     "$ONE|{\"render_in_any_window\"}|INVARIANT|PastedPathOnThisHost|break"
