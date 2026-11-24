@@ -45,10 +45,10 @@ function run(argv) {
         write([item]);
     } else if (cmd === 'finder') {
         // One item per file with its file reference URL, and the file names as text, as
-        // Finder writes them. The data is set on each item now: NSURL objects given to
-        // writeObjects are provided lazily, and this process exits at once, so another
-        // process then read only some of them, or none (CI: macOS 15 and 26). Finder
-        // keeps running, so it can provide its data late.
+        // Finder writes them, each item's data set before the write. Another process may
+        // still read fewer file URLs than this writes: on the macOS 15 and 26 runners it
+        // read 1 or 2 of 2 at random, before any watcher ran and with each of four ways of
+        // writing them (CI runs 45379702428 and 45380819293). jxa.sh follows what it reads.
         var items = [];
         var names = [];
         for (var i = 1; i < argv.length; i++) {
