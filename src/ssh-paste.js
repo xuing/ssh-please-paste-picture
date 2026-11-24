@@ -1103,7 +1103,11 @@ function watcherTick(W) {
     var seq = P.changeCount();
     if (seq !== W.LastSeq) {
         W.State = P.readState();
-        W.LastSeq = W.State.Seq;
+        // A writer clears the pasteboard, which moves the change count, and then writes: a
+        // read in between finds nothing under the final count. Look again next tick rather
+        // than take that for this count's content (seen in CI: a screenshot never pasted).
+        var empty = !W.State.Png && !W.State.Files && !W.State.HasText && !W.State.HasFiles;
+        W.LastSeq = empty ? -1 : W.State.Seq;
     } else if (fg === W.LastForeground && P.now() < W.WakeAt) {
         return;
     }

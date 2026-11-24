@@ -994,6 +994,23 @@ test('the watcher: one watcher, one terminal window', async (t) => {
     });
 });
 
+test('the watcher: a pasteboard read between a writer\'s clear and its write', async (t) => {
+    await t.test('is read again, so the image written under the same change count is not missed', () => {
+        const w = newWorld(), png = fakePng(1), W = w.watcher(TerminalA);
+        w.focus(TerminalA);
+        // clearContents: the change count moves, nothing is there yet.
+        w.entry = null;
+        w.seq++;
+        w.ticks(W, 2);
+        assert.equal(w.uploads.length, 0);
+        // The writer's data arrives; the change count stays.
+        w.entry = { Png: png, Text: null, HasFiles: false, Owner: null, Token: null };
+        w.ticks(W, 3);
+        assert.equal(w.uploads.length, 1, 'the image was seen');
+        assert.equal(w.entry.Text, pathFor(png));
+    });
+});
+
 test('wrapper mode shares the session\'s connection (ControlMaster) for uploads', async (t) => {
     const parse = (args) => m.splitSshArguments(args.concat(['alice@h']));
     const plain = { controlmaster: 'false', controlpersist: 'no', forkafterauthentication: 'no' };
