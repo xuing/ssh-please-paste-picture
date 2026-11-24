@@ -243,6 +243,10 @@ function uploadCommand(hash, size, ext, keep, keepMinutes, folder) {
 // fail at once instead of opening a new connection when the master is gone.
 var MUX_HOST = 'ssh-paste-mux';
 
+// The pasteboard type of each image file extension we upload (UTIs).
+var IMAGE_TYPES = { png: 'public.png', jpg: 'public.jpeg', jpeg: 'public.jpeg', gif: 'com.compuserve.gif',
+    webp: 'org.webmproject.webp', bmp: 'com.microsoft.bmp' };
+
 function muxSshArguments(socket) {
     if (!/^\/[A-Za-z0-9._\/-]+$/.test(String(socket))) throw new Error(tr('bad control socket: {0}', socket));
     return ['-F', 'none', '-T', '-x', '-o', 'BatchMode=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=' + socket,
@@ -1652,18 +1656,16 @@ function macPlatform(sessionDebug) {
             items.push(head);
         } else {
             var item = $.NSPasteboardItem.alloc.init;
-            var png = s.Png;
-            if (!png && s.Items && s.Items.length > 0) {
-                // Copied files: offer the first image as PNG, never a file URL (a
-                // terminal would paste the local path instead of the text).
+            if (s.Png && !s.Png.isNil()) {
+                item.setDataForType(s.Png, 'public.png');
+            } else if (s.Items && s.Items.length > 0) {
+                // Copied files: offer the first image, never a file URL (a terminal would
+                // paste the local path instead of the text). Its own bytes, as they are:
+                // decoding a phone photo to PNG took 1.5 s, and a Cmd+V in that time got
+                // the files (iTerm2 asked "Paste Files", then pasted the local paths).
                 var first = s.Items[0];
-                if (first.Ext === 'png') png = first.Data;
-                else {
-                    var rep = $.NSBitmapImageRep.imageRepWithData(first.Data);
-                    if (!rep.isNil()) png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());
-                }
+                item.setDataForType(first.Data, IMAGE_TYPES[first.Ext] || 'public.png');
             }
-            if (png && !png.isNil()) item.setDataForType(png, 'public.png');
             items.push(item);
             head = item;
         }
@@ -2427,7 +2429,7 @@ if (typeof module !== 'undefined' && module.exports) {
         settingsGroups: settingsGroups, disableMessage: disableMessage, sshModeSettings: sshModeSettings,
         sshFailure: sshFailure, failureFinal: failureFinal, loginAdvice: loginAdvice, loginReport: loginReport, keySetupLines: keySetupLines, keySetupTarget: keySetupTarget, enableRefusal: enableRefusal,
         catalogName: catalogName, uiLanguage: uiLanguage, tr: tr, setMessages: function (m) { MESSAGES = m; }, LOCALE_DATA: LOCALE_DATA,
-        muxEligible: muxEligible, muxSshArguments: muxSshArguments, muxUploadArguments: muxUploadArguments, uploadCommand: uploadCommand, MUX_HOST: MUX_HOST, formatShellWords: formatShellWords, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
+        IMAGE_TYPES: IMAGE_TYPES, muxEligible: muxEligible, muxSshArguments: muxSshArguments, muxUploadArguments: muxUploadArguments, uploadCommand: uploadCommand, MUX_HOST: MUX_HOST, formatShellWords: formatShellWords, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
         serverSshArguments: serverSshArguments,
         SSH_FLAGS_NO_ARG: SSH_FLAGS_NO_ARG, SSH_FLAGS_WITH_ARG: SSH_FLAGS_WITH_ARG, SSH_KEEP_NO_ARG: SSH_KEEP_NO_ARG,
         SSH_KEEP_WITH_ARG: SSH_KEEP_WITH_ARG, SSH_DROP_OPTIONS: SSH_DROP_OPTIONS, TERM_PROGRAM_BUNDLES: TERM_PROGRAM_BUNDLES,
