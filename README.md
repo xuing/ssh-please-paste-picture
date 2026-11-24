@@ -140,7 +140,7 @@ ssh-paste --keep 2h myhost                                  # wrapper mode, this
 
 ### If the server asks for a password
 
-Uploads log in on their own, without a prompt, so the server must take your key. `--enable` and `--doctor` check this and say what to do. To set up a key (once; the second command asks your password one last time):
+Uploads log in on their own, without a prompt, so the server must take your key. `--enable` checks this: it does not enable a host that refuses uploads, and shows the commands below with the host filled in (so does `--doctor`). To set up a key (once; the second command asks your password one last time):
 
 ```powershell
 # Windows, in PowerShell
@@ -152,11 +152,11 @@ ssh-paste --doctor myhost
 ```sh
 # macOS
 ssh-keygen -t ed25519
-ssh-copy-id myhost
+ssh-copy-id -i ~/.ssh/id_ed25519.pub myhost
 ssh-paste --doctor myhost
 ```
 
-Press Enter at each `ssh-keygen` question; if it says the key file exists, answer `n` and go on. On Windows the key has no passphrase, because the `ssh-agent` service is off unless an administrator turns it on (as Administrator: `Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service`; then `ssh-add` as yourself). On macOS a passphrase is fine: also run `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` ([GitHub's guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent) shows how to keep it after a restart). A server that takes only a password or a one-time code, not a key, cannot take uploads.
+Press Enter at each `ssh-keygen` question; if it says the key file exists, answer `n` and go on. On Windows the key has no passphrase, because the `ssh-agent` service is off unless an administrator turns it on (as Administrator: `Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service`; then `ssh-add` as yourself). If you log in with `ssh -i KEY`, or `~/.ssh/config` names an `IdentityFile` for the host, use that key instead, and name it with `IdentityFile` in the `Host` entry so ssh mode uses it too. On macOS a passphrase is fine: also run `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` ([GitHub's guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent) shows how to keep it after a restart). A server that takes only a password or a one-time code, not a key, cannot take uploads.
 
 ### Update and remove
 

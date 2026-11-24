@@ -140,7 +140,7 @@ ssh-paste --keep 2h myhost                                  # wrapper mode, this
 
 ### 服务器要密码怎么办
 
-上传是在后台自己登录的，不能弹出密码提示，所以服务器得接受你的 key。`--enable` 和 `--doctor` 会检查这一点，并告诉你该怎么做。配置 key（只需一次；第二条命令最后一次问你密码）：
+上传是在后台自己登录的，不能弹出密码提示，所以服务器得接受你的 key。`--enable` 会检查这一点：服务器拒绝上传登录的主机不会被启用，并打印下面这些命令，主机名已填好（`--doctor` 也会打印）。配置 key（只需一次；第二条命令最后一次问你密码）：
 
 ```powershell
 # Windows, in PowerShell
@@ -152,11 +152,11 @@ ssh-paste --doctor myhost
 ```sh
 # macOS
 ssh-keygen -t ed25519
-ssh-copy-id myhost
+ssh-copy-id -i ~/.ssh/id_ed25519.pub myhost
 ssh-paste --doctor myhost
 ```
 
-`ssh-keygen` 的每个问题直接按回车；如果提示 key 文件已经存在，回答 `n` 跳过即可。Windows 上的 key 不设 passphrase，因为 `ssh-agent` 服务默认关闭，要管理员才能打开（以管理员身份运行 `Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service`，再以自己的身份运行 `ssh-add`）。macOS 上可以设 passphrase，再运行 `ssh-add --apple-use-keychain ~/.ssh/id_ed25519`（重启后怎么保持加载，见 [GitHub 的说明](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)）。只接受密码或一次性验证码、不接受 key 的服务器，没法上传。
+`ssh-keygen` 的每个问题直接按回车；如果提示 key 文件已经存在，回答 `n` 跳过即可。Windows 上的 key 不设 passphrase，因为 `ssh-agent` 服务默认关闭，要管理员才能打开（以管理员身份运行 `Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service`，再以自己的身份运行 `ssh-add`）。如果你平时用 `ssh -i KEY` 登录，或者 `~/.ssh/config` 里给这台主机指定了 `IdentityFile`，就换用那把 key，并在 `Host` 配置里用 `IdentityFile` 写明，这样 ssh 模式也会用它。macOS 上可以设 passphrase，再运行 `ssh-add --apple-use-keychain ~/.ssh/id_ed25519`（重启后怎么保持加载，见 [GitHub 的说明](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)）。只接受密码或一次性验证码、不接受 key 的服务器，没法上传。
 
 ### 升级与卸载
 

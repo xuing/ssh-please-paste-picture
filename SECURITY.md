@@ -114,7 +114,11 @@ Each upload runs a separate `ssh` (`ssh.exe` on Windows) with these options
 placed before yours, since `ssh` uses the first value it sees. `--enable` makes
 one such connection to each host it names, running only `echo $HOME`, to check
 that uploads can log in and to learn the home folder for `--dir ~/...`; it
-says when the server asks for a password, and enables the host either way.
+does not enable a host whose server refuses that login (it shows how to set
+up a key instead), and enables one it cannot check now (offline, or a host key
+not accepted yet) with a warning. Your ssh config applies to that connection as
+to any other: `StrictHostKeyChecking accept-new`, for example, records a new
+host's key.
 
 - `-T`, `-x`, and `RequestTTY=no` disable terminals and X11 forwarding.
 - `BatchMode=yes` disables password, passphrase, and unknown host key prompts.

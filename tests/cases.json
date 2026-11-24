@@ -257,6 +257,7 @@
     {"Name":"a password or a code only","Text":"ssh exited with 255: xu@hpc: Permission denied (password,keyboard-interactive).","Kind":"auth","Methods":["password","keyboard-interactive"],"KeyLogin":false,"Typed":true,"Final":true},
     {"Name":"the key passed, a code is still due (AuthenticationMethods)","Text":"xu@hpc: Permission denied (keyboard-interactive).","Kind":"auth","Methods":["keyboard-interactive"],"KeyLogin":false,"Typed":true,"Final":true},
     {"Name":"Kerberos, whose ticket may be renewed","Text":"xu@lab: Permission denied (gssapi-with-mic,password).","Kind":"auth","Methods":["gssapi-with-mic","password"],"KeyLogin":false,"Typed":false,"Final":false},
+    {"Name":"a command's own status, worded like ssh","Text":"ssh exited with 1: Permission denied (policy).","Kind":null,"Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
     {"Name":"a command on the server, not ssh","Text":"ssh exited with 1: mkdir: Permission denied (read-only snapshot)","Kind":null,"Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
     {"Name":"too many keys offered","Text":"Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures","Kind":"toomany","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
     {"Name":"host key not verified","Text":"No ED25519 host key is known for build and you have requested strict checking.\r\nHost key verification failed.","Kind":"hostkey","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
@@ -274,6 +275,24 @@
     {"Name":"host key not verified","HostName":"new","Said":"Host key verification failed.","Expected":"ssh could not verify the host key of new: run ssh new to see why (a new host asks you to accept its key)"},
     {"Name":"cannot reach it","HostName":"lab","Said":"ssh: connect to host lab port 22: Connection timed out\nmore","Expected":"could not check the login to lab now (ssh: connect to host lab port 22: Connection timed out); ssh-paste --doctor lab tests it"},
     {"Name":"no answer in time","HostName":"lab","Said":"ssh did not finish in 30 seconds","Expected":"could not check the login to lab now (ssh did not finish in 30 seconds); ssh-paste --doctor lab tests it"}
+  ],
+  "enableRefusals": [
+    {"Name":"logged in","Said":null,"Refuse":false},
+    {"Name":"a key would do","Said":"xu@build: Permission denied (publickey,password).","Refuse":true},
+    {"Name":"a password or a code only","Said":"xu@hpc: Permission denied (password,keyboard-interactive).","Refuse":true},
+    {"Name":"Kerberos","Said":"xu@lab: Permission denied (gssapi-with-mic,password).","Refuse":true},
+    {"Name":"too many keys offered","Said":"Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures","Refuse":true},
+    {"Name":"a command on the server, not ssh","Said":"mkdir: Permission denied (read-only snapshot)","Refuse":false},
+    {"Name":"a command's own status, worded like ssh","Said":"ssh exited with 1: Permission denied (policy).","Refuse":false},
+    {"Name":"ssh's own refusal, with its status","Said":"ssh exited with 255: xu@build: Permission denied (publickey).","Refuse":true},
+    {"Name":"host key not verified yet","Said":"Host key verification failed.","Refuse":false},
+    {"Name":"cannot reach it","Said":"ssh: connect to host lab port 22: Connection refused","Refuse":false},
+    {"Name":"no answer in time","Said":"ssh did not finish in 30 seconds","Refuse":false}
+  ],
+  "shellWords": [
+    {"Name":"plain words","Words":["--keep","7d","build"],"Expected":"--keep 7d build"},
+    {"Name":"a ~ for the server","Words":["--dir","~/shots","build"],"Expected":"--dir '~/shots' build"},
+    {"Name":"brackets in an alias","Words":["work[1]"],"Expected":"'work[1]'"}
   ],
   "keySetupTargets": [
     {"Name":"an alias","SshArgs":["build"],"Target":"build","Dropped":false},

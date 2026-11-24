@@ -81,12 +81,27 @@ Host ssh-paste-e2e
     IdentityAgent none
     UserKnownHostsFile $work/known_hosts
     StrictHostKeyChecking yes
+Host ssh-paste-e2e-nokey
+    HostName 127.0.0.1
+    Port $port
+    User ssh-paste-no-such-user
+    IdentityFile $work/client_key
+    IdentitiesOnly yes
+    IdentityAgent none
+    UserKnownHostsFile $work/known_hosts
+    StrictHostKeyChecking yes
 EOF
 if wait_for 20 ssh -o BatchMode=yes -o ConnectTimeout=2 ssh-paste-e2e true; then pass "key login to 127.0.0.1:$port"; else fail 'cannot log in'; cat "$work/sshd.log"; finish; fi
 
 section 'install, --enable and --doctor'
 sh "$repo/install.sh" > "$work/install.out" 2>&1 || { fail 'install.sh'; cat "$work/install.out"; }
 check "$("$cmd" --version)" 0.0.0-dev 'ssh-paste --version'
+# The server refuses a user it has no key for: --enable writes nothing and shows the commands.
+cp "$HOME/.ssh/config" "$work/config-before"
+"$cmd" --enable ssh-paste-e2e-nokey > "$work/nokey.out" 2>&1
+check "$?" 1 '--enable refuses a host whose uploads the server refuses (exit 1)'
+if grep -qF 'ssh-copy-id -i ~/.ssh/id_ed25519.pub ssh-paste-e2e-nokey' "$work/nokey.out"; then pass 'and shows the ssh-copy-id command for it'; else fail "--enable output: $(cat "$work/nokey.out")"; fi
+if cmp -s "$HOME/.ssh/config" "$work/config-before"; then pass 'and leaves ~/.ssh/config as it was'; else fail "$HOME/.ssh/config changed"; fi
 "$cmd" --enable ssh-paste-e2e > "$work/enable.out" 2>&1 || { fail '--enable'; cat "$work/enable.out"; }
 if grep -qxF 'ssh-paste-e2e: uploads log in without a password' "$work/enable.out"; then pass '--enable checked that uploads log in'; else fail "--enable output: $(cat "$work/enable.out")"; fi
 if command -v ssh-copy-id > /dev/null; then pass "ssh-copy-id is there, as the README says: $(command -v ssh-copy-id)"; else fail 'no ssh-copy-id on this macOS, which the README tells users to run'; fi

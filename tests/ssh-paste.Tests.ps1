@@ -1459,6 +1459,19 @@ Describe 'paste settings (--keep, --dir)' {
         $s.Dropped | Should -Be $Dropped
     }
 
+    It 'writes words as a command line to type again: <Name>' -ForEach $sharedCases.shellWords {
+        Format-ShellWords $Words | Should -BeExactly $Expected
+    }
+
+    It 'quotes a single quote the PowerShell way' {
+        Format-ShellWords @("it's") | Should -BeExactly "'it''s'"
+    }
+
+    It 'refuses --enable for a host only when the server refused the login: <Name>' -ForEach $sharedCases.enableRefusals {
+        $r = Get-EnableRefusal 'h' $Said
+        ($null -ne $r) | Should -Be $Refuse
+    }
+
     It 'says whether uploads to a host log in, and what to do: <Name>' -ForEach $sharedCases.loginReports {
         Get-LoginReport $HostName $Said | Should -BeExactly $Expected
     }
@@ -1897,16 +1910,49 @@ Describe 'ssh config editing (Update-SshConfig, Invoke-Enable, Invoke-Disable)' 
             Should -Invoke Write-Info -ParameterFilter { $Message -ceq 'h1: uploads log in without a password' } -Exactly 1
         }
 
-        It 'enables a host that asks for a password, and says why uploads cannot log in' {
+        It 'refuses a host whose uploads the server refuses, shows the key commands, and writes nothing' {
             Mock Test-ServerLogin { @{ Home = $null; Error = 'xu@h1: Permission denied (publickey,password).' } }
+            $err = $null
+            try { Invoke-Enable @('h1') } catch { $err = $_.Exception.Message }
+            $err | Should -BeLike 'nothing changed in ~/.ssh/config:*'
+            $err | Should -BeLike '*h1 did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add*'
+            $err | Should -Not -BeLike '*shows how*'
+            $err | Should -BeLike ('*ssh h1 "' + $script:KeyInstallCommand + '"*')
+            $err | Should -BeLike '*Then run again: ssh-paste --enable h1'
+            Test-Path -LiteralPath $script:Cfg | Should -BeFalse
+        }
+
+        It 'changes nothing when one host is refused, not even another host''s --keep, and gives the whole command again' {
+            [void](Invoke-Enable @('h1'))
+            $before = [System.IO.File]::ReadAllBytes($script:Cfg)
+            Mock Test-ServerLogin { if ($Parsed.Destination -ceq 'h2') { @{ Home = $null; Error = 'ssh exited with 255: xu@h2: Permission denied (password).' } } else { @{ Home = '/home/u'; Error = $null } } }
+            { Invoke-Enable @('--keep', 'never', 'h1', 'h2') } | Should -Throw '*h2 wants a password or a one-time code (password)*Then run again: ssh-paste --enable --keep never h1 h2'
+            [System.IO.File]::ReadAllBytes($script:Cfg) | Should -Be $before
+        }
+
+        It 'reports every host''s problem together, not just the first' {
+            Mock Test-ServerLogin {
+                if ($Parsed.Destination -ceq 'h1') { @{ Home = $null; Error = 'ssh exited with 255: ssh: connect to host h1 port 22: Connection refused' } }
+                else { @{ Home = $null; Error = 'ssh exited with 255: xu@h2: Permission denied (publickey).' } }
+            }
+            $err = $null
+            try { Invoke-Enable @('--dir', '~/shots', 'h1', 'h2') } catch { $err = $_.Exception.Message }
+            $err | Should -BeLike '*cannot ask h1 for its home folder*'
+            $err | Should -BeLike '*h2 did not accept a key for uploads*'
+            $err | Should -BeLike "*Then run again: ssh-paste --enable --dir '~/shots' h1 h2"
+            Test-Path -LiteralPath $script:Cfg | Should -BeFalse
+        }
+
+        It 'enables a host it cannot check now (offline, or its host key not accepted yet), and says so' {
+            Mock Test-ServerLogin { @{ Home = $null; Error = 'ssh: connect to host h1 port 22: Connection refused' } }
             Invoke-Enable @('h1') | Should -Be 0
             Format-ArgList (Get-ManagedBlock (Read-Config)).Hosts | Should -BeExactly '["h1"]'
-            Should -Invoke Write-Info -ParameterFilter { $Message -clike 'h1 did not accept a key for uploads*ssh-paste --doctor h1 shows how' } -Exactly 1
+            Should -Invoke Write-Info -ParameterFilter { $Message -clike 'could not check the login to h1 now*' } -Exactly 1
         }
 
         It 'refuses --dir ~/... when it cannot log in to ask for the home folder, and writes nothing' {
-            Mock Test-ServerLogin { @{ Home = $null; Error = 'xu@h1: Permission denied (password).' } }
-            { Invoke-Enable @('--dir', '~/shots', 'h1') } | Should -Throw '*cannot ask h1 for its home folder (h1 wants a password*); give an absolute --dir'
+            Mock Test-ServerLogin { @{ Home = $null; Error = 'ssh: connect to host h1 port 22: Connection timed out' } }
+            { Invoke-Enable @('--dir', '~/shots', 'h1') } | Should -Throw '*cannot ask h1 for its home folder (could not check the login to h1 now*); give an absolute --dir*'
             Test-Path -LiteralPath $script:Cfg | Should -BeFalse
         }
     }
