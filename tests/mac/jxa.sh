@@ -66,6 +66,14 @@ more_uploads() { [ "$(uploads)" -gt "$1" ]; }
 # shellcheck disable=SC2317,SC2329 # called through wait_for
 logged() { grep -q "$1" "$(debuglog)" 2> /dev/null; }
 
+section 'EXPERIMENT before any watcher runs'
+activate Calculator com.apple.calculator
+for m in item-ref item-ref item-ref objects-ref objects-ref objects-ref; do
+    SSH_PASTE_FINDER_MODE=$m pb finder "$work/shot.png" "$work/shot.jpg" 2> /dev/null
+    sleep 0.3
+    echo "        EXPERIMENT-BEFORE $m: $(pb file-paths | grep -vc '^$') file(s) read; items: $(pb items)"
+done
+
 section 'a stale change count: the write is refused and the pasteboard stays'
 pb text 'copied by the user'
 check "$(pb stale-write)" refused 'publish() refuses a basis that is not the current change count'
@@ -162,12 +170,12 @@ case $(cat "$work/p7") in
     *) fail "unexpected paste: $(cat "$work/p7")" ;;
 esac
 
-section 'EXPERIMENT: which way of writing file URLs another process reads'
+section 'EXPERIMENT while the watcher runs'
 activate Calculator com.apple.calculator
-for m in item-ref item-path objects-path objects-ref; do
+for m in item-ref item-ref item-ref objects-ref objects-ref objects-ref; do
     SSH_PASTE_FINDER_MODE=$m pb finder "$work/shot.png" "$work/shot.jpg" 2> /dev/null
     sleep 0.3
-    echo "        EXPERIMENT $m: $(pb file-paths | grep -vc '^$') file(s) read; items: $(pb items)"
+    echo "        EXPERIMENT-AFTER $m: $(pb file-paths | grep -vc '^$') file(s) read; items: $(pb items)"
 done
 
 section 'image files copied in Finder'
