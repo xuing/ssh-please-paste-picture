@@ -1986,6 +1986,17 @@ function Get-Usage {
     return @(
         ('ssh-paste ' + $script:Version + ' - paste Windows screenshots into programs running over SSH'),
         '',
+        'Start:',
+        '    ssh-paste --enable myhost    once per host',
+        '    ssh myhost                   then connect as usual',
+        '    Copy a screenshot (Win+Shift+S), switch to the ssh window, press Ctrl+V:',
+        '    the image goes to the server and its path is pasted. Other apps still',
+        '    paste the image.',
+        '',
+        'Or without changing ~/.ssh/config:',
+        '    ssh-paste myhost',
+        '',
+        'All commands:',
         '  ssh-paste --enable HOST [HOST...]   make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)',
         '  ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)',
         '  ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config',
@@ -1994,9 +2005,7 @@ function Get-Usage {
         '  ssh-paste --uninstall               remove ssh-paste and everything it changed',
         '  ssh-paste --version | --help',
         '',
-        'While connected: copy a screenshot (Win+Shift+S), come back to the terminal,',
-        'press Ctrl+V. The image goes to /tmp/ssh-paste-<hash>.png on the server and that',
-        'path is pasted. Other apps still paste the image. https://github.com/xuing/ssh-please-paste-picture'
+        'https://github.com/xuing/ssh-please-paste-picture'
     ) -join [Environment]::NewLine
 }
 

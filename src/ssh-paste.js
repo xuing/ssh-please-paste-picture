@@ -473,6 +473,17 @@ function usage() {
     return [
         'ssh-paste ' + VERSION + ' - paste macOS screenshots into programs running over SSH',
         '',
+        'Start:',
+        '    ssh-paste --enable myhost    once per host',
+        '    ssh myhost                   then connect as usual',
+        '    Copy a screenshot (Cmd+Ctrl+Shift+4) or image files in Finder, switch to',
+        '    the ssh window, press Cmd+V: the image goes to the server and its path is',
+        '    pasted. Other apps still paste the image.',
+        '',
+        'Or without changing ~/.ssh/config:',
+        '    ssh-paste myhost',
+        '',
+        'All commands:',
         '  ssh-paste --enable HOST [HOST...]   make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)',
         '  ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)',
         '  ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config',
@@ -481,10 +492,7 @@ function usage() {
         '  ssh-paste --uninstall               remove ssh-paste and everything it changed',
         '  ssh-paste --version | --help',
         '',
-        'While connected: copy a screenshot (Cmd+Ctrl+Shift+4) or image files in Finder,',
-        'come back to the terminal window, press Cmd+V. The image goes to',
-        '/tmp/ssh-paste-<hash>.png on the server and that path is pasted. Other apps',
-        'still paste the image. https://github.com/xuing/ssh-please-paste-picture'
+        'https://github.com/xuing/ssh-please-paste-picture'
     ].join('\n');
 }
 
