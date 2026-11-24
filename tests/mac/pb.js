@@ -44,20 +44,27 @@ function run(argv) {
         item.setDataForType($.NSData.dataWithContentsOfFile(argv[1]), cmd === 'png' ? 'public.png' : 'public.tiff');
         write([item]);
     } else if (cmd === 'finder') {
-        // NSURL objects write one item per file; Finder also puts the file names
-        // on the pasteboard as text.
-        var objects = [];
+        // One item per file with its file reference URL, and the file names as text, as
+        // Finder writes them. The data is set on each item now: NSURL objects given to
+        // writeObjects are provided lazily, and this process exits at once, so another
+        // process then read only some of them, or none (CI: macOS 15 and 26). Finder
+        // keeps running, so it can provide its data late.
+        var items = [];
         var names = [];
         for (var i = 1; i < argv.length; i++) {
             var plain = $.NSURL.fileURLWithPath(argv[i]);
             var ref = plain.fileReferenceURL;
             err('finder: ' + argv[i] + ' -> ' + (ref.isNil() ? 'no reference URL' : ref.absoluteString.js));
-            objects.push(ref.isNil() ? plain : ref);
+            var fileItem = $.NSPasteboardItem.alloc.init;
+            fileItem.setStringForType((ref.isNil() ? plain : ref).absoluteString, 'public.file-url');
+            items.push(fileItem);
             names.push(argv[i].replace(/^.*\//, ''));
         }
-        objects.push($(names.join('\r')));
-        write(objects);
-        err('finder: wrote ' + objects.length + ' objects; the pasteboard has ' + Number(pb.pasteboardItems.count) + ' items');
+        var namesItem = $.NSPasteboardItem.alloc.init;
+        namesItem.setStringForType($(names.join('\r')), 'public.utf8-plain-text');
+        items.push(namesItem);
+        write(items);
+        err('finder: wrote ' + items.length + ' items; the pasteboard has ' + Number(pb.pasteboardItems.count) + ' items');
     } else if (cmd === 'text') {
         item = $.NSPasteboardItem.alloc.init;
         item.setStringForType($(argv[1]), 'public.utf8-plain-text');
