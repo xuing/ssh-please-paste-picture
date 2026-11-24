@@ -169,8 +169,8 @@ only hides a race until it hits a user.
   pasteboard again; its test fails without it.
 - Seen 1x (2026-11-24). (89aef10, first counted here for loosening the
   Finder-copy test, was right: CI runs 45379702428 and 45380819293 showed that
-  another process reads 1 or 2 of the copied files at random, before any
-  watcher runs.)
+  another process reads 1 or 2 of the copied files at random on the runners,
+  before any watcher runs; why is not known.)
 
 **Name a cause only after an experiment has ruled out the others.** An
 explanation that fits the failure is one hypothesis among several; a fix built
@@ -179,8 +179,9 @@ on it can pass once by luck and leave the real cause in place.
   provided lazily by a process that exits, and required both files again. The
   next runs failed the same way. A CI experiment (four ways of writing, before
   and while the watcher runs, macOS 15 and 26) showed 1 or 2 of 2 read at
-  random with every way: the runners' pasteboard, not the writing or the
-  watcher. The test now follows what it reads, as 89aef10 had it.
+  random with every way, so neither the way of writing nor the watcher; the
+  cause is not known (not tried on a Mac that a person uses). The test now
+  follows what it reads, as 89aef10 had it.
 - Seen 1x (2026-11-24).
 
 **A test that covers whatever it finds must fail when something it should
