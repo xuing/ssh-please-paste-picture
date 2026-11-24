@@ -27,7 +27,7 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 | Path, then section or function | Commit area | What it does |
 | --- | --- | --- |
 | `src/ssh-paste.ps1`, constants at the top | upload | `$script:RemoteScript` (the `sh` command that runs on the server), the ssh option tables |
-| `src/ssh-paste.ps1`, "Pure helpers" | proxy, upload, enable | `Split-SshArguments`, `Test-InteractiveSsh`, `Get-UploadSshArguments`, `Get-TrimmedPng`, `ConvertFrom-DropFiles`, `Read-UploadReply`, `Get-ManagedBlock`, `Set-ManagedBlock`. No Windows API, so tests cover them on any OS. |
+| `src/ssh-paste.ps1`, "Pure helpers" | proxy, upload, enable | `Split-SshArguments`, `Test-InteractiveSsh`, `Get-UploadSshArguments`, the --keep/--dir helpers (`ConvertTo-KeepMinutes`, `Test-ServerDirectory`, `Read-PasteSettings`, `Get-ProxySettings`, `Get-ReplyPathPattern`, `Get-SettingsGroups`), `Get-TrimmedPng`, `ConvertFrom-DropFiles`, `Read-UploadReply`, `Get-ManagedBlock`, `Set-ManagedBlock`. No Windows API, so tests cover them on any OS. |
 | `src/ssh-paste.ps1`, "Windows integration" | watcher, upload | `Initialize-Native` (P/Invoke), `Test-HostForeground`, `Read-ClipboardImage`, `Set-SshPasteClipboard`, `Send-Image` |
 | `src/ssh-paste.ps1`, "Clipboard watcher" | watcher | `New-Watcher`, `Invoke-WatcherTick` (one tick every 250 ms), `Sync-ClipboardText`, `Restore-Clipboard` |
 | `src/ssh-paste.ps1`, "Commands" | proxy, enable, install | `Test-ScoopInstall` (Scoop owns updates and removal), `Get-ProxyScriptPath` (the apps\ssh-paste\current path under Scoop), `Invoke-Wrapper`, `Invoke-Proxy` (the ProxyCommand relay), `Update-SshConfig`, `Invoke-Enable`, `Invoke-Disable`, `Invoke-Doctor`, `Invoke-Uninstall`, `Invoke-Main` |

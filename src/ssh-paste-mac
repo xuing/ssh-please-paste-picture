@@ -2,12 +2,14 @@
 # ssh-paste for macOS: the `ssh-paste` command. It only dispatches; the decisions
 # and the clipboard watcher are in ssh-paste.js (osascript -l JavaScript).
 #
-#   ssh-paste --proxy %h %p %n    ProxyCommand of ssh mode (written by --enable):
+#   ssh-paste --proxy %h %p %n [--keep T] [--dir D]
+#                                 ProxyCommand of ssh mode (written by --enable):
 #                                 start the watcher next to the relay, then
 #                                 become the relay (nc). stdout is the SSH stream.
 #   ssh-paste --uninstall         run the installed install.sh --uninstall
 #                                 (Homebrew: --disable, then say brew uninstall)
-#   ssh-paste [ssh options] HOST  wrapper mode: watcher, then ssh, then stop it
+#   ssh-paste [--keep T] [--dir D] [ssh options] HOST
+#                                 wrapper mode: watcher, then ssh, then stop it
 #   ssh-paste --enable|--disable|--doctor|--update|--version|--help   ssh-paste.js
 #
 # Installed as ~/.local/share/ssh-paste/bin/ssh-paste next to ../ssh-paste.js and
@@ -51,7 +53,8 @@ case ${1-} in
     # The watcher must not hold ssh's pipes (stdin and stdout are the session),
     # and ignores SIGHUP so that it can put the plain image back when the
     # terminal closes. It ends when its parent, the relay below, goes away.
-    ( trap '' HUP; exec "$osascript" -l JavaScript "$js" --watch-proxy "$2" "$3" "$4" "$PPID" "$$" ) < /dev/null > /dev/null &
+    # Arguments after %n are the host's --keep and --dir; the watcher checks them.
+    ( trap '' HUP; exec "$osascript" -l JavaScript "$js" --watch-proxy "$2" "$3" "$4" "$PPID" "$$" "${@[5,-1]}" ) < /dev/null > /dev/null &
     [[ -n ${SSH_PASTE_DEBUG-} ]] && print -u2 "ssh-paste debug: relaying to $2 port $3 with nc; watcher pid $!"
     exec /usr/bin/nc "$2" "$3"
     ;;
@@ -73,13 +76,37 @@ esac
 # Wrapper mode: the watcher decides whether this is an interactive session and
 # says so, then ssh runs in the foreground, then the watcher puts the plain
 # image back and stops.
+# Leading --keep TIME and --dir DIR are ours, not ssh's; ssh-paste.js checks them.
+keep=
+sdir=
+while (( $# > 0 )); do
+  case $1 in
+    --keep|--dir)
+      if (( $# < 2 )) || [[ -z $2 ]]; then print -u2 "ssh-paste: $1 needs a value"; exit 2; fi
+      if [[ $1 == --keep ]]; then
+        [[ -z $keep ]] || { print -u2 'ssh-paste: --keep is given twice'; exit 2; }
+        keep=$2
+      else
+        [[ -z $sdir ]] || { print -u2 'ssh-paste: --dir is given twice'; exit 2; }
+        sdir=$2
+      fi
+      shift 2
+      ;;
+    *) break ;;
+  esac
+done
+if [[ -n $keep || -n $sdir ]]; then
+  "$osascript" -l JavaScript "$js" --check-settings "$keep" "$sdir" || exit 2
+  (( $# > 0 )) || { print -u2 'usage: ssh-paste [--keep TIME] [--dir DIR] [ssh options] HOST'; exit 2; }
+fi
+
 ssh_bin=${SSH_PASTE_SSH:-$(whence -p ssh)}
 if [[ -z $ssh_bin ]]; then
   print -u2 'ssh-paste: ssh was not found'
   exit 1
 fi
 dir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/ssh-paste.XXXXXXXX") || exit 1
-"$osascript" -l JavaScript "$js" --watch-wrapper "$dir" "$$" "$ssh_bin" "$@" < /dev/null &
+"$osascript" -l JavaScript "$js" --watch-wrapper "$dir" "$$" "$ssh_bin" "$keep" "$sdir" "$@" < /dev/null &
 watcher=$!
 while [[ ! -e "$dir/ready" ]] && kill -0 "$watcher" 2> /dev/null; do sleep 0.05; done
 "$ssh_bin" "$@"

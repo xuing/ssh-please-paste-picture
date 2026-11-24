@@ -37,20 +37,40 @@ $script:ImageExtensions = @('png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp')
 $script:MaxCopiedFiles = 20
 $script:RetryFailedSeconds = 30
 $script:UploadCacheHours = 6
+# --keep and --dir (ssh-paste --enable, wrapper mode): how long the server keeps your images,
+# and in which folder. The defaults are what ssh-paste always did.
+$script:DefaultKeep = '1d'
+$script:DefaultDir = '/tmp'
 
 # Runs on the server through `sh -c`, with $1 = content hash (32 hex digits, made
-# by us), $2 = byte count and $3 = file extension (png when absent). It contains no single quote, backslash or
-# exclamation mark, so every login shell (bash, zsh, fish, tcsh) passes it to sh
-# unchanged. It receives into a private temp file, checks the size, prunes this
-# user's day-old files, then publishes /tmp/ssh-paste-<hash>.png (reused when an
-# identical complete copy exists; a per-user name when another user owns it).
-$script:RemoteScript = 'umask 077; set -fC; n=$2; e=${3:-png}; ' +
-    't=$(mktemp /tmp/ssh-paste-tmp.XXXXXXXXXX 2> /dev/null) || { t=/tmp/ssh-paste-tmp.$$; : > $t; } || exit 3; ' +
+# by us), $2 = byte count, $3 = file extension (png when absent), $4 = minutes to keep
+# this class of images (0: keep them; 1440 when absent; anything that is not a number
+# keeps them too), $5 = the folder (/tmp when absent) and $6 = the class: empty for
+# --keep 1d, else k<keep>- (as in ssh-paste-k7d-<hash>.png), so that each upload
+# deletes only images of its own --keep, never those another setting keeps longer.
+# The folder is absolute (the client turns ~ into the home folder there when you give
+# it). A folder other than /tmp is made (mode 700) when missing and must be
+# yours, not a symbolic link, and not writable by group or others (notprivate
+# otherwise), so other users cannot reach the files at all; in /tmp, the sticky bit
+# and the checks below keep them out. Folder names need no quoting (the client allows
+# letters, digits and . _ - / only) and set -f keeps them from globbing. The script
+# contains no single quote, double quote, backslash or exclamation mark, so every
+# login shell (bash, zsh, fish, tcsh) passes it to sh unchanged. It receives into a
+# private temp file in the folder, checks the size, deletes this user's images of the
+# class older than $4 minutes and temp leftovers older than a day (regular files with
+# exactly the names the script makes), then publishes <folder>/ssh-paste-<class><hash>.<ext>
+# (reused when an identical complete copy exists; a per-user name when another user
+# owns it).
+$script:RemoteScript = 'umask 077; set -fC; n=$2; e=${3:-png}; k=${4:-1440}; d=${5:-/tmp}; c=${6:-}; u=$(id -u); a=[A-Za-z0-9]; h=[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]; ' +
+    '[ -d $d ] || mkdir -p $d 2> /dev/null || { echo nodir; exit 5; }; ' +
+    'if [ $d = /tmp ]; then :; elif [ -h $d ]; then echo notprivate; exit 6; elif [ -O $d ]; then m=$(ls -ld $d 2> /dev/null); case ${m%% *} in d????-??-? | d????-??-?. | d????-??-?@) ;; *) echo notprivate; exit 6;; esac; else echo notprivate; exit 6; fi; ' +
+    't=$(mktemp $d/ssh-paste-tmp.XXXXXXXXXX 2> /dev/null) || { echo nodir; exit 3; }; ' +
     'cat >> $t; s=$(wc -c < $t); if [ $s -eq $n ]; then :; else rm -f $t; echo short $s; exit 4; fi; ' +
-    'for x in png jpg jpeg gif webp bmp; do find /tmp -maxdepth 1 -user $(id -u) -name ssh-paste-????????????????????????????????*.$x -mmin +1440 -exec rm -f {} + 2> /dev/null; done; ' +
-    'find /tmp -maxdepth 1 -user $(id -u) -name ssh-paste-tmp.* -mmin +1440 -exec rm -f {} + 2> /dev/null; ' +
-    'for f in /tmp/ssh-paste-$1.$e /tmp/ssh-paste-$1-$(id -u).$e; do ' +
-    'if [ -h $f ]; then :; elif [ -f $f ] && [ -O $f ] && cmp -s $t $f; then rm -f $t; touch $f; echo $n $f; exit 0; fi; ' +
+    'if [ $k -gt 0 ] 2> /dev/null; then for x in png jpg jpeg gif webp bmp; do for p in ssh-paste-$c$h.$x ssh-paste-$c$h-$u.$x; do ' +
+    'find $d/ -maxdepth 1 -type f -user $u -name $p -mmin +$k -exec rm -f {} + 2> /dev/null; done; done; fi; ' +
+    'find $d/ -maxdepth 1 -type f -user $u -name ssh-paste-tmp.$a$a$a$a$a$a$a$a$a$a -mmin +1440 -exec rm -f {} + 2> /dev/null; ' +
+    'for f in $d/ssh-paste-$c$1.$e $d/ssh-paste-$c$1-$u.$e; do ' +
+    'if [ -h $f ]; then :; elif [ -f $f ] && [ -O $f ] && cmp -s $t $f && touch -c $f && [ -f $f ]; then rm -f $t; echo $n $f; exit 0; fi; ' +
     'if [ -d $f ]; then continue; fi; ' +
     'if mv -f $t $f 2> /dev/null && [ -f $f ]; then echo $n $f; exit 0; fi; done; rm -f $t; exit 1'
 
@@ -221,12 +241,31 @@ function Get-SshOptionKey {
 }
 
 function Get-UploadSshArguments {
-    # Arguments for the separate, non-interactive upload connection. Our options
-    # come first because ssh uses the first value it sees for each option; the
-    # user's options keep their place before or after the destination.
-    param($Parsed, [string]$Hash, [long]$Size, [switch]$NoProxy, [version]$SshVersion, [hashtable]$Pin, [string]$Ext = 'png')
+    # Arguments for the separate, non-interactive upload connection: those of
+    # Get-ServerSshArguments, then the upload command.
+    param($Parsed, [string]$Hash, [long]$Size, [switch]$NoProxy, [version]$SshVersion, [hashtable]$Pin, [string]$Ext = 'png',
+        [string]$Keep = '1d', [string]$Dir = '/tmp')
     if ($Hash -cnotmatch '^[0-9a-f]{32}\z') { throw "bad image hash: $Hash" }
     if ($script:ImageExtensions -cnotcontains $Ext) { throw "bad image extension: $Ext" }
+    $minutes = ConvertTo-KeepMinutes $Keep
+    if (-not (Test-ServerDirectory $Dir) -or $Dir.StartsWith('~')) { throw "bad --dir: $Dir" }
+    $argv = New-Object System.Collections.ArrayList
+    foreach ($a in (Get-ServerSshArguments -Parsed $Parsed -NoProxy:$NoProxy -SshVersion $SshVersion -Pin $Pin)) { [void]$argv.Add($a) }
+    # The folder in single quotes, as the remote login shell reads the command.
+    $command = "sh -c '" + $script:RemoteScript + "' ssh-paste " + $Hash + ' ' + $Size + ' ' + $Ext + ' ' + $minutes + " '" + $Dir + "'"
+    $class = Get-KeepClass $Keep
+    if ($class.Length -gt 0) { $command += ' ' + $class }
+    [void]$argv.Add($command)
+    return @($argv)
+}
+
+function Get-ServerSshArguments {
+    # Arguments for a separate, non-interactive connection to the server of the session
+    # (uploads, and the home folder for --dir ~/...), up to the destination and its
+    # options; the caller adds the command. Our options come first because ssh uses the
+    # first value it sees for each option; the user's options keep their place before or
+    # after the destination.
+    param($Parsed, [switch]$NoProxy, [version]$SshVersion, [hashtable]$Pin)
     $argv = New-Object System.Collections.ArrayList
     foreach ($a in @('-T', '-x',
             '-o', 'BatchMode=yes', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
@@ -268,8 +307,32 @@ function Get-UploadSshArguments {
     foreach ($a in $before) { [void]$argv.Add($a) }
     [void]$argv.Add([string]$Parsed.Destination)
     foreach ($a in $after) { [void]$argv.Add($a) }
-    [void]$argv.Add("sh -c '" + $script:RemoteScript + "' ssh-paste " + $Hash + ' ' + $Size + ' ' + $Ext)
     return @($argv)
+}
+
+function ConvertTo-AbsoluteDirectory {
+    # --dir with ~ made absolute with the home folder on the server; any other --dir as it is.
+    param([string]$Dir, [string]$HomeDir)
+    if (-not $Dir.StartsWith('~')) { return $Dir }
+    $abs = $HomeDir.TrimEnd('/') + $Dir.Substring(1)
+    if (-not $abs.StartsWith('/') -or -not (Test-ServerDirectory $abs)) {
+        throw ("the home folder on the server ({0}) makes {1}, which --dir cannot use; give an absolute --dir" -f $HomeDir, $abs)
+    }
+    return $abs
+}
+
+function Get-ServerHome {
+    # The home folder on the server, for --dir ~/...: one ssh connection, as an upload makes.
+    param([string]$SshPath, $Parsed, [version]$SshVersion)
+    $argv = @(Get-ServerSshArguments -Parsed $Parsed -SshVersion $SshVersion) + @('echo $HOME')
+    $r = Invoke-NativeCapture $SshPath $argv 30
+    $lines = @(([string]$r.Out) -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 })
+    $line = ''
+    if ($lines.Count -gt 0) { $line = $lines[$lines.Count - 1].Trim() }
+    if ($r.ExitCode -ne 0 -or -not $line.StartsWith('/')) {
+        throw ('cannot ask {0} for its home folder (ssh exited {1}: {2}); give an absolute --dir, or check the login with ssh-paste --doctor {0}' -f $Parsed.Destination, $r.ExitCode, ([string]$r.Err).Trim())
+    }
+    return $line
 }
 
 function Get-ImageHash {
@@ -329,17 +392,108 @@ function Get-ImageFileExtension {
 
 function Read-UploadReply {
     # The last non-empty line of the reply is "<size> <path>".
-    param([string]$Output, [long]$ExpectedSize, [string]$Hash, [string]$Ext = 'png')
+    param([string]$Output, [long]$ExpectedSize, [string]$Hash, [string]$Ext = 'png', [string]$Dir = '/tmp', [string]$Class = '')
     $lines = @($Output -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 })
     if ($lines.Count -eq 0) { throw 'the server sent no reply (is sh available there?)' }
     $last = $lines[$lines.Count - 1].Trim()
     if ($last -cmatch '^short (\d+)\z') { throw "the server received $($Matches[1]) of $ExpectedSize bytes" }
+    if ($last -ceq 'nodir') { throw "the server cannot write to the folder $Dir (--dir)" }
+    if ($last -ceq 'notprivate') { throw "the folder $Dir on the server is not yours alone (owned by you, not a link, not writable by group or others); use /tmp or such a folder" }
     if ($last -cnotmatch '^(\d+) (/\S+)\z') { throw "unexpected reply from the server: $last" }
     $size = [long]$Matches[1]
     $path = $Matches[2]
     if ($size -ne $ExpectedSize) { throw "size mismatch: sent $ExpectedSize bytes, server has $size" }
-    if ($path -cnotmatch ('^/tmp/ssh-paste-' + $Hash + '(-[0-9]+)?\.' + $Ext + '\z')) { throw "unexpected path from the server: $path" }
+    if ($path -cnotmatch (Get-ReplyPathPattern $Dir $Hash $Ext $Class)) { throw "unexpected path from the server: $path" }
     return $path
+}
+
+function Get-ReplyPathPattern {
+    # The paths the server may answer for this image: <folder>/ssh-paste-<class><hash>[-<uid>].<ext>,
+    # in exactly the --dir folder.
+    param([string]$Dir, [string]$Hash, [string]$Ext, [string]$Class = '')
+    return ('^' + [regex]::Escape($Dir) + '/ssh-paste-' + [regex]::Escape($Class) + $Hash + '(-[0-9]+)?\.' + $Ext + '\z')
+}
+
+function Get-KeepClass {
+    # The part of the file name that says which --keep made it: empty for the default
+    # (the names of every earlier release), else k<keep>- such as k7d- or knever-.
+    param([string]$Keep)
+    if ([string]::IsNullOrEmpty($Keep) -or $Keep -ceq $script:DefaultKeep) { return '' }
+    return ('k' + $Keep + '-')
+}
+
+function ConvertTo-KeepMinutes {
+    # --keep: 30m, 2h, 7d, or never (0: the server keeps every image). From 10 minutes
+    # (a path must stay good for a while after the paste; the cache, half of it, then
+    # outlasts the longest upload, 5 minutes) to 3650 days.
+    param([string]$Keep)
+    if ($Keep -ceq 'never') { return 0 }
+    if ($Keep -cnotmatch '^([1-9][0-9]{0,6})([mhd])\z') { throw ('--keep takes a time like 30m, 2h or 7d, or never: ' + $Keep) }
+    $n = [long]$Matches[1]
+    $minutes = $n
+    if ($Matches[2] -ceq 'h') { $minutes = $n * 60 } elseif ($Matches[2] -ceq 'd') { $minutes = $n * 1440 }
+    if ($minutes -lt 10) { throw ('--keep is at least 10m: ' + $Keep) }
+    if ($minutes -gt 5256000) { throw ('--keep is at most 3650d: ' + $Keep) }
+    return [int]$minutes
+}
+
+function Test-ServerDirectory {
+    # --dir: a folder on the server, absolute or under ~ (the home folder there): names of
+    # letters, digits and . _ - only, none of them . or .., no // and no / at the end.
+    param([string]$Dir)
+    if ([string]::IsNullOrEmpty($Dir) -or $Dir.Length -gt 200) { return $false }
+    return ($Dir -cmatch '^(~|~?(/(?!\.\.?(/|\z))[A-Za-z0-9._-]+)+)\z')
+}
+
+function Read-PasteSettings {
+    # The leading --keep TIME and --dir DIR (each at most once) of --enable, wrapper mode and
+    # --proxy: Keep and Dir ($null when not given) and the arguments after them.
+    param([string[]]$Argv)
+    $r = @{ Keep = $null; Dir = $null; Rest = @() }
+    $a = @($Argv)
+    $i = 0
+    while ($i -lt $a.Count -and ($a[$i] -ceq '--keep' -or $a[$i] -ceq '--dir')) {
+        $name = $a[$i]
+        if ($i + 1 -ge $a.Count) { throw ($name + ' needs a value') }
+        $value = [string]$a[$i + 1]
+        if ($name -ceq '--keep') {
+            if ($null -ne $r.Keep) { throw '--keep is given twice' }
+            [void](ConvertTo-KeepMinutes $value)
+            $r.Keep = $value
+        } else {
+            if ($null -ne $r.Dir) { throw '--dir is given twice' }
+            if ($value.Length -gt 1) { $value = $value.TrimEnd('/') }
+            if ($value -ceq '') { $value = '/' }
+            if (-not (Test-ServerDirectory $value)) {
+                throw ("--dir takes a folder on the server, /... or ~/... (quote ~ so that your shell keeps it), with letters, digits and . _ - / only: " + $value)
+            }
+            $r.Dir = $value
+        }
+        $i += 2
+    }
+    if ($i -lt $a.Count) { $r.Rest = @($a[$i..($a.Count - 1)]) }
+    return $r
+}
+
+function Get-ProxySettings {
+    # --keep and --dir of a ProxyCommand line that --enable wrote (the defaults when absent).
+    param([string]$ProxyCommand)
+    # Only the words after --proxy count: a path before it may hold anything.
+    $s = @{ Keep = $script:DefaultKeep; Dir = $script:DefaultDir }
+    $text = [string]$ProxyCommand
+    $at = $text.LastIndexOf(' --proxy ')
+    if ($at -lt 0) { return $s }
+    $tail = $text.Substring($at)
+    if ($tail -cmatch " --keep '?([^' ]+)'?") { $s.Keep = $Matches[1] }
+    if ($tail -cmatch " --dir '?([^' ]+)'?") { $s.Dir = $Matches[1] }
+    return $s
+}
+
+function Format-PasteSettings {
+    param($Settings)
+    $keep = 'kept ' + $Settings.Keep
+    if ($Settings.Keep -ceq 'never') { $keep = 'never deleted' }
+    return ('images in {0} on the server, {1}' -f $Settings.Dir, $keep)
 }
 
 function Test-HostAlias {
@@ -349,45 +503,75 @@ function Test-HostAlias {
 }
 
 function Get-ProxyCommandLine {
-    param([string]$ScriptPath)
+    # --keep and --dir are written only when they are not the defaults, so a block from an
+    # older release reads the same. Their values have no space, quote or %.
+    param([string]$ScriptPath, [string]$Keep, [string]$Dir)
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     # Win32-OpenSSH runs ProxyCommand without a shell: the text up to the first
     # ".exe " is the program and the rest is passed through. % starts a token.
     $path = $ScriptPath.Replace('%', '%%')
     $exe = $powershell.Replace('%', '%%')
-    return ('{0} -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{1}" --proxy %h %p %n' -f $exe, $path)
+    $line = ('{0} -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{1}" --proxy %h %p %n' -f $exe, $path)
+    if (-not [string]::IsNullOrEmpty($Keep) -and $Keep -cne $script:DefaultKeep) { $line += ' --keep ' + $Keep }
+    if (-not [string]::IsNullOrEmpty($Dir) -and $Dir -cne $script:DefaultDir) { $line += ' --dir ' + $Dir }
+    return $line
 }
 
 function Get-ManagedBlock {
-    # Hosts, ProxyCommand and "created the file" flag from our block, if any.
+    # Our block: its groups (each a Host line with its ProxyCommand; hosts with the same
+    # --keep and --dir share one), all their hosts, and the "created the file" flag.
     param([string]$ConfigText)
-    $info = @{ Hosts = @(); ProxyCommand = $null; CreatedFile = $false; Present = $false }
+    $info = @{ Hosts = @(); Groups = @(); ProxyCommand = $null; CreatedFile = $false; Present = $false }
     if ([string]::IsNullOrEmpty($ConfigText)) { return $info }
+    $groups = New-Object System.Collections.ArrayList
+    $current = $null
     $inBlock = $false
     foreach ($line in ($ConfigText -split "`r?`n")) {
         if ($line -ceq $script:BlockBegin) { $inBlock = $true; $info.Present = $true; continue }
         if ($line -ceq $script:BlockEnd) { $inBlock = $false; continue }
         if (-not $inBlock) { continue }
         if ($line -ceq $script:BlockCreatedFile) { $info.CreatedFile = $true; continue }
-        if ($line -match '^Host\s+(.+)$' -and $info.Hosts.Count -eq 0) {
-            $info.Hosts = @($Matches[1].Trim() -split '\s+' | Where-Object { $_ -ne '*' })
+        if ($line -match '^Host\s+(.+)$') {
+            $hosts = @($Matches[1].Trim() -split '\s+' | Where-Object { $_ -ne '*' })
+            $current = $null
+            if ($hosts.Count -gt 0) {
+                $current = @{ Hosts = $hosts; ProxyCommand = $null }
+                [void]$groups.Add($current)
+            }
             continue
         }
-        if ($line -match '^\s+ProxyCommand\s+(.+)$' -and $null -eq $info.ProxyCommand) { $info.ProxyCommand = $Matches[1].Trim() }
+        if ($line -match '^\s+ProxyCommand\s+(.+)$' -and $null -ne $current -and $null -eq $current.ProxyCommand) { $current.ProxyCommand = $Matches[1].Trim() }
     }
+    $info.Groups = @($groups)
+    $info.Hosts = @($groups | ForEach-Object { $_.Hosts })
+    if ($groups.Count -gt 0) { $info.ProxyCommand = $groups[0].ProxyCommand }
     return $info
 }
 
-function Get-ManagedHosts {
-    param([string]$ConfigText)
-    return @((Get-ManagedBlock $ConfigText).Hosts)
+function Get-SettingsGroups {
+    # Hosts (in order) with the same settings share one Host line and ProxyCommand.
+    param($Want, [string]$ScriptPath)
+    $groups = New-Object System.Collections.ArrayList
+    $index = New-Object 'System.Collections.Generic.Dictionary[string,int]' ([StringComparer]::Ordinal)
+    foreach ($h in @($Want.psbase.Keys)) {
+        $s = $Want[$h]
+        $key = $s.Keep + ' ' + $s.Dir
+        if (-not $index.ContainsKey($key)) {
+            $index[$key] = $groups.Count
+            [void]$groups.Add(@{ Hosts = (New-Object System.Collections.ArrayList); ProxyCommand = (Get-ProxyCommandLine $ScriptPath $s.Keep $s.Dir) })
+        }
+        [void]$groups[$index[$key]].Hosts.Add($h)
+    }
+    return @($groups)
 }
 
 function Set-ManagedBlock {
-    # Returns the config text with our block removed and, if Hosts is non-empty,
-    # a fresh block put first (ssh uses the first value it finds). The trailing
-    # "Host *" keeps any global options that follow in effect for every host.
-    param([string]$ConfigText, [string[]]$Hosts, [string]$ProxyCommand, [switch]$CreatedFile)
+    # Returns the config text with our block removed and, if a group has hosts, a
+    # fresh block put first (ssh uses the first value it finds): one Host line and
+    # ProxyCommand per group. The trailing "Host *" keeps any global options that
+    # follow in effect for every host. Hosts and ProxyCommand make one group.
+    param([string]$ConfigText, [string[]]$Hosts, [string]$ProxyCommand, [switch]$CreatedFile, $Groups)
+    if ($null -eq $Groups) { $Groups = @(@{ Hosts = @($Hosts); ProxyCommand = $ProxyCommand }) }
     if ($null -eq $ConfigText) { $ConfigText = '' }
     $newline = "`n"
     if ($ConfigText.Contains("`r`n")) { $newline = "`r`n" }
@@ -405,13 +589,16 @@ function Set-ManagedBlock {
     }
     if ($inBlock) { throw 'the ssh-paste block in the ssh config has no end marker; fix it by hand' }
     $rest = ($kept -join $newline)
-    if ($null -eq $Hosts -or $Hosts.Count -eq 0) { return $rest }
+    $used = @(@($Groups) | Where-Object { $null -ne $_ -and @($_.Hosts).Count -gt 0 })
+    if ($used.Count -eq 0) { return $rest }
     $blockLines = New-Object System.Collections.ArrayList
     [void]$blockLines.Add($script:BlockBegin)
     if ($CreatedFile) { [void]$blockLines.Add($script:BlockCreatedFile) }
-    [void]$blockLines.Add('Host ' + ($Hosts -join ' '))
-    [void]$blockLines.Add('    ProxyCommand ' + $ProxyCommand)
-    [void]$blockLines.Add('    ProxyUseFdpass no')
+    foreach ($g in $used) {
+        [void]$blockLines.Add('Host ' + (@($g.Hosts) -join ' '))
+        [void]$blockLines.Add('    ProxyCommand ' + $g.ProxyCommand)
+        [void]$blockLines.Add('    ProxyUseFdpass no')
+    }
     [void]$blockLines.Add('Host *')
     [void]$blockLines.Add($script:BlockEnd)
     $block = ($blockLines -join $newline)
@@ -1075,6 +1262,17 @@ function Get-EffectiveSshConfig {
     return $null
 }
 
+function Get-SshModeSettings {
+    # ssh mode's --keep and --dir for a connection, read from the ProxyCommand that ssh -G
+    # says ssh will run: $null when that is not ssh-paste's relay (ssh mode is off for it).
+    # ssh's own reading counts, not our block: -F, Include and an earlier Host win there.
+    param($Effective)
+    $proxy = ''
+    if ($null -ne $Effective -and $Effective.ContainsKey('proxycommand')) { $proxy = [string]$Effective['proxycommand'] }
+    if ($proxy -notmatch 'ssh-paste' -or $proxy -notmatch ' --proxy ') { return $null }
+    return (Get-ProxySettings $proxy)
+}
+
 function Get-RemainingMilliseconds {
     param([DateTime]$Deadline)
     return [int][Math]::Max(0, ($Deadline - [DateTime]::UtcNow).TotalMilliseconds)
@@ -1082,7 +1280,7 @@ function Get-RemainingMilliseconds {
 
 function Send-Image {
     # One ssh connection sends, verifies, prunes and publishes; returns the path.
-    param([string]$SshPath, [string[]]$Arguments, [byte[]]$Png, [string]$Hash, [int]$TimeoutSeconds = 30, [string]$Ext = 'png')
+    param([string]$SshPath, [string[]]$Arguments, [byte[]]$Png, [string]$Hash, [int]$TimeoutSeconds = 30, [string]$Ext = 'png', [string]$Dir = '/tmp', [string]$Class = '')
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $psi = New-ChildStartInfo -FilePath $SshPath -Arguments $Arguments -Redirect
     # The stdin writer must not start with a byte order mark: .NET Framework uses
@@ -1140,7 +1338,7 @@ function Send-Image {
             throw ('ssh exited with {0}: {1}' -f $process.ExitCode, $err)
         }
         if (-not $stdout.Wait((Get-RemainingMilliseconds $deadline))) { throw 'the reply from ssh did not arrive in time' }
-        return (Read-UploadReply $stdout.Result $Png.Length $Hash $Ext)
+        return (Read-UploadReply $stdout.Result $Png.Length $Hash $Ext $Dir $Class)
     } finally {
         # Closing our ends ends any read still pending on a pipe that a leftover
         # child of ssh keeps open.
@@ -1156,16 +1354,40 @@ function Send-Image {
 # ---------------------------------------------------------------------------
 
 function New-Watcher {
-    param([string]$SshPath, $Parsed, [switch]$NoProxy, [hashtable]$Pin)
+    param([string]$SshPath, $Parsed, [switch]$NoProxy, [hashtable]$Pin, $Settings)
+    $keep = $script:DefaultKeep
+    $dir = $script:DefaultDir
+    if ($null -ne $Settings) {
+        if (-not [string]::IsNullOrEmpty($Settings.Keep)) { $keep = $Settings.Keep }
+        if (-not [string]::IsNullOrEmpty($Settings.Dir)) { $dir = $Settings.Dir }
+    }
+    if (-not (Test-ServerDirectory $dir) -or $dir.StartsWith('~')) { throw ('bad --dir: ' + $dir) }
+    $minutes = ConvertTo-KeepMinutes $keep
     $tokenBytes = New-Object byte[] 8
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($tokenBytes) } finally { $rng.Dispose() }
     return @{
         SshPath = $SshPath; SshVersion = (Get-SshVersion $SshPath); Parsed = $Parsed; NoProxy = [bool]$NoProxy; Pin = $Pin
+        Keep = $keep; KeepMinutes = $minutes; Class = (Get-KeepClass $keep); Dir = $dir; CacheHours = (Get-UploadCacheHours $minutes)
         Matcher = (Get-HostMatcher); Token = [BitConverter]::ToInt64($tokenBytes, 0)
         LastSeq = [long]-1; LastForeground = [long]0; State = $null; WakeAt = [DateTime]::MaxValue
         Uploaded = @{}; Failed = @{}
     }
+}
+
+function Get-UploadCacheHours {
+    # How long a path is pasted again without a new upload. The server may delete the file
+    # once it is KeepMinutes old, so this stays well under that.
+    param([int]$KeepMinutes)
+    if ($KeepMinutes -le 0) { return [double]$script:UploadCacheHours }
+    return [Math]::Min([double]$script:UploadCacheHours, $KeepMinutes / 120.0)
+}
+
+function Get-WatcherValue {
+    # A watcher field, or its default for a watcher made before the field existed.
+    param($W, [string]$Name, $Default)
+    if ($W.ContainsKey($Name) -and $null -ne $W[$Name]) { return $W[$Name] }
+    return $Default
 }
 
 function Get-UploadedPath {
@@ -1198,8 +1420,8 @@ function Get-ExpectedText {
     $now = [DateTime]::UtcNow
     $paths = foreach ($item in (Get-StateItems $State)) {
         $done = $W.Uploaded[$item.Hash]
-        if ($null -ne $done -and ($now - $done.At).TotalHours -lt $script:UploadCacheHours) { $done.Path }
-        else { '/tmp/ssh-paste-' + $item.Hash + '.' + $item.Ext }
+        if ($null -ne $done -and ($now - $done.At).TotalHours -lt (Get-WatcherValue $W 'CacheHours' $script:UploadCacheHours)) { $done.Path }
+        else { (Get-WatcherValue $W 'Dir' $script:DefaultDir) + '/ssh-paste-' + (Get-WatcherValue $W 'Class' '') + $item.Hash + '.' + $item.Ext }
     }
     return (@($paths) -join ' ')
 }
@@ -1240,8 +1462,9 @@ function Get-UploadedItemPath {
     param($W, $Item)
     $now = [DateTime]::UtcNow
     $done = $W.Uploaded[$Item.Hash]
-    if ($null -ne $done -and ($now - $done.At).TotalHours -lt $script:UploadCacheHours) {
-        Set-WakeAt $W $done.At.AddHours($script:UploadCacheHours)
+    $cacheHours = Get-WatcherValue $W 'CacheHours' $script:UploadCacheHours
+    if ($null -ne $done -and ($now - $done.At).TotalHours -lt $cacheHours) {
+        Set-WakeAt $W $done.At.AddHours($cacheHours)
         return $done.Path
     }
     $failed = $W.Failed[$Item.Hash]
@@ -1250,7 +1473,10 @@ function Get-UploadedItemPath {
         if ($now -lt $retryAt) { Set-WakeAt $W $retryAt; return $null }
     }
     try {
-        $argv = Get-UploadSshArguments -Parsed $W.Parsed -Hash $Item.Hash -Size $Item.Bytes.Length -NoProxy:$W.NoProxy -SshVersion $W.SshVersion -Pin $W.Pin -Ext $Item.Ext
+        $dir = Get-WatcherValue $W 'Dir' $script:DefaultDir
+        $class = Get-WatcherValue $W 'Class' ''
+        $argv = Get-UploadSshArguments -Parsed $W.Parsed -Hash $Item.Hash -Size $Item.Bytes.Length -NoProxy:$W.NoProxy -SshVersion $W.SshVersion -Pin $W.Pin -Ext $Item.Ext `
+            -Keep (Get-WatcherValue $W 'Keep' $script:DefaultKeep) -Dir $dir
         if ($env:SSH_PASTE_DEBUG) {
             # -v makes ssh say on stderr how far it got; LogLevel=ERROR is ours, so
             # drop it together with its -o (a lone -o would take the next option as
@@ -1261,10 +1487,12 @@ function Get-UploadedItemPath {
         }
         # 30 s plus 1 s per 256 KB, at most 5 minutes: big images on slow links need longer.
         $timeout = [int][Math]::Min(300, 30 + [Math]::Ceiling($Item.Bytes.Length / 262144))
-        $path = Send-Image -SshPath $W.SshPath -Arguments $argv -Png $Item.Bytes -Hash $Item.Hash -Ext $Item.Ext -TimeoutSeconds $timeout
+        $path = Send-Image -SshPath $W.SshPath -Arguments $argv -Png $Item.Bytes -Hash $Item.Hash -Ext $Item.Ext -TimeoutSeconds $timeout -Dir $dir -Class $class
+        # The cache counts from the end of the upload: a slow upload is not stale at once.
+        $now = [DateTime]::UtcNow
         $W.Uploaded[$Item.Hash] = @{ Path = $path; At = $now }
         $W.Failed.Remove($Item.Hash)
-        Set-WakeAt $W $now.AddHours($script:UploadCacheHours)
+        Set-WakeAt $W $now.AddHours($cacheHours)
         return $path
     } catch {
         $count = 1
@@ -1409,21 +1637,25 @@ function Write-Info {
 }
 
 function Invoke-Wrapper {
-    param([string[]]$SshArgs)
+    param([string[]]$SshArgs, $Settings)
     $ssh = Get-SshPath
     $parsed = $null
     try { $parsed = Split-SshArguments $SshArgs } catch { }
     $watcher = $null
     if ($null -ne $parsed -and -not [string]::IsNullOrEmpty($parsed.Destination)) {
         $effective = Get-EffectiveSshConfig $ssh $SshArgs
-        $proxy = ''
-        if ($null -ne $effective -and $effective.ContainsKey('proxycommand')) { $proxy = [string]$effective['proxycommand'] }
-        if ($proxy -match 'ssh-paste' -and $proxy -match '--proxy') {
+        if ($null -ne (Get-SshModeSettings $effective)) {
             # ssh mode already serves this connection; a second watcher would upload twice.
+            if ($null -ne $Settings -and ($null -ne $Settings.Keep -or $null -ne $Settings.Dir)) {
+                Write-Info ('ssh-paste: ssh mode serves {0}, with its own --keep and --dir; change them with ssh-paste --enable --keep TIME --dir DIR {0}' -f $parsed.Destination) 'Yellow'
+            }
         } elseif (Test-InteractiveSsh $parsed $effective) {
             try {
                 Initialize-Native
-                $watcher = New-Watcher -SshPath $ssh -Parsed $parsed
+                if ($null -ne $Settings -and -not [string]::IsNullOrEmpty($Settings.Dir) -and $Settings.Dir.StartsWith('~')) {
+                    $Settings.Dir = ConvertTo-AbsoluteDirectory $Settings.Dir (Get-ServerHome $ssh $parsed (Get-SshVersion $ssh))
+                }
+                $watcher = New-Watcher -SshPath $ssh -Parsed $parsed -Settings $Settings
                 Write-Info 'ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Ctrl+V.' 'DarkGray'
             } catch {
                 Write-Info ('ssh-paste: screenshot paste is off: ' + $_.Exception.Message) 'Yellow'
@@ -1557,7 +1789,7 @@ function Write-ProxyDebug {
 
 function Invoke-Proxy {
     # ProxyCommand mode. stdout is the SSH byte stream: never write to it.
-    param([string]$TargetHost, [string]$Port, [string]$Alias)
+    param([string]$TargetHost, [string]$Port, [string]$Alias, $Settings, [string]$SettingsError)
     $client = Connect-Tcp $TargetHost ([int]$Port)
     Write-ProxyDebug ('connected to {0}' -f $client.Client.RemoteEndPoint)
     $network = $client.GetStream()
@@ -1597,6 +1829,7 @@ function Invoke-Proxy {
             $parsed = Split-SshArguments $parent.Args
             $effective = Get-EffectiveSshConfig $parent.Path $parent.Args
             if (Test-InteractiveSsh $parsed $effective) {
+                if (-not [string]::IsNullOrEmpty($SettingsError)) { throw $SettingsError }
                 Initialize-Native
                 # Upload to the address this relay reached, checking the host key
                 # under the name the session itself used.
@@ -1605,7 +1838,7 @@ function Invoke-Proxy {
                 if ($null -ne $effective -and $effective.ContainsKey('hostkeyalias')) { $alias = [string]$effective['hostkeyalias'] }
                 $remote = $client.Client.RemoteEndPoint
                 $pin = @{ HostName = $remote.Address.ToString(); Port = $remote.Port; HostKeyAlias = $alias }
-                $watcher = New-Watcher -SshPath $parent.Path -Parsed $parsed -NoProxy -Pin $pin
+                $watcher = New-Watcher -SshPath $parent.Path -Parsed $parsed -NoProxy -Pin $pin -Settings $Settings
             }
         }
     } catch {
@@ -1702,43 +1935,72 @@ function Test-HostResolves {
 }
 
 function Invoke-Enable {
-    param([string[]]$Hosts)
-    if ($null -eq $Hosts -or $Hosts.Count -eq 0) { throw 'usage: ssh-paste --enable HOST [HOST...]' }
+    # ssh-paste --enable [--keep TIME] [--dir DIR] HOST...: the settings go to the hosts given;
+    # a host that is already enabled keeps the settings that are not given.
+    param([string[]]$Arguments)
+    $settings = Read-PasteSettings $Arguments
+    $hosts = @($settings.Rest)
+    if ($hosts.Count -eq 0) { throw 'usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]' }
     $configPath = Get-SshConfigPath
     $text = Read-TextFile $configPath
     $block = Get-ManagedBlock $text
-    $managed = @($block.Hosts)
-    $proxy = Get-ProxyCommandLine (Get-ProxyScriptPath $PSCommandPath)
+    # Host aliases are case-sensitive in ssh, so the map is too.
+    $want = New-Object System.Collections.Specialized.OrderedDictionary ([StringComparer]::Ordinal)
+    foreach ($g in @($block.Groups)) {
+        $s = Get-ProxySettings $g.ProxyCommand
+        foreach ($h in @($g.Hosts)) { if (-not $want.Contains($h)) { $want[$h] = $s } }
+    }
     $added = @()
-    foreach ($h in $Hosts) {
+    $changed = @()
+    foreach ($h in $hosts) {
         if (-not (Test-HostAlias $h)) { throw "use a host name or a Host alias from ~/.ssh/config (no user@, no options): $h" }
-        if ($managed -contains $h -or $added -contains $h) { continue }
-        $resolved = Get-ResolvedSshConfig $h
-        $hostName = $h
-        if ($resolved.ContainsKey('hostname')) { $hostName = [string]$resolved['hostname'] }
-        if (-not (Test-HostResolves $hostName)) {
-            throw ("cannot find the host {0} (from {1}). Check the name, or add it to ~/.ssh/config, then run --enable again" -f $hostName, $h)
+        if (-not $want.Contains($h)) {
+            $resolved = Get-ResolvedSshConfig $h
+            $hostName = $h
+            if ($resolved.ContainsKey('hostname')) { $hostName = [string]$resolved['hostname'] }
+            if (-not (Test-HostResolves $hostName)) {
+                throw ("cannot find the host {0} (from {1}). Check the name, or add it to ~/.ssh/config, then run --enable again" -f $hostName, $h)
+            }
+            foreach ($key in @('proxyjump', 'proxycommand')) {
+                if ($resolved.ContainsKey($key) -and $resolved[$key] -ne 'none') {
+                    throw ("{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}" -f $h, $key, $resolved[$key])
+                }
+            }
+            $want[$h] = @{ Keep = $script:DefaultKeep; Dir = $script:DefaultDir }
+            $added += $h
         }
-        foreach ($key in @('proxyjump', 'proxycommand')) {
-            if ($resolved.ContainsKey($key) -and $resolved[$key] -ne 'none') {
-                throw ("{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}" -f $h, $key, $resolved[$key])
+        $old = $want[$h]
+        $new = @{ Keep = $old.Keep; Dir = $old.Dir }
+        if ($null -ne $settings.Keep) { $new.Keep = $settings.Keep }
+        if ($null -ne $settings.Dir) {
+            # ~ is the home folder on that server, asked for once, so the block holds an
+            # absolute path and the path to paste is known before an upload.
+            $new.Dir = $settings.Dir
+            if ($new.Dir.StartsWith('~')) {
+                $ssh = Get-SshPath
+                $serverHome = Get-ServerHome $ssh (Split-SshArguments @($h)) (Get-SshVersion $ssh)
+                $new.Dir = ConvertTo-AbsoluteDirectory $settings.Dir $serverHome
+                Write-Info ('{0}: {1} is {2} there' -f $h, $settings.Dir, $new.Dir)
             }
         }
-        $added += $h
+        if ($added -notcontains $h -and $changed -notcontains $h -and ($new.Keep -cne $old.Keep -or $new.Dir -cne $old.Dir)) { $changed += $h }
+        $want[$h] = $new
     }
-    $all = @($managed + $added)
+    $groups = @(Get-SettingsGroups $want (Get-ProxyScriptPath $PSCommandPath))
     $createdFile = $block.CreatedFile -or ($null -eq $text)
-    if ($added.Count -gt 0) {
-        Update-SshConfig $configPath $text (Set-ManagedBlock $text $all $proxy -CreatedFile:$createdFile)
-        Write-Info ('Enabled for: ' + ($added -join ', ')) 'Green'
+    if ($added.Count -gt 0 -or $changed.Count -gt 0) {
+        Update-SshConfig $configPath $text (Set-ManagedBlock $text -Groups $groups -CreatedFile:$createdFile)
+        if ($added.Count -gt 0) { Write-Info ('Enabled for: ' + ($added -join ', ')) 'Green' }
+        if ($changed.Count -gt 0) { Write-Info ('Changed for: ' + ($changed -join ', ')) 'Green' }
     } else {
-        Write-Info 'Already enabled; nothing changed.' 'Gray'
+        Write-Info 'Already enabled with these settings; nothing changed.' 'Gray'
     }
+    foreach ($h in $hosts) { Write-Info ('{0}: {1}' -f $h, (Format-PasteSettings $want[$h])) }
     Write-Info ("This block is at the top of {0}:" -f $configPath)
     Write-Info ''
-    foreach ($line in (Set-ManagedBlock '' $all $proxy -CreatedFile:$createdFile).TrimEnd() -split "`r?`n") { Write-Info ('    ' + $line) 'Cyan' }
+    foreach ($line in (Set-ManagedBlock '' -Groups $groups -CreatedFile:$createdFile).TrimEnd() -split "`r?`n") { Write-Info ('    ' + $line) 'Cyan' }
     Write-Info ''
-    $example = $all[0]
+    $example = $hosts[0]
     if ($added.Count -gt 0) { $example = $added[0] }
     Write-Info ('Now connect as usual: ssh ' + $example)
     return 0
@@ -1751,10 +2013,14 @@ function Invoke-Disable {
     $block = Get-ManagedBlock $text
     $managed = @($block.Hosts)
     if (-not $block.Present) { Write-Info 'ssh-paste is not enabled for any host.'; return 0 }
-    if ($null -eq $Hosts -or $Hosts.Count -eq 0) { $keep = @() } else { $keep = @($managed | Where-Object { $Hosts -notcontains $_ }) }
-    $proxy = $block.ProxyCommand
-    if ([string]::IsNullOrEmpty($proxy)) { $proxy = Get-ProxyCommandLine $PSCommandPath }
-    $newText = Set-ManagedBlock $text $keep $proxy -CreatedFile:$block.CreatedFile
+    if ($null -eq $Hosts -or $Hosts.Count -eq 0) { $keep = @() } else { $keep = @($managed | Where-Object { $Hosts -cnotcontains $_ }) }
+    # Each remaining host keeps its group's line as it is.
+    $groups = @(foreach ($g in @($block.Groups)) {
+            $proxy = $g.ProxyCommand
+            if ([string]::IsNullOrEmpty($proxy)) { $proxy = Get-ProxyCommandLine $PSCommandPath }
+            @{ Hosts = @(@($g.Hosts) | Where-Object { $keep -ccontains $_ }); ProxyCommand = $proxy }
+        })
+    $newText = Set-ManagedBlock $text -Groups $groups -CreatedFile:$block.CreatedFile
     if ($keep.Count -eq 0 -and $block.CreatedFile -and $newText.Trim().Length -eq 0) {
         Update-SshConfig $configPath $text $null -Delete
         $dir = Split-Path -Parent $configPath
@@ -1762,9 +2028,17 @@ function Invoke-Disable {
     } else {
         Update-SshConfig $configPath $text $newText
     }
-    $removed = @($managed | Where-Object { $keep -notcontains $_ })
-    Write-Info ('Disabled for: ' + ($removed -join ', ')) 'Green'
+    Write-Info (Get-DisableMessage $managed $Hosts) 'Green'
     return 0
+}
+
+function Get-DisableMessage {
+    # What --disable says: the hosts it removed (all when none are named), or that none of
+    # the named hosts was enabled. Host aliases are case-sensitive, as in ssh.
+    param([string[]]$Managed, [string[]]$Asked)
+    $removed = @(@($Managed) | Where-Object { $null -eq $Asked -or @($Asked).Count -eq 0 -or @($Asked) -ccontains $_ })
+    if ($removed.Count -eq 0) { return ('ssh-paste is not enabled for: ' + (@($Asked) -join ', ')) }
+    return ('Disabled for: ' + ($removed -join ', '))
 }
 
 function Invoke-Doctor {
@@ -1803,10 +2077,14 @@ function Invoke-Doctor {
         $png = $ms.ToArray()
     } finally { $bitmap.Dispose() }
     $hash = Get-ImageHash $png
+    $sshMode = Get-SshModeSettings (Get-EffectiveSshConfig $ssh $SshArgs)
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        $argv = Get-UploadSshArguments -Parsed $parsed -Hash $hash -Size $png.Length -SshVersion (Get-SshVersion $ssh)
-        $path = Send-Image -SshPath $ssh -Arguments $argv -Png $png -Hash $hash
+        # The settings ssh mode uses for this connection, so the test prunes as an upload would.
+        $settings = $sshMode
+        if ($null -eq $settings) { $settings = @{ Keep = $script:DefaultKeep; Dir = $script:DefaultDir } }
+        $argv = Get-UploadSshArguments -Parsed $parsed -Hash $hash -Size $png.Length -SshVersion (Get-SshVersion $ssh) -Keep $settings.Keep -Dir $settings.Dir
+        $path = Send-Image -SshPath $ssh -Arguments $argv -Png $png -Hash $hash -Dir $settings.Dir -Class (Get-KeepClass $settings.Keep)
         Report $true ('upload to {0}: {1} ({2:N1} s)' -f $parsed.Destination, $path, $timer.Elapsed.TotalSeconds)
     } catch {
         Report $false ('upload to {0}: {1}' -f $parsed.Destination, $_.Exception.Message)
@@ -1816,9 +2094,8 @@ function Invoke-Doctor {
         Write-Host 'in ssh-agent (Get-Service ssh-agent; ssh-add). Password-only logins cannot work.'
         return 1
     }
-    $managed = @(Get-ManagedHosts (Read-TextFile (Get-SshConfigPath)))
-    if ($managed -contains $parsed.Destination) {
-        Report $true ('ssh mode: enabled, "ssh {0}" pastes screenshots' -f $parsed.Destination)
+    if ($null -ne $sshMode) {
+        Report $true ('ssh mode: enabled, "ssh {0}" pastes screenshots ({1})' -f (Join-NativeArguments $SshArgs), (Format-PasteSettings $sshMode))
     } else {
         Write-Host ('  info  ssh mode is off for {0}. Turn it on: ssh-paste --enable {0}   (or use: ssh-paste {0})' -f $parsed.Destination)
     }
@@ -1997,16 +2274,28 @@ function Get-Usage {
         '    ssh-paste myhost',
         '',
         'All commands:',
-        '  ssh-paste --enable HOST [HOST...]   make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)',
-        '  ssh-paste --disable [HOST...]       undo --enable (all hosts if none given)',
-        '  ssh-paste [ssh options] HOST        wrapper mode: ssh with screenshot paste, no config',
-        '  ssh-paste --doctor [HOST]           check this computer and test an upload to HOST',
-        '  ssh-paste --update                  install the latest release',
-        '  ssh-paste --uninstall               remove ssh-paste and everything it changed',
+        '  ssh-paste --enable [OPTIONS] HOST...    make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)',
+        '  ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)',
+        '  ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config',
+        '  ssh-paste --doctor [HOST]               check this computer and test an upload to HOST',
+        '  ssh-paste --update                      install the latest release',
+        '  ssh-paste --uninstall                   remove ssh-paste and everything it changed',
         '  ssh-paste --version | --help',
+        '',
+        'OPTIONS (images on the server; per host for --enable):',
+        '  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never',
+        '  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)',
         '',
         'https://github.com/xuing/ssh-please-paste-picture'
     ) -join [Environment]::NewLine
+}
+
+function Invoke-WrapperWithSettings {
+    # ssh-paste [--keep TIME] [--dir DIR] [ssh options] HOST
+    param([string[]]$Argv)
+    $settings = Read-PasteSettings $Argv
+    if (@($settings.Rest).Count -eq 0) { throw 'usage: ssh-paste [--keep TIME] [--dir DIR] [ssh options] HOST' }
+    return (Invoke-Wrapper @($settings.Rest) -Settings $settings)
 }
 
 function Invoke-Main {
@@ -2019,7 +2308,14 @@ function Invoke-Main {
     switch -CaseSensitive ($Argv[0]) {
         '--proxy' {
             if ($rest.Count -lt 3) { [Console]::Error.WriteLine('ssh-paste: --proxy needs %h %p %n'); return 2 }
-            return (Invoke-Proxy $rest[0] $rest[1] $rest[2])
+            # A bad --keep or --dir must not stop the connection: it only turns paste off.
+            $settings = $null
+            $settingsError = $null
+            try {
+                $settings = Read-PasteSettings @($rest | Select-Object -Skip 3)
+                if (@($settings.Rest).Count -gt 0) { throw ('unknown --proxy arguments: ' + (@($settings.Rest) -join ' ')) }
+            } catch { $settingsError = $_.Exception.Message }
+            return (Invoke-Proxy $rest[0] $rest[1] $rest[2] -Settings $settings -SettingsError $settingsError)
         }
         '--enable' { return (Invoke-Enable $rest) }
         '--disable' { return (Invoke-Disable $rest) }
@@ -2032,6 +2328,8 @@ function Invoke-Main {
             if (Test-ScoopInstall $PSScriptRoot) { [Console]::Error.WriteLine('ssh-paste was installed with Scoop. Remove it with: scoop uninstall ssh-paste (it also runs ssh-paste --disable)'); return 1 }
             return (Invoke-Uninstall)
         }
+        '--keep' { return (Invoke-WrapperWithSettings $Argv) }
+        '--dir' { return (Invoke-WrapperWithSettings $Argv) }
         '--version' { Write-Host $script:Version; return 0 }
         '--help' { Write-Host (Get-Usage); return 0 }
         '-h' { Write-Host (Get-Usage); return 0 }

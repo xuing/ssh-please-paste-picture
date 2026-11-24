@@ -7,7 +7,8 @@
 #   bash tests/mac/footprint.sh
 #
 # Each round starts from the same snapshot and must end with an identical one:
-#   round 1  install twice, check the command, --enable / --disable, ssh-paste --uninstall
+#   round 1  install twice, check the command, --enable (also with --keep and --dir) /
+#            --disable, a bad --keep in wrapper mode, ssh-paste --uninstall
 #   round 2  install, --enable, sh install.sh --uninstall
 #   round 3  install, --enable, `cat install.sh | sh` with SSH_PASTE_UNINSTALL=1
 #   round 4  profiles and an ssh config that exist survive install, --enable and
@@ -103,6 +104,18 @@ check "$("$cmd" --version)" 0.0.0-dev 'ssh-paste --version'
 check "$(zsh -lc 'command -v ssh-paste')" "$cmd" 'a new login shell finds ssh-paste on its PATH'
 run '--enable localhost' "$cmd" --enable localhost
 if grep -qF "ProxyCommand '$cmd' --proxy" "$HOME/.ssh/config"; then pass 'the ProxyCommand calls the installed command'; else fail "ssh config: $(cat "$HOME/.ssh/config")"; fi
+# No server runs here, so --enable cannot ask for the home folder that ~ means there.
+before=$(cat "$HOME/.ssh/config")
+# shellcheck disable=SC2088 # the ~ is for the server, so it stays unexpanded
+if "$cmd" --enable --dir '~/ssh-paste-fp' localhost > "$work/out" 2>&1; then fail '--enable took a ~ it could not resolve'; else pass '--enable --dir ~/... refuses when it cannot ask the server'; fi
+if grep -qF 'give an absolute --dir' "$work/out"; then pass 'and says to give an absolute --dir'; else fail "message: $(cat "$work/out")"; fi
+check "$(cat "$HOME/.ssh/config")" "$before" 'and leaves ~/.ssh/config as it was'
+run '--enable --keep 7d --dir /... localhost' "$cmd" --enable --keep 7d --dir /tmp/ssh-paste-fp localhost
+if grep -qF "ProxyCommand '$cmd' --proxy '%h' %p '%n' --keep '7d' --dir '/tmp/ssh-paste-fp'" "$HOME/.ssh/config"; then pass 'the settings are in the ProxyCommand, quoted'; else fail "ssh config: $(cat "$HOME/.ssh/config")"; fi
+if "$cmd" --keep 1w localhost > "$work/out" 2>&1; then fail 'wrapper mode took --keep 1w'; else pass 'wrapper mode refuses --keep 1w'; fi
+if grep -qF -- '--keep takes' "$work/out"; then pass 'and says what --keep takes'; else fail "message: $(cat "$work/out")"; fi
+if "$cmd" --keep '' localhost > "$work/out" 2>&1; then fail 'wrapper mode took an empty --keep'; else pass 'wrapper mode refuses an empty --keep'; fi
+if grep -qF -- '--keep needs a value' "$work/out"; then pass 'and says it needs a value'; else fail "message: $(cat "$work/out")"; fi
 run '--disable' "$cmd" --disable
 run 'ssh-paste --uninstall' "$cmd" --uninstall
 compare 'round 1'

@@ -275,15 +275,33 @@ Describe 'RemoteScript (the command that runs on the server)' {
         $script:RemoteScript.Contains('`') | Should -BeFalse
     }
 
-    It 'takes the hash as $1, the byte count as $2 and the extension as $3' {
+    It 'takes the hash, byte count, extension, minutes to keep, folder and class as $1 to $6' {
         $script:RemoteScript | Should -Match 'n=\$2;'
-        $script:RemoteScript | Should -Match '/tmp/ssh-paste-\$1\.\$e'
+        $script:RemoteScript | Should -Match 'k=\$\{4:-1440\}; d=\$\{5:-/tmp\}; c=\$\{6:-\};'
+        $script:RemoteScript | Should -Match ('h=' + [regex]::Escape('[0-9a-f]' * 32) + ';')
+        $script:RemoteScript | Should -Match '\$d/ssh-paste-\$c\$1\.\$e'
+    }
+
+    It 'takes the folder as given (the client sends an absolute one), and makes it when missing' {
+        $script:RemoteScript | Should -Not -Match 'HOME'
+        $script:RemoteScript | Should -Match '\[ -d \$d \] \|\| mkdir -p \$d 2> /dev/null \|\| \{ echo nodir; exit 5; \}'
+    }
+
+    It 'uses a folder other than /tmp only when it is yours, not a link, and ls -ld shows no group or other write and no ACL' {
+        # Anything ls does not show as safe (an error, an ACL +) counts as not private.
+        $script:RemoteScript | Should -Match 'if \[ \$d = /tmp \]; then :; elif \[ -h \$d \]; then echo notprivate; exit 6; elif \[ -O \$d \]; then m=\$\(ls -ld \$d 2> /dev/null\); case \$\{m%% \*\} in d\?\?\?\?-\?\?-\? \| d\?\?\?\?-\?\?-\?\. \| d\?\?\?\?-\?\?-\?@\) ;; \*\) echo notprivate; exit 6;; esac; else echo notprivate; exit 6; fi;'
+        $script:RemoteScript.IndexOf('notprivate') | Should -BeLessThan $script:RemoteScript.IndexOf('mktemp')
+    }
+
+    It 'prunes images only when the minutes to keep are a number above 0' {
+        $script:RemoteScript | Should -Match 'if \[ \$k -gt 0 \] 2> /dev/null; then for x in'
     }
 
     It 'makes private files: umask, no globbing, a temp file from mktemp' {
         $script:RemoteScript | Should -Match '^umask 077;'
         $script:RemoteScript | Should -Match 'set -fC'
-        $script:RemoteScript | Should -Match 'mktemp /tmp/ssh-paste-tmp\.XXXXXXXXXX'
+        $script:RemoteScript | Should -Match 't=\$\(mktemp \$d/ssh-paste-tmp\.XXXXXXXXXX 2> /dev/null\) \|\| \{ echo nodir; exit 3; \};'
+        $script:RemoteScript | Should -Not -Match '\$\$'
     }
 
     It 'rejects a short upload with "short N" and exit 4 before it publishes anything' {
@@ -291,23 +309,30 @@ Describe 'RemoteScript (the command that runs on the server)' {
         $script:RemoteScript.IndexOf('exit 4') | Should -BeLessThan $script:RemoteScript.IndexOf('mv -f')
     }
 
-    It 'prunes only this user''s content-named files and temp leftovers older than a day, with two finds' {
-        # ssh-paste-<32 characters>*.png and ssh-paste-tmp.*, so a same-user file such as
-        # /tmp/ssh-paste-notes.png is never ours to delete.
-        $script:RemoteScript | Should -Match ('find /tmp -maxdepth 1 -user \$\(id -u\) -name ssh-paste-' + [regex]::Escape('?' * 32) + '\*\.\$x -mmin \+1440 -exec rm -f \{\} \+')
-        $script:RemoteScript | Should -Match 'find /tmp -maxdepth 1 -user \$\(id -u\) -name ssh-paste-tmp\.\* -mmin \+1440 -exec rm -f \{\} \+'
-        $script:RemoteScript | Should -Match 'for x in png jpg jpeg gif webp bmp; do find'
+    It 'prunes only this user''s regular files with exactly its own names: images of its class older than $4 minutes, temp files older than a day' {
+        # ssh-paste-<class><32 hex digits>[-<uid>].<ext> and mktemp's ssh-paste-tmp.<10 letters or digits>,
+        # so a same-user file such as ssh-paste-notes.png, or an image of another --keep, is never deleted.
+        # $d/ makes find enter /tmp when it is a symbolic link, as on macOS (/private/tmp).
+        $script:RemoteScript | Should -Match 'u=\$\(id -u\); a=\[A-Za-z0-9\];'
+        $script:RemoteScript | Should -Match 'for p in ssh-paste-\$c\$h\.\$x ssh-paste-\$c\$h-\$u\.\$x; do find \$d/ -maxdepth 1 -type f -user \$u -name \$p -mmin \+\$k -exec rm -f \{\} \+'
+        $script:RemoteScript | Should -Match ('find \$d/ -maxdepth 1 -type f -user \$u -name ssh-paste-tmp\.' + [regex]::Escape('$a' * 10) + ' -mmin \+1440 -exec rm -f \{\} \+')
+        $script:RemoteScript | Should -Not -Match 'find \$d '
         $script:RemoteScript | Should -Not -Match '-name ssh-paste-\*'
     }
 
     It 'publishes the content name, or a per-user name when another user owns it' {
         $script:RemoteScript | Should -Match 'e=\$\{3:-png\}'
-        $script:RemoteScript | Should -Match 'for f in /tmp/ssh-paste-\$1\.\$e /tmp/ssh-paste-\$1-\$\(id -u\)\.\$e;'
+        $script:RemoteScript | Should -Match 'for f in \$d/ssh-paste-\$c\$1\.\$e \$d/ssh-paste-\$c\$1-\$u\.\$e;'
         $script:RemoteScript | Should -Match 'echo \$n \$f; exit 0'
     }
 
     It 'reuses a file only when its bytes are equal (cmp -s), not just its size' {
         $script:RemoteScript | Should -Match 'cmp -s \$t \$f'
+    }
+
+    It 'reuses a file only if it is still there after touch -c, which never makes an empty one' {
+        # A prune by another upload may delete the copy between cmp and touch; the script then publishes its own.
+        $script:RemoteScript | Should -Match 'cmp -s \$t \$f && touch -c \$f && \[ -f \$f \]; then rm -f \$t; echo \$n \$f; exit 0; fi;'
     }
 }
 
@@ -397,7 +422,7 @@ Describe 'Join-NativeArguments and Split-CommandLine round trip' {
         $argv = Get-UploadSshArguments -Parsed $parsed -Hash '0123456789abcdef0123456789abcdef' -Size 5000 -SshVersion ([version]'9.0')
         $back = Get-RoundTrip $argv
         Format-ArgList $back | Should -BeExactly (Format-ArgList $argv)
-        $back[-1] | Should -Match "^sh -c 'umask 077;.* ssh-paste 0123456789abcdef0123456789abcdef 5000 png$"
+        $back[-1] | Should -Match "^sh -c 'umask 077;.* ssh-paste 0123456789abcdef0123456789abcdef 5000 png 1440 '/tmp'$"
     }
 
     It 'round-trips 1000 random argument lists' {
@@ -916,9 +941,20 @@ Describe 'Get-UploadSshArguments' {
         }
     }
 
-    It 'makes the last argument exactly the sh -c command with the hash and the size' {
+    It 'makes the last argument exactly the sh -c command with the hash, the size, the minutes to keep and the folder' {
         $a = Get-Upload @('host') -Size 4321
-        $a[$a.Count - 1] | Should -BeExactly ("sh -c '" + $script:RemoteScript + "' ssh-paste " + $script:Hash + ' 4321 png')
+        $a[$a.Count - 1] | Should -BeExactly ("sh -c '" + $script:RemoteScript + "' ssh-paste " + $script:Hash + " 4321 png 1440 '/tmp'")
+    }
+
+    It 'passes --keep as minutes and as the class of the name, and an absolute --dir in single quotes' {
+        $parsed = Split-SshArguments @('host')
+        $a = @(Get-UploadSshArguments -Parsed $parsed -Hash $script:Hash -Size 9 -Keep 'never' -Dir '/home/u/shots')
+        $a[$a.Count - 1] | Should -BeExactly ("sh -c '" + $script:RemoteScript + "' ssh-paste " + $script:Hash + " 9 png 0 '/home/u/shots' knever-")
+        { Get-UploadSshArguments -Parsed $parsed -Hash $script:Hash -Size 9 -Dir '~/shots' } | Should -Throw '*bad --dir*'
+        $a = @(Get-UploadSshArguments -Parsed $parsed -Hash $script:Hash -Size 9 -Keep '2h')
+        $a[$a.Count - 1] | Should -BeExactly ("sh -c '" + $script:RemoteScript + "' ssh-paste " + $script:Hash + " 9 png 120 '/tmp' k2h-")
+        { Get-UploadSshArguments -Parsed $parsed -Hash $script:Hash -Size 9 -Dir "/tmp'x" } | Should -Throw '*bad --dir*'
+        { Get-UploadSshArguments -Parsed $parsed -Hash $script:Hash -Size 9 -Keep '1w' } | Should -Throw '*--keep*'
     }
 
     It 'does not pass the remote command of the user session along' {
@@ -1171,38 +1207,38 @@ Describe 'Get-ProxyCommandLine' {
     }
 }
 
-Describe 'Get-ManagedHosts' {
+Describe 'Get-ManagedBlock: the hosts' {
     BeforeAll {
         $script:Begin = $script:BlockBegin
         $script:End = $script:BlockEnd
     }
 
     It 'is empty for nothing' {
-        @(Get-ManagedHosts $null).Count | Should -Be 0
-        @(Get-ManagedHosts '').Count | Should -Be 0
+        @((Get-ManagedBlock $null).Hosts).Count | Should -Be 0
+        @((Get-ManagedBlock '').Hosts).Count | Should -Be 0
     }
 
     It 'is empty when there is no block' {
-        @(Get-ManagedHosts "Host a`n  HostName x`n").Count | Should -Be 0
+        @((Get-ManagedBlock "Host a`n  HostName x`n").Hosts).Count | Should -Be 0
     }
 
     It 'lists the hosts of the block and skips Host *' {
         $text = "$($script:Begin)`nHost a b`n    ProxyCommand x`nHost *`n$($script:End)`nHost other`n"
-        Format-ArgList (Get-ManagedHosts $text) | Should -BeExactly '["a","b"]'
+        Format-ArgList ((Get-ManagedBlock $text).Hosts) | Should -BeExactly '["a","b"]'
     }
 
     It 'ignores Host lines outside the block' {
         $text = "Host before`n$($script:Begin)`nHost a`n    ProxyCommand x`nHost *`n$($script:End)`nHost after`n"
-        Format-ArgList (Get-ManagedHosts $text) | Should -BeExactly '["a"]'
+        Format-ArgList ((Get-ManagedBlock $text).Hosts) | Should -BeExactly '["a"]'
     }
 
     It 'reads CRLF files' {
         $text = "$($script:Begin)`r`nHost a`r`n    ProxyCommand x`r`nHost *`r`n$($script:End)`r`n"
-        Format-ArgList (Get-ManagedHosts $text) | Should -BeExactly '["a"]'
+        Format-ArgList ((Get-ManagedBlock $text).Hosts) | Should -BeExactly '["a"]'
     }
 
     It 'does not mistake a marker with other text for the block' {
-        @(Get-ManagedHosts "# >>> ssh-paste something else >>>`nHost a`n").Count | Should -Be 0
+        @((Get-ManagedBlock "# >>> ssh-paste something else >>>`nHost a`n").Hosts).Count | Should -Be 0
     }
 }
 
@@ -1274,7 +1310,7 @@ Describe 'Set-ManagedBlock' {
 
     It 'removes everything it added and returns the original text exactly: <Name>' -ForEach $sharedCases.blockRoundTrip {
         $added = Add-Block $Text @('myhost')
-        (Get-ManagedHosts $added) | Should -Contain 'myhost'
+        ((Get-ManagedBlock $added).Hosts) | Should -Contain 'myhost'
         Remove-Block $added | Should -BeExactly $Text
     }
 
@@ -1292,7 +1328,7 @@ Describe 'Set-ManagedBlock' {
         $twice = Set-ManagedBlock $once @('myhost', 'other') $script:Proxy
         Get-OccurrenceCount $twice $script:BlockBegin | Should -Be 1
         Get-OccurrenceCount $twice $script:BlockEnd | Should -Be 1
-        Format-ArgList (Get-ManagedHosts $twice) | Should -BeExactly '["myhost","other"]'
+        Format-ArgList ((Get-ManagedBlock $twice).Hosts) | Should -BeExactly '["myhost","other"]'
         Remove-Block $twice | Should -BeExactly $orig
     }
 
@@ -1306,7 +1342,7 @@ Describe 'Set-ManagedBlock' {
         $orig = "Host a`n  HostName x`n"
         $both = Add-Block $orig @('h1', 'h2')
         $one = Set-ManagedBlock $both @('h2') $script:Proxy
-        Format-ArgList (Get-ManagedHosts $one) | Should -BeExactly '["h2"]'
+        Format-ArgList ((Get-ManagedBlock $one).Hosts) | Should -BeExactly '["h2"]'
         Remove-Block $one | Should -BeExactly $orig
     }
 
@@ -1352,6 +1388,117 @@ Describe 'Set-ManagedBlock' {
     }
 }
 
+Describe 'paste settings (--keep, --dir)' {
+    It 'takes --keep <Value> as <Minutes> minutes' -ForEach $sharedCases.keepAccept {
+        ConvertTo-KeepMinutes $Value | Should -Be $Minutes
+    }
+
+    It 'refuses --keep "<Value>"' -ForEach $sharedCases.keepReject {
+        { ConvertTo-KeepMinutes $Value } | Should -Throw '*--keep*'
+    }
+
+    It 'takes --dir <Value>' -ForEach $sharedCases.dirAccept {
+        Test-ServerDirectory $Value | Should -BeTrue
+    }
+
+    It 'refuses --dir "<Value>"' -ForEach $sharedCases.dirReject {
+        Test-ServerDirectory $Value | Should -BeFalse
+    }
+
+    It 'checks the path the server answers: <Name>' -ForEach $sharedCases.replyPaths {
+        $hash = $Path -replace '^.*ssh-paste-([0-9a-f]{32}).*$', '$1'
+        if ($Ok) { Read-UploadReply ('9 ' + $Path) 9 '0123456789abcdef0123456789abcdef' 'png' $Dir $Class | Should -BeExactly $Path }
+        else { { Read-UploadReply ('9 ' + $Path) 9 '0123456789abcdef0123456789abcdef' 'png' $Dir $Class } | Should -Throw '*unexpected*' }
+    }
+
+    It 'reads ssh mode and its settings from the ProxyCommand of ssh -G: <Name>' -ForEach $sharedCases.sshModeSettings {
+        $effective = @{}
+        if ($null -ne $Line) { $effective['proxycommand'] = $Line }
+        $got = Get-SshModeSettings $effective
+        if ($null -eq $Keep) { $got | Should -BeNullOrEmpty }
+        else { $got.Keep | Should -BeExactly $Keep; $got.Dir | Should -BeExactly $Dir }
+    }
+
+    It 'says what --disable removed, or that the host was not enabled: <Name>' -ForEach $sharedCases.disableMessages {
+        Get-DisableMessage $Managed $Asked | Should -BeExactly $Expected
+    }
+
+    It 'makes --dir absolute with the home folder on the server: <Name>' -ForEach $sharedCases.absoluteDirs {
+        if ($null -ne $Expected) { ConvertTo-AbsoluteDirectory $Dir $ServerHome | Should -BeExactly $Expected }
+        else { { ConvertTo-AbsoluteDirectory $Dir $ServerHome } | Should -Throw '*cannot use*' }
+    }
+
+    It 'reads the settings of a ProxyCommand line: <Name>' -ForEach $sharedCases.proxySettings {
+        $s = Get-ProxySettings $Line
+        $s.Keep | Should -BeExactly $Keep
+        $s.Dir | Should -BeExactly $Dir
+    }
+
+    It 'reads leading --keep and --dir in any order, once each, and stops at the first other argument' {
+        $r = Read-PasteSettings @('--dir', '~/s', '--keep', '2h', '-p', '22', 'host')
+        $r.Keep | Should -BeExactly '2h'
+        $r.Dir | Should -BeExactly '~/s'
+        Format-ArgList $r.Rest | Should -BeExactly '["-p","22","host"]'
+        $r = Read-PasteSettings @('host', '--keep', '2h')
+        $r.Keep | Should -BeNullOrEmpty
+        Format-ArgList $r.Rest | Should -BeExactly '["host","--keep","2h"]'
+        { Read-PasteSettings @('--keep', '1d', '--keep', '2d', 'h') } | Should -Throw '*given twice*'
+        { Read-PasteSettings @('--dir') } | Should -Throw '*needs a value*'
+        { Read-PasteSettings @('--dir', 'C:\x', 'h') } | Should -Throw '*quote ~*'
+        (Read-PasteSettings @('--dir', '/data/x/', 'h')).Dir | Should -BeExactly '/data/x'
+        (Read-PasteSettings @('--dir', '~/', 'h')).Dir | Should -BeExactly '~'
+        { Read-PasteSettings @('--dir', '/', 'h') } | Should -Throw '*--dir takes*'
+        { Read-PasteSettings @('--keep', '', 'h') } | Should -Throw '*--keep*'
+    }
+
+    It 'names the class of an image after its --keep, and none for the default' {
+        Get-KeepClass '1d' | Should -BeExactly ''
+        Get-KeepClass $null | Should -BeExactly ''
+        Get-KeepClass '7d' | Should -BeExactly 'k7d-'
+        Get-KeepClass 'never' | Should -BeExactly 'knever-'
+    }
+
+    It 'groups hosts case-sensitively, also a host named keys' {
+        $want = New-Object System.Collections.Specialized.OrderedDictionary ([StringComparer]::Ordinal)
+        $want['build'] = @{ Keep = '1d'; Dir = '/tmp' }
+        $want['BUILD'] = @{ Keep = '1d'; Dir = '/data/Shots' }
+        $want['keys'] = @{ Keep = '1d'; Dir = '/data/shots' }
+        $old = $env:SystemRoot
+        try {
+            $env:SystemRoot = '/Windows'
+            $groups = @(Get-SettingsGroups $want 'C:\p\ssh-paste.ps1')
+        } finally { $env:SystemRoot = $old }
+        $groups.Count | Should -Be 3
+        Format-ArgList $groups[1].Hosts | Should -BeExactly '["BUILD"]'
+        Format-ArgList $groups[2].Hosts | Should -BeExactly '["keys"]'
+    }
+
+    It 'writes --keep and --dir into the ProxyCommand only when they are not the defaults' {
+        $old = $env:SystemRoot
+        try {
+            $env:SystemRoot = '/Windows'   # Join-Path needs no drive on Linux
+            $base = Get-ProxyCommandLine 'C:\p\ssh-paste.ps1'
+            Get-ProxyCommandLine 'C:\p\ssh-paste.ps1' '1d' '/tmp' | Should -BeExactly $base
+            Get-ProxyCommandLine 'C:\p\ssh-paste.ps1' 'never' '~/shots' | Should -BeExactly ($base + ' --keep never --dir ~/shots')
+            $s = Get-ProxySettings (Get-ProxyCommandLine 'C:\p\ssh-paste.ps1' '30m' '/data/x')
+            $s.Keep | Should -BeExactly '30m'
+            $s.Dir | Should -BeExactly '/data/x'
+        } finally { $env:SystemRoot = $old }
+    }
+
+    It 'pastes a path again without a new upload for at most half of --keep, and 6 hours at most' {
+        Get-UploadCacheHours 1440 | Should -Be 6
+        Get-UploadCacheHours 0 | Should -Be 6
+        Get-UploadCacheHours 60 | Should -Be 0.5
+        Get-UploadCacheHours 30 | Should -Be 0.25
+    }
+
+    It 'says when the server cannot write to the folder' {
+        { Read-UploadReply 'nodir' 9 '0123456789abcdef0123456789abcdef' 'png' '~/shots' } | Should -Throw '*cannot write to the folder ~/shots*'
+        { Read-UploadReply 'notprivate' 9 '0123456789abcdef0123456789abcdef' 'png' '/data/x' } | Should -Throw '*not yours alone*'
+    }
+}
+
 Describe 'Get-ManagedBlock' {
     BeforeAll {
         $script:Begin = $script:BlockBegin
@@ -1376,6 +1523,19 @@ Describe 'Get-ManagedBlock' {
         Format-ArgList $b.Hosts | Should -BeExactly '["a","b"]'
         $b.ProxyCommand | Should -BeExactly 'C:\x\powershell.exe -File y --proxy %h %p %n'
         $b.CreatedFile | Should -BeTrue
+    }
+
+    It 'reads each Host line with its own ProxyCommand as a group, and Set-ManagedBlock writes them back' {
+        $groups = @(@{ Hosts = @('a', 'b'); ProxyCommand = 'P1 --proxy %h %p %n' }, @{ Hosts = @('c'); ProxyCommand = 'P1 --proxy %h %p %n --keep 7d --dir ~/s' })
+        $text = Set-ManagedBlock "Host other`n" -Groups $groups -CreatedFile
+        $text | Should -Match '(?s)^# >>> .*\nHost a b\n    ProxyCommand P1 --proxy %h %p %n\n    ProxyUseFdpass no\nHost c\n    ProxyCommand P1 --proxy %h %p %n --keep 7d --dir ~/s\n    ProxyUseFdpass no\nHost \*\n# <<< ssh-paste <<<\nHost other\n$'
+        $b = Get-ManagedBlock $text
+        Format-ArgList $b.Hosts | Should -BeExactly '["a","b","c"]'
+        @($b.Groups).Count | Should -Be 2
+        $b.Groups[1].ProxyCommand | Should -BeExactly 'P1 --proxy %h %p %n --keep 7d --dir ~/s'
+        (Get-ProxySettings $b.Groups[1].ProxyCommand).Keep | Should -BeExactly '7d'
+        (Get-ProxySettings $b.Groups[0].ProxyCommand).Dir | Should -BeExactly '/tmp'
+        Set-ManagedBlock $text -Groups @(@{ Hosts = @(); ProxyCommand = 'x' }) | Should -BeExactly "Host other`n"
     }
 
     It 'has CreatedFile false when the block lacks the line' {
@@ -1670,6 +1830,77 @@ Describe 'ssh config editing (Update-SshConfig, Invoke-Enable, Invoke-Disable)' 
 
         It 'explains the usage without a host' {
             { Invoke-Enable @() } | Should -Throw '*usage: ssh-paste --enable*'
+        }
+    }
+
+    Context 'Invoke-Enable with --keep and --dir' {
+        BeforeEach {
+            Mock Get-ServerHome { '/home/u' }
+            Mock Get-SshPath { 'ssh' }
+            Mock Get-SshVersion { [version]'9.6' }
+            Mock Get-ProxyCommandLine {
+                $l = 'PROXY --proxy %h %p %n'
+                if ($Keep -and $Keep -cne '1d') { $l += ' --keep ' + $Keep }
+                if ($Dir -and $Dir -cne '/tmp') { $l += ' --dir ' + $Dir }
+                return $l
+            }
+        }
+
+        It 'gives the settings to the hosts named, each group on its own Host line' {
+            Invoke-Enable @('--keep', '7d', '--dir', '~/shots', 'h1') | Should -Be 0
+            Invoke-Enable @('h2') | Should -Be 0
+            $b = Get-ManagedBlock (Read-Config)
+            @($b.Groups).Count | Should -Be 2
+            Format-ArgList $b.Groups[0].Hosts | Should -BeExactly '["h1"]'
+            $b.Groups[0].ProxyCommand | Should -BeExactly 'PROXY --proxy %h %p %n --keep 7d --dir /home/u/shots'
+            Should -Invoke Get-ServerHome -Times 1 -Exactly -ParameterFilter { $Parsed.Destination -ceq 'h1' }
+            Format-ArgList $b.Groups[1].Hosts | Should -BeExactly '["h2"]'
+            $b.Groups[1].ProxyCommand | Should -BeExactly 'PROXY --proxy %h %p %n'
+        }
+
+        It 'keeps the settings of an enabled host that the new command does not give, and changes the ones it gives' {
+            [void](Invoke-Enable @('--keep', '7d', '--dir', '~/shots', 'h1'))
+            $before = Read-Config
+            Invoke-Enable @('h1') | Should -Be 0
+            Read-Config | Should -BeExactly $before
+            [void](Invoke-Enable @('--keep', 'never', 'h1'))
+            $h1 = Get-ProxySettings (@((Get-ManagedBlock (Read-Config)).Groups | Where-Object { @($_.Hosts) -ccontains 'h1' })[0].ProxyCommand)
+            $h1.Keep | Should -BeExactly 'never'
+            $h1.Dir | Should -BeExactly '/home/u/shots'
+        }
+
+        It 'puts hosts with the same settings on one Host line' {
+            [void](Invoke-Enable @('--keep', '2h', 'h1'))
+            [void](Invoke-Enable @('h2'))
+            [void](Invoke-Enable @('--keep', '2h', 'h2'))
+            $b = Get-ManagedBlock (Read-Config)
+            @($b.Groups).Count | Should -Be 1
+            Format-ArgList $b.Groups[0].Hosts | Should -BeExactly '["h1","h2"]'
+        }
+
+        It 'refuses a bad --keep or --dir and writes nothing' {
+            { Invoke-Enable @('--keep', '1w', 'h1') } | Should -Throw '*--keep takes*'
+            { Invoke-Enable @('--dir', 'shots', 'h1') } | Should -Throw '*--dir takes*'
+            Test-Path -LiteralPath $script:Cfg | Should -BeFalse
+        }
+
+        It 'treats Host aliases case-sensitively, as ssh does' {
+            Mock Get-ProxyCommandLine { 'PROXY --proxy %h %p %n' }
+            [void](Invoke-Enable @('build'))
+            [void](Invoke-Enable @('BUILD'))
+            Format-ArgList (Get-ManagedBlock (Read-Config)).Hosts | Should -BeExactly '["build","BUILD"]'
+            [void](Invoke-Disable @('BUILD'))
+            Format-ArgList (Get-ManagedBlock (Read-Config)).Hosts | Should -BeExactly '["build"]'
+            Should -Invoke Write-Info -ParameterFilter { $Message -ceq 'Disabled for: BUILD' } -Exactly 1
+        }
+
+        It '--disable of one host keeps the other host''s line as it is' {
+            [void](Invoke-Enable @('--keep', '7d', 'h1'))
+            [void](Invoke-Enable @('h2'))
+            [void](Invoke-Disable @('h2'))
+            $b = Get-ManagedBlock (Read-Config)
+            Format-ArgList $b.Hosts | Should -BeExactly '["h1"]'
+            $b.Groups[0].ProxyCommand | Should -BeExactly 'PROXY --proxy %h %p %n --keep 7d'
         }
     }
 
@@ -2347,9 +2578,29 @@ Describe 'Get-UploadedPath' {
         [void](Get-UploadedPath $w $script:State)
         Should -Invoke Send-Image -Times 1 -Exactly -ParameterFilter {
             $Hash -ceq '0123456789abcdef0123456789abcdef' -and $Png.Length -eq 40 -and
-            $Arguments[$Arguments.Count - 1].EndsWith(' ssh-paste 0123456789abcdef0123456789abcdef 40 png') -and
+            $Arguments[$Arguments.Count - 1].EndsWith(" ssh-paste 0123456789abcdef0123456789abcdef 40 png 1440 '/tmp'") -and
             $Arguments -contains '-p' -and $Arguments -contains 'alice@h' -and $Arguments -contains 'StdinNull=no'
         }
+    }
+
+    It 'passes the watcher''s --keep and --dir on to the upload and to the reply check' {
+        Mock Send-Image { return $script:ImagePath }
+        $w = New-TestWatcher
+        $w.Keep = '30m'
+        $w.Class = 'k30m-'
+        $w.Dir = '/home/u/shots'
+        [void](Get-UploadedPath $w $script:State)
+        Should -Invoke Send-Image -Times 1 -Exactly -ParameterFilter {
+            $Arguments[$Arguments.Count - 1].EndsWith(" 40 png 30 '/home/u/shots' k30m-") -and $Dir -ceq '/home/u/shots' -and $Class -ceq 'k30m-'
+        }
+    }
+
+    It 'counts the cache from the end of the upload' {
+        Mock Send-Image { Start-Sleep -Milliseconds 300; return $script:ImagePath }
+        $w = New-TestWatcher
+        $before = [DateTime]::UtcNow
+        [void](Get-UploadedPath $w $script:State)
+        ($w.Uploaded['0123456789abcdef0123456789abcdef'].At - $before).TotalMilliseconds | Should -BeGreaterOrEqual 250
     }
 
     It 'uploads to the pinned address when the watcher has a pin, and not otherwise' {
@@ -3501,7 +3752,9 @@ Describe 'command line' {
         foreach ($a in @(@('--help'), @('-h'), @())) {
             $r = Invoke-SshPaste $a
             $r.ExitCode | Should -Be 0
-            $r.Stdout | Should -Match '--enable HOST'
+            $r.Stdout | Should -Match '--enable \[OPTIONS\] HOST'
+            $r.Stdout | Should -Match '--keep TIME'
+            $r.Stdout | Should -Match '--dir DIR'
             $r.Stdout | Should -Match '--disable'
             $r.Stdout | Should -Match '--doctor'
             $r.Stdout | Should -Match '--uninstall'
@@ -3525,7 +3778,7 @@ Describe 'command line' {
     It '--enable without a host explains the usage' {
         $r = Invoke-SshPaste @('--enable')
         $r.ExitCode | Should -Be 1
-        $r.Stderr | Should -Match 'usage: ssh-paste --enable HOST'
+        $r.Stderr | Should -Match 'usage: ssh-paste --enable \[--keep TIME\] \[--dir DIR\] HOST'
     }
 }
 
@@ -4515,12 +4768,15 @@ Describe 'server-side script run through real shells' -Tag 'Unix' -Skip:$onWindo
             # Runs the exact last argument that ssh would receive, through "<shell> -c".
             # Hash and Size default to the hash and the length of Bytes; pass Size to
             # claim another length, as when an upload is cut short.
-            param([string]$ShellPath = 'sh', [byte[]]$Bytes, [string]$Hash, $Size = $null, [string]$Directory)
+            # Keep and Dir are --keep and --dir.
+            param([string]$ShellPath = 'sh', [byte[]]$Bytes, [string]$Hash, $Size = $null, [string]$Directory,
+                [string]$Keep = '1d', [string]$Dir = '/tmp')
             if (-not $Hash) { $Hash = Get-ImageHash $Bytes }
             if ($null -eq $Size) { $Size = $Bytes.Length }
-            $argv = Get-UploadSshArguments -Parsed (Split-SshArguments @('host')) -Hash $Hash -Size $Size
+            $argv = Get-UploadSshArguments -Parsed (Split-SshArguments @('host')) -Hash $Hash -Size $Size -Keep $Keep -Dir $Dir
             $command = $argv[$argv.Count - 1]
             if ($Directory) { $command = $command.Replace('/tmp', $Directory) }
+            elseif ($Dir -cne '/tmp') { }
             else {
                 $null = Get-Published $Hash
                 $null = $script:Created.Add('/tmp/ssh-paste-' + $Hash + '-' + (& id -u).Trim() + '.png')
@@ -4546,6 +4802,18 @@ Describe 'server-side script run through real shells' -Tag 'Unix' -Skip:$onWindo
     }
 
     Context 'login shell <Shell>' -ForEach $unixShells {
+        It 'puts the image into a --dir folder it makes (mode 700), with the class of --keep in the name' {
+            $dir = Join-Path $script:WorkDir ('dir-' + [guid]::NewGuid().ToString('N') + '/shots/new')
+            $png = New-RandomPng 700
+            $hash = Get-ImageHash $png
+            $r = Invoke-RemoteScript -ShellPath $ShellPath -Bytes $png -Dir $dir -Keep '7d'
+            $r.ExitCode | Should -Be 0 -Because $r.Stderr
+            $path = $dir + '/ssh-paste-k7d-' + $hash + '.png'
+            Read-UploadReply $r.Stdout $png.Length $hash 'png' $dir 'k7d-' | Should -BeExactly $path
+            Get-Mode $dir | Should -BeExactly '700'
+            Get-Mode $path | Should -BeExactly '600'
+        }
+
         It 'uploads, replies with the size and the path, and makes a private file' {
             $png = New-RandomPng 5000
             $hash = Get-ImageHash $png
@@ -4697,8 +4965,8 @@ Describe 'server-side script run through real shells' -Tag 'Unix' -Skip:$onWindo
         It 'prunes our own content-named files older than a day and old temp leftovers, and nothing else' {
             $oldMine = '/tmp/ssh-paste-' + ('a' * 31) + '1.png'
             $freshMine = '/tmp/ssh-paste-' + ('a' * 31) + '2.png'
-            $oldUserName = '/tmp/ssh-paste-' + ('a' * 31) + '3-1000.png'
-            $oldTemp = '/tmp/ssh-paste-tmp.' + 'OLDLEFT01'
+            $oldUserName = '/tmp/ssh-paste-' + ('a' * 31) + '3-' + (& id -u).Trim() + '.png'
+            $oldTemp = '/tmp/ssh-paste-tmp.' + 'OLDLEFT012'   # mktemp's 10 characters
             $oldOther = '/tmp/not-ssh-paste-' + [guid]::NewGuid().ToString('N')
             foreach ($p in @($oldMine, $freshMine, $oldUserName, $oldTemp, $oldOther)) { Set-Content -LiteralPath $p -Value 'x'; $null = $script:Created.Add($p) }
             foreach ($p in @($oldMine, $oldUserName, $oldTemp, $oldOther)) { (New-Object System.IO.FileInfo $p).LastWriteTimeUtc = [datetime]::UtcNow.AddDays(-3) }
@@ -4717,6 +4985,9 @@ Describe 'server-side script run through real shells' -Tag 'Unix' -Skip:$onWindo
                 ('/tmp/ssh-paste-' + ('b' * 20) + '.png'),                     # too short to be a content name
                 ('/tmp/ssh-paste-' + ('b' * 32) + '.txt'),                     # not .png
                 ('/tmp/ssh-paste-tmp-keep-' + [guid]::NewGuid().ToString('N').Substring(0, 8)),
+                ('/tmp/ssh-paste-' + ('b' * 32) + '-7-notes.png'),             # a number, but not our uid
+                ('/tmp/ssh-paste-' + ('b' * 31) + 'c-' + (& id -u).Trim() + '0.png'),   # not exactly our uid
+                ('/tmp/ssh-paste-tmp.' + 'notes.txt1'),                         # 10 characters, but not mktemp's
                 ('/tmp/ssh-paste-' + [guid]::NewGuid().ToString('N'))
             )
             foreach ($p in $keep) { Set-Content -LiteralPath $p -Value 'x'; $null = $script:Created.Add($p); (New-Object System.IO.FileInfo $p).LastWriteTimeUtc = [datetime]::UtcNow.AddDays(-30) }
@@ -4835,6 +5106,128 @@ Describe 'server-side script run through real shells' -Tag 'Unix' -Skip:$onWindo
             } finally { & chmod 700 $dir }
         }
     }
+
+    Context 'folder and keep (--dir, --keep)' {
+        BeforeEach {
+            $script:Folder = Join-Path $script:WorkDir ('dir-' + [guid]::NewGuid().ToString('N'))
+            function New-Image {
+                # An upload's file in the folder, AgeMinutes old.
+                param([string]$Name, [int]$AgeMinutes)
+                $path = Join-Path $script:Folder $Name
+                [System.IO.File]::WriteAllText($path, 'x')
+                & touch -d ('{0} minutes ago' -f $AgeMinutes) $path
+                return $path
+            }
+        }
+
+        It 'makes a missing folder (mode 700) and answers a path that the client accepts' {
+            $png = New-RandomPng 300
+            $hash = Get-ImageHash $png
+            $dir = Join-Path $script:Folder 'a/b'
+            $r = Invoke-RemoteScript -Bytes $png -Dir $dir
+            $r.ExitCode | Should -Be 0 -Because $r.Stderr
+            Read-UploadReply $r.Stdout $png.Length $hash 'png' $dir | Should -BeExactly (Join-Path $dir ('ssh-paste-' + $hash + '.png'))
+            Get-Mode $dir | Should -BeExactly '700'
+        }
+
+        It 'answers nodir (exit 5) when it cannot make the folder, and the client says so' {
+            [void](New-Item -ItemType Directory -Path $script:Folder)
+            & chmod 500 $script:Folder
+            try {
+                $png = New-RandomPng 300
+                $dir = Join-Path $script:Folder 'sub'
+                $r = Invoke-RemoteScript -Bytes $png -Dir $dir
+                $r.ExitCode | Should -Be 5
+                { Read-UploadReply $r.Stdout $png.Length (Get-ImageHash $png) 'png' $dir } | Should -Throw '*cannot write to the folder*'
+            } finally { & chmod 700 $script:Folder }
+        }
+
+        It 'deletes only regular files of its own --keep older than it, and nothing else' {
+            [void](New-Item -ItemType Directory -Path $script:Folder)
+            & chmod 700 $script:Folder
+            $mine = 'ssh-paste-k60m-'
+            $old = New-Image ($mine + ('a' * 32) + '.png') 120
+            $oldUser = New-Image ($mine + ('b' * 32) + '-' + (& id -u).Trim() + '.jpg') 120
+            $new = New-Image ($mine + ('c' * 32) + '.png') 10
+            $default = New-Image ('ssh-paste-' + ('d' * 32) + '.png') 3000
+            $never = New-Image ('ssh-paste-knever-' + ('e' * 32) + '.png') 100000
+            $notes = New-Image 'ssh-paste-notes.png' 3000
+            $long = New-Image 'ssh-paste-quarterly-presentation-preview-2025.png' 3000
+            $target = New-Image 'target.png' 0
+            $link = Join-Path $script:Folder ($mine + ('f' * 32) + '.png')
+            & ln -s $target $link
+            & touch -h -d '500 minutes ago' $link
+            $r = Invoke-RemoteScript -Bytes (New-RandomPng 100) -Dir $script:Folder -Keep '60m'
+            $r.ExitCode | Should -Be 0 -Because $r.Stderr
+            Test-Path -LiteralPath $old | Should -BeFalse
+            Test-Path -LiteralPath $oldUser | Should -BeFalse
+            foreach ($kept in @($new, $default, $never, $notes, $long, $target, $link)) { Test-Path -LiteralPath $kept | Should -BeTrue -Because $kept }
+        }
+
+        It 'deletes no image with --keep never (0), nor when the minutes are not a number' {
+            [void](New-Item -ItemType Directory -Path $script:Folder)
+            & chmod 700 $script:Folder
+            $old = New-Image ('ssh-paste-knever-' + ('c' * 32) + '.png') 100000
+            $r = Invoke-RemoteScript -Bytes (New-RandomPng 100) -Dir $script:Folder -Keep 'never'
+            $r.ExitCode | Should -Be 0 -Because $r.Stderr
+            Test-Path -LiteralPath $old | Should -BeTrue
+            $old5 = New-Image ('ssh-paste-k10m-' + ('c' * 32) + '.png') 100000
+            $png = New-RandomPng 100
+            $argv = Get-UploadSshArguments -Parsed (Split-SshArguments @('host')) -Hash (Get-ImageHash $png) -Size $png.Length -Keep '10m' -Dir $script:Folder
+            $command = $argv[$argv.Count - 1].Replace(" 10 '", " x '")
+            $command | Should -Match " x '" -Because 'the minutes must really be replaced'
+            $r = Invoke-Process -FilePath 'sh' -Arguments @('-c', $command) -InputBytes $png -WorkingDirectory $script:WorkDir
+            $r.ExitCode | Should -Be 0 -Because $r.Stderr
+            Test-Path -LiteralPath $old5 | Should -BeTrue
+        }
+
+        It 'refuses a folder other than /tmp that others can write or that is a link (notprivate), and writes nothing there' {
+            [void](New-Item -ItemType Directory -Path $script:Folder)
+            & chmod 777 $script:Folder
+            $png = New-RandomPng 100
+            $r = Invoke-RemoteScript -Bytes $png -Dir $script:Folder
+            $r.ExitCode | Should -Be 6
+            $r.Stdout.Trim() | Should -BeExactly 'notprivate'
+            @(Get-ChildItem -LiteralPath $script:Folder).Count | Should -Be 0
+            & chmod 700 $script:Folder
+            $link = $script:Folder + '-link'
+            & ln -s $script:Folder $link
+            $r = Invoke-RemoteScript -Bytes $png -Dir $link
+            $r.ExitCode | Should -Be 6
+            Remove-Item -LiteralPath $link -Force
+        }
+
+        It 'refuses the folder when ls -ld does not show it as private: <Name>' -ForEach @(
+            @{ Name = 'ls fails'; Out = ''; Code = 1; Ok = $false }
+            @{ Name = 'an ACL (+)'; Out = 'drwx------+ 2 me me 4096 Nov 24 10:00 dir'; Code = 0; Ok = $false }
+            @{ Name = 'group write'; Out = 'drwxrwx--- 2 me me 4096 Nov 24 10:00 dir'; Code = 0; Ok = $false }
+            @{ Name = 'other write, sticky'; Out = 'drwx-----wt 2 me me 4096 Nov 24 10:00 dir'; Code = 0; Ok = $false }
+            @{ Name = 'an SELinux context (.) is fine'; Out = 'drwx------. 2 me me 4096 Nov 24 10:00 dir'; Code = 0; Ok = $true }
+            @{ Name = 'macOS extended attributes (@) are fine'; Out = 'drwxr-xr-x@ 2 me staff 64 Nov 24 10:00 dir'; Code = 0; Ok = $true }
+        ) {
+            [void](New-Item -ItemType Directory -Path $script:Folder)
+            & chmod 700 $script:Folder
+            $bin = $script:Folder + '-bin'
+            [void](New-Item -ItemType Directory -Path $bin)
+            $lsBody = "#!/bin/sh`n"
+            if ($Out) { $lsBody += "echo '" + $Out + "'`n" }
+            [System.IO.File]::WriteAllText((Join-Path $bin 'ls'), $lsBody + "exit " + $Code + "`n")
+            & chmod +x (Join-Path $bin 'ls')
+            $png = New-RandomPng 100
+            $argv = Get-UploadSshArguments -Parsed (Split-SshArguments @('host')) -Hash (Get-ImageHash $png) -Size $png.Length -Dir $script:Folder
+            $command = 'PATH=' + $bin + ':$PATH; export PATH; ' + $argv[$argv.Count - 1]
+            $r = Invoke-Process -FilePath 'sh' -Arguments @('-c', $command) -InputBytes $png -WorkingDirectory $script:WorkDir
+            Remove-Item -LiteralPath $bin -Recurse -Force
+            if ($Ok) {
+                $r.ExitCode | Should -Be 0 -Because $r.Stderr
+            } else {
+                $r.ExitCode | Should -Be 6
+                $r.Stdout.Trim() | Should -BeExactly 'notprivate'
+                @(Get-ChildItem -LiteralPath $script:Folder).Count | Should -Be 0
+            }
+        }
+
+    }
 }
 
 Describe 'Get-SshVersion and Send-Image with a stand-in for ssh' -Tag 'Unix' -Skip:$onWindows {
@@ -4924,7 +5317,7 @@ exec sh -c "$last"'
     It 'Send-Image fails when the server names a path that is not this image' {
         $ssh = New-FakeSsh 'ssh-other' 'for last; do :; done
 set -- $last
-while [ $# -gt 2 ]; do shift; done
+while [ $# -gt 4 ]; do shift; done
 n=$1
 cat > /dev/null
 echo "$n /tmp/ssh-paste-other.png"'
@@ -5439,6 +5832,24 @@ Describe 'end to end against a real ssh server' -Tag 'E2E' -Skip:(-not $e2eHost)
             [void](Invoke-E2ERemote ('rm -f ' + $list))
         }
         Remove-Item -LiteralPath $script:E2ETemp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'asks the server for its home folder for --dir ~/..., and uploads there (made mode 700) with --keep never' {
+        $serverHome = (Invoke-E2ERemote 'echo $HOME').Stdout.Trim()
+        $serverHome | Should -Match '^/'
+        $name = 'ssh-paste-e2e-' + [guid]::NewGuid().ToString('N')
+        try {
+            $png = New-E2EImage
+            $hash = Get-ImageHash $png
+            $dir = ConvertTo-AbsoluteDirectory ('~/' + $name) (Get-ServerHome $script:E2ESsh (Get-E2EParsed) $script:E2EVersion)
+            $dir | Should -BeExactly ($serverHome + '/' + $name)
+            $argv = Get-UploadSshArguments -Parsed (Get-E2EParsed) -Hash $hash -Size $png.Length -SshVersion $script:E2EVersion -Keep 'never' -Dir $dir
+            $path = Send-Image -SshPath $script:E2ESsh -Arguments $argv -Png $png -Hash $hash -Dir $dir -Class 'knever-'
+            $path | Should -BeExactly ($serverHome + '/' + $name + '/ssh-paste-knever-' + $hash + '.png')
+            (Invoke-E2ERemote ('stat -c %a ' + $serverHome + '/' + $name)).Stdout.Trim() | Should -BeExactly '700'
+        } finally {
+            [void](Invoke-E2ERemote ('rm -rf ' + $serverHome + '/' + $name))
+        }
     }
 
     It 'the server accepts the key without a prompt' {

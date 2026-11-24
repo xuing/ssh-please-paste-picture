@@ -146,5 +146,110 @@
     {"Value":"Port","Expected":"port"},
     {"Value":"","Expected":""},
     {"Value":"=x","Expected":""}
+  ],
+  "keepAccept": [
+    {"Value":"10m","Minutes":10},
+    {"Value":"30m","Minutes":30},
+    {"Value":"2h","Minutes":120},
+    {"Value":"1d","Minutes":1440},
+    {"Value":"7d","Minutes":10080},
+    {"Value":"3650d","Minutes":5256000},
+    {"Value":"never","Minutes":0}
+  ],
+  "keepReject": [
+    {"Value":""},
+    {"Value":"0m"},
+    {"Value":"1m"},
+    {"Value":"9m"},
+    {"Value":"2"},
+    {"Value":"1.5h"},
+    {"Value":"3651d"},
+    {"Value":"-1h"},
+    {"Value":"NEVER"},
+    {"Value":"forever"},
+    {"Value":"1 d"},
+    {"Value":"07d"},
+    {"Value":"2H"},
+    {"Value":"1w"}
+  ],
+  "dirAccept": [
+    {"Value":"/tmp"},
+    {"Value":"~"},
+    {"Value":"~/shots"},
+    {"Value":"~/a.b/c-d_e"},
+    {"Value":"~/.cache/x"},
+    {"Value":"/data/xu/shots"},
+    {"Value":"/a/..b/c"}
+  ],
+  "dirReject": [
+    {"Value":""},
+    {"Value":"/"},
+    {"Value":"~/"},
+    {"Value":"/tmp/"},
+    {"Value":"//tmp"},
+    {"Value":"/a//b"},
+    {"Value":"/a/../b"},
+    {"Value":"/a/./b"},
+    {"Value":"~/.."},
+    {"Value":"~/."},
+    {"Value":"tmp"},
+    {"Value":"shots/x"},
+    {"Value":"~user/x"},
+    {"Value":"/a b"},
+    {"Value":"/a;b"},
+    {"Value":"/a'b"},
+    {"Value":"/a\"b"},
+    {"Value":"C:\\Users\\x"},
+    {"Value":"/a$HOME"},
+    {"Value":"/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ],
+  "replyPaths": [
+    {"Name":"the default folder","Dir":"/tmp","Class":"","Path":"/tmp/ssh-paste-0123456789abcdef0123456789abcdef.png","Ok":true},
+    {"Name":"the per-user name","Dir":"/tmp","Class":"","Path":"/tmp/ssh-paste-0123456789abcdef0123456789abcdef-1000.png","Ok":true},
+    {"Name":"another folder than --dir","Dir":"/tmp","Class":"","Path":"/var/tmp/ssh-paste-0123456789abcdef0123456789abcdef.png","Ok":false},
+    {"Name":"a folder under --dir","Dir":"/data/x","Class":"","Path":"/data/x/y/ssh-paste-0123456789abcdef0123456789abcdef.png","Ok":false},
+    {"Name":"a folder that starts like --dir","Dir":"/data/x","Class":"","Path":"/data/xy/ssh-paste-0123456789abcdef0123456789abcdef.png","Ok":false},
+    {"Name":"a doubled slash","Dir":"/data/x","Class":"","Path":"/data/x//ssh-paste-0123456789abcdef0123456789abcdef.png","Ok":false},
+    {"Name":"a hidden folder","Dir":"/home/xu/.cache/shots","Class":"","Path":"/home/xu/.cache/shots/ssh-paste-0123456789abcdef0123456789abcdef.png","Ok":true},
+    {"Name":"a dot in --dir is not any character","Dir":"/home/u/a.b","Class":"","Path":"/home/u/aXb/ssh-paste-0123456789abcdef0123456789abcdef.png","Ok":false},
+    {"Name":"text after the name","Dir":"/home/xu/shots","Class":"","Path":"/home/xu/shots/ssh-paste-0123456789abcdef0123456789abcdef.png;x","Ok":false},
+    {"Name":"another hash","Dir":"/home/xu/shots","Class":"","Path":"/home/xu/shots/ssh-paste-ffffffffffffffffffffffffffffffff.png","Ok":false},
+    {"Name":"the --keep class in the name","Dir":"/tmp","Class":"k7d-","Path":"/tmp/ssh-paste-k7d-0123456789abcdef0123456789abcdef.png","Ok":true},
+    {"Name":"the --keep class with the per-user name","Dir":"/home/u/s","Class":"knever-","Path":"/home/u/s/ssh-paste-knever-0123456789abcdef0123456789abcdef-501.png","Ok":true},
+    {"Name":"no class where one is expected","Dir":"/tmp","Class":"k7d-","Path":"/tmp/ssh-paste-0123456789abcdef0123456789abcdef.png","Ok":false},
+    {"Name":"another class","Dir":"/tmp","Class":"k7d-","Path":"/tmp/ssh-paste-k2h-0123456789abcdef0123456789abcdef.png","Ok":false},
+    {"Name":"a class where none is expected","Dir":"/tmp","Class":"","Path":"/tmp/ssh-paste-k7d-0123456789abcdef0123456789abcdef.png","Ok":false}
+  ],
+  "proxySettings": [
+    {"Name":"a line from before --keep and --dir","Line":"C:\\W\\powershell.exe -File \"C:\\x\\ssh-paste.ps1\" --proxy %h %p %n","Keep":"1d","Dir":"/tmp"},
+    {"Name":"Windows, both settings","Line":"C:\\W\\powershell.exe -File \"C:\\x\\ssh-paste.ps1\" --proxy %h %p %n --keep 7d --dir ~/shots","Keep":"7d","Dir":"~/shots"},
+    {"Name":"Windows, --keep never","Line":"C:\\W\\powershell.exe -File \"C:\\x\\ssh-paste.ps1\" --proxy %h %p %n --keep never","Keep":"never","Dir":"/tmp"},
+    {"Name":"macOS, quoted values","Line":"'/Users/x/.local/share/ssh-paste/bin/ssh-paste' --proxy '%h' %p '%n' --keep '2h' --dir '~/shots'","Keep":"2h","Dir":"~/shots"},
+    {"Name":"macOS, only --dir","Line":"'/opt/homebrew/opt/ssh-paste/libexec/bin/ssh-paste' --proxy '%h' %p '%n' --dir '/data/x'","Keep":"1d","Dir":"/data/x"},
+    {"Name":"a path before --proxy that looks like a setting","Line":"'/Users/x/ --dir backup/ssh-paste' --proxy '%h' %p '%n' --keep '2h'","Keep":"2h","Dir":"/tmp"}
+  ],
+  "absoluteDirs": [
+    {"Name":"a folder under the home folder","Dir":"~/shots","ServerHome":"/home/xu","Expected":"/home/xu/shots"},
+    {"Name":"the home folder itself","Dir":"~","ServerHome":"/home/xu","Expected":"/home/xu"},
+    {"Name":"a home folder with a trailing slash","Dir":"~/s","ServerHome":"/Users/x/","Expected":"/Users/x/s"},
+    {"Name":"a home folder of /","Dir":"~/s","ServerHome":"/","Expected":"/s"},
+    {"Name":"an absolute --dir stays","Dir":"/data/x","ServerHome":"/home/xu","Expected":"/data/x"},
+    {"Name":"a home folder with a space","Dir":"~/s","ServerHome":"/home/a b","Expected":null},
+    {"Name":"~ when the home folder is /","Dir":"~","ServerHome":"/","Expected":null},
+    {"Name":"a relative home folder","Dir":"~/s","ServerHome":"home/x","Expected":null}
+  ],
+  "disableMessages": [
+    {"Name":"one of two hosts that differ in case","Managed":["build","BUILD"],"Asked":["BUILD"],"Expected":"Disabled for: BUILD"},
+    {"Name":"a host that is only enabled in another case","Managed":["build"],"Asked":["BUILD"],"Expected":"ssh-paste is not enabled for: BUILD"},
+    {"Name":"no host named: all of them","Managed":["h1","h2"],"Asked":[],"Expected":"Disabled for: h1, h2"},
+    {"Name":"one enabled and one not","Managed":["h1"],"Asked":["h1","h9"],"Expected":"Disabled for: h1"}
+  ],
+  "sshModeSettings": [
+    {"Name":"no ProxyCommand","Line":null,"Keep":null,"Dir":null},
+    {"Name":"ProxyCommand none","Line":"none","Keep":null,"Dir":null},
+    {"Name":"another relay","Line":"nc -X connect -x proxy:8080 %h %p","Keep":null,"Dir":null},
+    {"Name":"a look-alike option","Line":"/opt/ssh-paste-fork/relay --proxyjump %h %p","Keep":null,"Dir":null},
+    {"Name":"Windows, both settings","Line":"C:\\W\\powershell.exe -File \"C:\\x\\ssh-paste.ps1\" --proxy %h %p %n --keep 7d --dir /data/x","Keep":"7d","Dir":"/data/x"},
+    {"Name":"macOS, the defaults","Line":"'/Users/x/.local/share/ssh-paste/bin/ssh-paste' --proxy '%h' %p '%n'","Keep":"1d","Dir":"/tmp"}
   ]
 }

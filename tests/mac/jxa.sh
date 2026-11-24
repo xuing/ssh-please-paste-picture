@@ -33,9 +33,10 @@ esac
 for last in "$@"; do :; done
 case "$last" in
     *"sh -c '"*)
-        set -- $last
-        eval "ext=\${$#}"; shift; eval "size=\${$#}"
-        hash=$(printf '%s\n' "$last" | awk '{ print $(NF-2) }')
+        # ... ssh-paste HASH SIZE EXT KEEP 'DIR'
+        hash=$(printf '%s\n' "$last" | awk '{ print $(NF-4) }')
+        ext=$(printf '%s\n' "$last" | awk '{ print $(NF-2) }')
+        printf '%s\n' "$last" | awk '{ print $NF }' > "$work/dirword"
         read -r mode delay < "$work/mode"
         cat > "$work/server/ssh-paste-$hash.$ext"
         echo "$hash.$ext" >> "$work/uploads"
@@ -73,7 +74,7 @@ check "$(pbpaste)" 'copied by the user' 'the text the user copied is still there
 section 'the watcher starts in a Terminal window (wrapper mode)'
 echo 'ok 3' > "$work/mode"
 terminal_run session "export SSH_PASTE_SSH='$work/fakessh' SSH_PASTE_DEBUG=1 TMPDIR='$work/'
-exec '$repo/src/ssh-paste-mac' testhost"
+exec '$repo/src/ssh-paste-mac' --dir /tmp/ testhost"
 if wait_for 30 test -f "$work/session.pid"; then pass 'the session runs'; else fail 'the session did not start'; fi
 if wait_for 30 logged 'watching com.apple.Terminal'; then
     pass "the watcher found Terminal.app: $(grep 'watching' "$(debuglog)" | head -n 1 | sed 's/^.*watching //')"
@@ -87,6 +88,7 @@ want=/tmp/ssh-paste-$(sha16 "$work/shot.png").png
 wait_for 20 entry_is "$want" || fail 'no promise was written'
 paste_timed "$work/p1"
 check "$(cat "$work/p1")" "$want" 'pbpaste got the remote path'
+check "$(cat "$work/dirword")" "'/tmp'" 'wrapper mode sends --dir /tmp/ as /tmp, the folder the reply is checked against'
 waited=$(cat "$work/p1.ms")
 if [ "$waited" -ge 1000 ]; then pass "pbpaste waited for the upload ($waited ms)"; else fail "pbpaste did not wait for the 3 s upload ($waited ms)"; fi
 if cmp -s "$work/shot.png" "$work/server/$(basename "$want")"; then pass 'the server got the exact bytes'; else fail 'the uploaded bytes differ'; fi

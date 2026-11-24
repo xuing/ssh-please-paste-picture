@@ -46,35 +46,67 @@ Clipboard uploads follow these rules:
 - Uploads go only to that session's server. Focus is tracked per window, not
   per tab. Every active session in the front window uploads to its own server,
   so a second tab connected to another host also receives the image.
-- Each image uploads once per session, re-uploads after 6 hours if revisited,
-  and retries after 30 seconds up to 30 minutes on failure.
+- Each image uploads once per session, re-uploads after 6 hours if revisited
+  (after half of `--keep` when that is shorter; `--keep` is at least 10
+  minutes, so that is never shorter than the longest upload, 5 minutes), and
+  retries after 30 seconds up to 30 minutes on failure.
 - `ssh-paste` ignores clipboard entries mixing an image with text or files,
   such as Excel, Word, or Explorer.
 
 ### Files on the server
 
-Server uploads create and manage files in `/tmp` as follows:
+Server uploads create and manage files in `/tmp`, or in the folder that
+`--dir` names for that host (`--enable --dir DIR HOST`, or `ssh-paste --dir DIR
+HOST`), as follows. Below, `/tmp` stands for that folder.
+
+- `--dir` takes `/...` or `~/...` with names of letters, digits and `. _ -`
+  only (no `.` or `..`, no `//`), so it needs no quoting on the server. For
+  `~`, the client asks the server for its home folder once (`echo $HOME`, over
+  a connection with the upload's options) when you run `--enable`, or when a
+  wrapper-mode session starts, and uses the absolute path from then on; a home
+  folder that does not give a valid path is refused. The server makes a
+  missing folder with mode 700, and the answer must name exactly that folder.
+- A folder other than `/tmp` must be yours alone: owned by you, not a symbolic
+  link, and, as `ls -ld` shows it, not writable by group or others and without
+  an ACL (`+`). Otherwise, and whenever the server cannot tell (`ls` fails), it
+  answers `notprivate` before it writes anything. Other users cannot reach the
+  files there at all; the rules below matter for `/tmp`, which is shared.
+- The server checks the folder itself, not the folders above it. A user who
+  can change a parent folder could swap the folder between the check and the
+  write, so choose a folder under folders that only you and root can change,
+  such as one in your home folder.
 
 - The path is `/tmp/ssh-paste-<hash>.png`, where `<hash>` is the first 128
   bits of the PNG's SHA-256 in hex. If another user owns that name, `ssh-paste`
   uses `/tmp/ssh-paste-<hash>-<uid>.png`.
-- The server writes bytes to a private temp file via `mktemp`, `umask 077`, and
-  noclobber. If the byte count differs from what `ssh-paste` sent, the server
+- The server writes bytes to a private temp file via `mktemp` (a server
+  without `mktemp` answers `nodir`), `umask 077`, and noclobber. If the byte count differs from what `ssh-paste` sent, the server
   deletes the temp file and fails. Otherwise, `mv` renames it to the final name
   with mode 600.
 - The server reuses an existing file only if it is a regular file, not a
-  symlink, owned by you, and byte-for-byte identical.
+  symlink, owned by you, byte-for-byte identical, and still there after
+  `touch -c` renews its time (`touch -c` never makes a file, so a copy that an
+  upload in another session deleted meanwhile is published again).
 - Symlinks at either path are never followed. `mv` replaces the link itself, or
   fails in sticky `/tmp` if another user owns it. Directories are skipped.
   Other server users can at most make an upload fail, never read your images or
   make you write into their files.
 - `ssh-paste` pastes the path only if the server reply `<size> <path>` matches
-  the sent size and one of those two path forms.
+  the sent size and one of those two path forms in exactly that folder.
 - The file name depends only on the image. Another user with the same image can
   compute the name and see it exists, but cannot read it.
-- Each upload deletes your `ssh-paste-<hash>.png` and leftover temp files in
-  `/tmp` older than one day. Nothing runs between uploads or after uninstall.
-  Files stay until the server clears `/tmp`.
+- An image's name carries the `--keep` it was uploaded with:
+  `ssh-paste-<hash>.png` for the default, `ssh-paste-k7d-<hash>.png` for
+  `--keep 7d`. Each upload deletes only your regular files with exactly the
+  names of its own `--keep` (32 hex digits, and `-<uid>` only with your own
+  uid), older than that time (never with `--keep never`, nor when the value
+  the server gets is not a number), so images that one host keeps longer are
+  never cut short by another; and your temp files with `mktemp`'s names (10
+  letters or digits) older than one day. The search enters `/tmp` when it is a
+  symbolic link, as on macOS (`/private/tmp`). Nothing runs between uploads or after
+  uninstall. Files stay until the server clears `/tmp`, or for another folder,
+  until an upload with the same `--keep` finds them old enough, or you delete
+  them.
 
 ### The upload connection
 
@@ -89,7 +121,8 @@ placed before yours, since `ssh` uses the first value it sees:
 - `PermitLocalCommand=no` and `RemoteCommand=none` block extra config commands.
 - `ControlMaster=no` and `ControlPath=none` disable connection sharing.
 - `ConnectTimeout=10`, `ServerAliveInterval=10`, `ServerAliveCountMax=2`, and
-  `LogLevel=ERROR` bound timeouts and logs. Uploads time out after 30 seconds.
+  `LogLevel=ERROR` bound timeouts and logs. An upload times out after 30
+  seconds plus 1 second per 256 KB, 5 minutes at most.
 - OpenSSH 8.7 or newer also sets `StdinNull=no`, `SessionType=default`, and
   `ForkAfterAuthentication=no` to override config.
 - In ssh mode, `ssh-paste` also sets `ProxyCommand=none`,
@@ -162,8 +195,9 @@ The macOS client works as follows:
 
 ### Nothing stored
 
-`ssh-paste` stores no passwords, keys, tokens, or settings, and sends no
-telemetry. It uses your existing `ssh` config, keys, and `ssh-agent`. At
+`ssh-paste` stores no passwords, keys, or tokens, and sends no telemetry. Its
+only settings are the `--keep` and `--dir` of the `--enable` block in your ssh
+config. It uses your existing `ssh` config, keys, and `ssh-agent`. At
 runtime, it connects only to your servers through the relayed session in ssh
 mode and `ssh` for uploads. The installer downloads only from `github.com` and
 `raw.githubusercontent.com`, and so does `install.sh`.

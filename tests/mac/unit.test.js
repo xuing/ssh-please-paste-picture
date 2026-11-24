@@ -144,6 +144,79 @@ test('parseSshG (ConvertFrom-SshG) and parseSshVersion (Get-SshVersion)', () => 
 
 // --- Get-UploadSshArguments --------------------------------------------------------
 
+test('paste settings (--keep, --dir), the tables of tests/cases.json and the block groups', async (t) => {
+    const H = '0123456789abcdef0123456789abcdef';
+    await t.test('takes and refuses --keep values', () => {
+        for (const c of cases.keepAccept) assert.equal(m.keepMinutesOf(c.Value), c.Minutes, c.Value);
+        for (const c of cases.keepReject) assert.throws(() => m.keepMinutesOf(c.Value), /--keep/, JSON.stringify(c.Value));
+    });
+    await t.test('takes and refuses --dir values', () => {
+        for (const c of cases.dirAccept) assert.equal(m.testServerDirectory(c.Value), true, c.Value);
+        for (const c of cases.dirReject) assert.equal(m.testServerDirectory(c.Value), false, c.Value);
+    });
+    await t.test('checks the path the server answers', () => {
+        for (const c of cases.replyPaths) {
+            if (c.Ok) assert.equal(m.readUploadReply('9 ' + c.Path, 9, H, 'png', c.Dir, c.Class), c.Path, c.Name);
+            else assert.throws(() => m.readUploadReply('9 ' + c.Path, 9, H, 'png', c.Dir, c.Class), /unexpected/, c.Name);
+        }
+        assert.throws(() => m.readUploadReply('nodir', 9, H, 'png', '~/shots'), /cannot write to the folder ~\/shots/);
+        assert.throws(() => m.readUploadReply('notprivate', 9, H, 'png', '/data/x'), /not yours alone/);
+    });
+    await t.test('reads ssh mode and its settings from the ProxyCommand of ssh -G (Get-SshModeSettings)', () => {
+        for (const c of cases.sshModeSettings) {
+            const got = m.sshModeSettings(c.Line === null ? {} : { proxycommand: c.Line });
+            assert.deepEqual(got, c.Keep === null ? null : { Keep: c.Keep, Dir: c.Dir }, c.Name);
+        }
+        assert.equal(m.sshModeSettings(null), null);
+    });
+    await t.test('says what --disable removed, or that the host was not enabled (Get-DisableMessage)', () => {
+        for (const c of cases.disableMessages) assert.equal(m.disableMessage(c.Managed, c.Asked), c.Expected, c.Name);
+    });
+    await t.test('makes --dir absolute with the home folder on the server', () => {
+        for (const c of cases.absoluteDirs) {
+            if (c.Expected !== null) assert.equal(m.absoluteDirectory(c.Dir, c.ServerHome), c.Expected, c.Name);
+            else assert.throws(() => m.absoluteDirectory(c.Dir, c.ServerHome), /cannot use/, c.Name);
+        }
+    });
+    await t.test('reads the settings of ProxyCommand lines', () => {
+        for (const c of cases.proxySettings) assert.deepEqual(m.proxySettings(c.Line), { Keep: c.Keep, Dir: c.Dir }, c.Name);
+    });
+    await t.test('reads leading --keep and --dir in any order, once each', () => {
+        const r = m.readPasteSettings(['--dir', '~/s', '--keep', '2h', '-p', '22', 'host']);
+        assert.deepEqual([r.Keep, r.Dir, r.Rest], ['2h', '~/s', ['-p', '22', 'host']]);
+        assert.deepEqual(m.readPasteSettings(['host', '--keep', '2h']).Rest, ['host', '--keep', '2h']);
+        assert.throws(() => m.readPasteSettings(['--keep', '1d', '--keep', '2d', 'h']), /given twice/);
+        assert.throws(() => m.readPasteSettings(['--dir']), /needs a value/);
+        assert.throws(() => m.readPasteSettings(['--dir', '/Users/x y', 'h']), /quote ~/);
+        assert.equal(m.readPasteSettings(['--dir', '/data/x/', 'h']).Dir, '/data/x');
+        assert.equal(m.readPasteSettings(['--dir', '~/', 'h']).Dir, '~');
+        assert.throws(() => m.readPasteSettings(['--dir', '/', 'h']), /--dir takes/);
+        assert.throws(() => m.readPasteSettings(['--keep', '', 'h']), /--keep/);
+        assert.deepEqual(['1d', undefined, '7d', 'never'].map(m.keepClass), ['', '', 'k7d-', 'knever-']);
+        assert.deepEqual(['alice@build', 'ssh://alice@build:2222', 'ssh://[::1]:22'].map(m.destinationHost), ['build', 'build', '::1']);
+    });
+    await t.test('writes --keep and --dir into the ProxyCommand only when not the defaults, in single quotes', () => {
+        const base = m.proxyCommandLine('/a/ssh-paste');
+        assert.equal(m.proxyCommandLine('/a/ssh-paste', '1d', '/tmp'), base);
+        assert.equal(m.proxyCommandLine('/a/ssh-paste', 'never', '~/shots'), base + " --keep 'never' --dir '~/shots'");
+        assert.deepEqual(m.proxySettings(m.proxyCommandLine('/a/ssh-paste', '30m', '/data/x')), { Keep: '30m', Dir: '/data/x' });
+    });
+    await t.test('groups hosts with the same settings, and reads the groups back', () => {
+        const groups = m.settingsGroups([['h1', { Keep: '7d', Dir: '~/s' }], ['h2', { Keep: '1d', Dir: '/tmp' }], ['h3', { Keep: '7d', Dir: '~/s' }]], '/a/ssh-paste');
+        assert.deepEqual(groups.map((g) => g.Hosts), [['h1', 'h3'], ['h2']]);
+        const text = m.setManagedBlock('Host other\n', null, null, true, groups);
+        const b = m.getManagedBlock(text);
+        assert.deepEqual(b.Hosts, ['h1', 'h3', 'h2']);
+        assert.deepEqual(m.proxySettings(b.Groups[0].ProxyCommand), { Keep: '7d', Dir: '~/s' });
+        assert.deepEqual(m.proxySettings(b.Groups[1].ProxyCommand), { Keep: '1d', Dir: '/tmp' });
+        assert.equal(m.setManagedBlock(text, null, null, false, [{ Hosts: [], ProxyCommand: 'x' }]), 'Host other\n');
+        assert.equal(m.setManagedBlock('', ['a'], 'P', false), m.setManagedBlock('', null, null, false, [{ Hosts: ['a'], ProxyCommand: 'P' }]));
+    });
+    await t.test('pastes a path again without a new upload for at most half of --keep, and 6 hours at most', () => {
+        assert.deepEqual([1440, 0, 60, 30].map(m.uploadCacheHours), [6, 6, 0.5, 0.25]);
+    });
+});
+
 test('uploadSshArguments (Get-UploadSshArguments)', async (t) => {
     const H = '0123456789abcdef0123456789abcdef';
     const up = (argv, o) => m.uploadSshArguments(m.splitSshArguments(argv), H, (o && o.size) || 1234, o || {});
@@ -233,11 +306,16 @@ test('uploadSshArguments (Get-UploadSshArguments)', async (t) => {
     });
     await t.test('makes the last argument exactly the sh -c command, never the session command', () => {
         const a = up(['host'], { size: 4321 });
-        assert.equal(a[a.length - 1], "sh -c '" + m.REMOTE_SCRIPT + "' ssh-paste " + H + ' 4321 png');
+        assert.equal(a[a.length - 1], "sh -c '" + m.REMOTE_SCRIPT + "' ssh-paste " + H + " 4321 png 1440 '/tmp'");
         const b = up(['host', 'rm', '-rf', '/']);
         assert.doesNotMatch(b.join(' '), /rm -rf/);
         assert.equal(b[b.length - 2], 'host');
-        assert.match(m.uploadSshArguments(m.splitSshArguments(['h']), H, 1, { ext: 'jpeg' }).pop(), / 1 jpeg$/);
+        assert.match(m.uploadSshArguments(m.splitSshArguments(['h']), H, 1, { ext: 'jpeg' }).pop(), / 1 jpeg 1440 '\/tmp'$/);
+        assert.match(m.uploadSshArguments(m.splitSshArguments(['h']), H, 9, { keep: 'never', dir: '/home/u/shots' }).pop(), / 9 png 0 '\/home\/u\/shots' knever-$/);
+        assert.throws(() => m.uploadSshArguments(m.splitSshArguments(['h']), H, 9, { dir: '~/shots' }), /bad --dir/);
+        assert.match(m.uploadSshArguments(m.splitSshArguments(['h']), H, 9, { keep: '2h' }).pop(), / 9 png 120 '\/tmp' k2h-$/);
+        assert.throws(() => m.uploadSshArguments(m.splitSshArguments(['h']), H, 9, { dir: "/tmp'x" }), /bad --dir/);
+        assert.throws(() => m.uploadSshArguments(m.splitSshArguments(['h']), H, 9, { keep: '1w' }), /--keep/);
     });
     await t.test('rejects anything that is not 32 lower-case hex digits, and an unknown extension', () => {
         const parsed = m.splitSshArguments(['host']);
@@ -503,7 +581,7 @@ function newWorld() {
                 if (e.Png) {
                     s.Png = e.Png;
                     s.Hash = hash16(e.Png);
-                    s.Items = [{ Hash: s.Hash, Ext: 'png', Size: e.Png.length }];
+                    s.Items = e.Items || [{ Hash: s.Hash, Ext: 'png', Size: e.Png.length }];
                     if (e.Owner !== null) {
                         s.Owner = e.Owner;
                         s.Token = e.Token;
@@ -518,7 +596,7 @@ function newWorld() {
             // Like the real publish: refuses when the pasteboard moved past basis.
             if (w.beforeWrite) w.beforeWrite();
             if (e.basis !== w.seq) throw new Error('could not write the clipboard: the clipboard changed since it was read');
-            w.entry = { Png: e.state.Png, Text: e.text, HasFiles: false, Owner: e.owner, Token: e.token, Promise: e.promise ? 'open' : null };
+            w.entry = { Png: e.state.Png, Items: w.entry && w.entry.Items, Text: e.text, HasFiles: false, Owner: e.owner, Token: e.token, Promise: e.promise ? 'open' : null };
             w.seq++;
             w.writes.push({ Text: e.text, Owner: e.owner, Token: e.token });
         },
@@ -571,10 +649,24 @@ test('uploadedPath (Get-UploadedPath)', async (t) => {
         assert.equal(resolve(W, state), imagePath);
         assert.equal(w.uploads.length, 1);
         const a = w.uploads[0].Arguments;
-        assert.ok(a[a.length - 1].endsWith(' ssh-paste 0123456789abcdef0123456789abcdef 40 png'));
+        assert.ok(a[a.length - 1].endsWith(" ssh-paste 0123456789abcdef0123456789abcdef 40 png 1440 '/tmp'"));
         assert.ok(a.includes('-p') && a.includes('alice@h') && a.includes('StdinNull=no'));
         assert.equal(W.Uploaded[state.Hash].Path, imagePath);
         assert.equal(W.WakeAt, W.Uploaded[state.Hash].At + m.UPLOAD_CACHE_HOURS * 3600000);
+    });
+    await t.test('passes --keep and --dir on, promises the folder and class, and caches for half of --keep', () => {
+        const w = newWorld();
+        w.prefix.ssh = '/home/u/s';
+        const W = m.newWatcher(w.P, { sshPath: 'ssh', sshVersion: [9, 0], parsed: m.splitSshArguments(['alice@h']), window: 1, token: '0000000000000001',
+            settings: { Keep: '30m', Dir: '/home/u/s' } });
+        const other = { Hash: 'f'.repeat(32), Items: [{ Hash: 'f'.repeat(32), Ext: 'png', Size: 40 }] };
+        assert.equal(m.expectedText(W, other), '/home/u/s/ssh-paste-k30m-' + 'f'.repeat(32) + '.png');
+        assert.equal(resolve(W, state), '/home/u/s/ssh-paste-0123456789abcdef0123456789abcdef.png');
+        const a = w.uploads[0].Arguments;
+        assert.ok(a[a.length - 1].endsWith(" ssh-paste 0123456789abcdef0123456789abcdef 40 png 30 '/home/u/s' k30m-"));
+        assert.equal(W.WakeAt, W.Uploaded[state.Hash].At + 0.25 * 3600000);
+        assert.throws(() => m.newWatcher(w.P, { sshPath: 'ssh', parsed: m.splitSshArguments(['h']), settings: { Keep: '1w' } }), /--keep/);
+        assert.throws(() => m.newWatcher(w.P, { sshPath: 'ssh', parsed: m.splitSshArguments(['h']), settings: { Dir: '~/s' } }), /bad --dir/);
     });
     await t.test('with SSH_PASTE_DEBUG, adds -v and drops LogLevel=ERROR with its -o, leaving no -o without a value', () => {
         const w = newWorld();
@@ -813,6 +905,20 @@ test('the watcher: one watcher, one terminal window', async (t) => {
         assert.equal(w.entry.Text, pathFor(png));
         w.ticks(W, 5);
         assert.equal(w.uploads.length, 2);
+    });
+    await t.test('uploads each file of a batch once, even when the batch outlasts the cache (--keep 30m)', () => {
+        const w = newWorld(), png = fakePng(1), W = w.watcher(TerminalA);
+        W.CacheHours = m.uploadCacheHours(30);   // 15 minutes
+        const a = 'a'.repeat(32), b = 'b'.repeat(32);
+        w.focus(TerminalA);
+        w.copy(png);
+        w.entry.Items = [{ Hash: a, Ext: 'png', Size: 40 }, { Hash: b, Ext: 'png', Size: 40 }];
+        // Each upload takes 20 minutes, so a is past the cache when b ends. One tick runs
+        // the whole batch (the fake uploads end at once); later ticks would refresh it.
+        w.duringUpload = () => { w.clock += 20 * 60000; if (w.uploads.length > 4) throw new Error('uploads again and again'); };
+        w.ticks(W, 1);
+        assert.deepEqual(w.uploads.map((u) => u.Hash), [a, b]);
+        assert.equal(w.entry.Text, '/tmp/ssh-paste-' + a + '.png /tmp/ssh-paste-' + b + '.png');
     });
 });
 
