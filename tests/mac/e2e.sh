@@ -88,6 +88,8 @@ section 'install, --enable and --doctor'
 sh "$repo/install.sh" > "$work/install.out" 2>&1 || { fail 'install.sh'; cat "$work/install.out"; }
 check "$("$cmd" --version)" 0.0.0-dev 'ssh-paste --version'
 "$cmd" --enable ssh-paste-e2e > "$work/enable.out" 2>&1 || { fail '--enable'; cat "$work/enable.out"; }
+if grep -qxF 'ssh-paste-e2e: uploads log in without a password' "$work/enable.out"; then pass '--enable checked that uploads log in'; else fail "--enable output: $(cat "$work/enable.out")"; fi
+if command -v ssh-copy-id > /dev/null; then pass "ssh-copy-id is there, as the README says: $(command -v ssh-copy-id)"; else fail 'no ssh-copy-id on this macOS, which the README tells users to run'; fi
 if head -n 1 "$HOME/.ssh/config" | grep -qF '# >>> ssh-paste'; then pass 'the block is at the top of ~/.ssh/config'; else fail "no block: $(cat "$HOME/.ssh/config")"; fi
 if grep -qF "    ProxyCommand '$HOME/.local/share/ssh-paste/bin/ssh-paste' --proxy '%h' %p '%n'" "$HOME/.ssh/config"; then pass 'the ProxyCommand runs the installed command'; else fail "ProxyCommand: $(grep ProxyCommand "$HOME/.ssh/config")"; fi
 # On macOS /tmp is a symbolic link to /private/tmp: the upload's prune must still

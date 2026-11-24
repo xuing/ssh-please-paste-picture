@@ -1067,6 +1067,28 @@ Describe 'Copied image files (CF_HDROP)' {
         $expected = @('-v') + @(for ($k = 0; $k -lt $plain.Count; $k++) { if ($k -ne $i - 1 -and $k -ne $i) { $plain[$k] } })
         @($script:DebugArgs) | Should -BeExactly $expected
     }
+    It 'uploads nothing more in the session after a failure that trying again cannot fix, and says why' {
+        Mock Send-Image { throw 'ssh exited with 255: xu@h: Permission denied (password,keyboard-interactive).' }
+        $w = @{ SshPath = 'ssh'; SshVersion = $null; Parsed = (Split-SshArguments @('h')); NoProxy = $false; Pin = $null; Uploaded = @{}; Failed = @{}; Blocked = $null; WakeAt = [DateTime]::MaxValue }
+        $items = Read-ImageFiles @($script:ImgA, $script:ImgB)
+        Get-UploadedPath $w @{ Items = $items } | Should -BeNullOrEmpty
+        $w.Blocked | Should -BeExactly 'h wants a password or a one-time code (password,keyboard-interactive), which uploads cannot type, so ssh-paste cannot upload to it'
+        Get-UploadedPath $w @{ Items = @($items[1]) } | Should -BeNullOrEmpty
+        Should -Invoke Send-Image -Times 1 -Exactly
+        Test-UploadFailing $w @{ Items = @(@{ Hash = 'another' }) } | Should -BeTrue
+        Get-FailureSummary $w | Should -BeExactly ('ssh-paste: screenshot paste was off for this session: ' + $w.Blocked)
+    }
+    It 'tries again later when the server takes keys (the user may load one with ssh-add)' {
+        Mock Send-Image { throw 'ssh exited with 255: xu@h: Permission denied (publickey,password).' }
+        $w = @{ SshPath = 'ssh'; SshVersion = $null; Parsed = (Split-SshArguments @('h')); NoProxy = $false; Pin = $null; Uploaded = @{}; Failed = @{}; Blocked = $null; WakeAt = [DateTime]::MaxValue }
+        $state = @{ Items = (Read-ImageFiles @($script:ImgA)) }
+        Get-UploadedPath $w $state | Should -BeNullOrEmpty
+        $w.Blocked | Should -BeNullOrEmpty
+        foreach ($f in @($w.Failed.Values)) { $f.At = $f.At.AddMinutes(-1) }   # the 30-second backoff ran out
+        Get-UploadedPath $w $state | Should -BeNullOrEmpty
+        Should -Invoke Send-Image -Times 2 -Exactly
+        Get-FailureSummary $w | Should -BeExactly 'ssh-paste: 1 screenshot upload(s) failed: h did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor h shows how'
+    }
     It 'pastes nothing while one of the files failed to upload' {
         Mock Send-Image { if ($Ext -eq 'jpg') { throw 'ssh exited with 255: refused' }; return ('/tmp/ssh-paste-' + $Hash + '.' + $Ext) }
         $w = @{ SshPath = 'ssh'; SshVersion = $null; Parsed = (Split-SshArguments @('h')); NoProxy = $false; Pin = $null; Uploaded = @{}; Failed = @{}; WakeAt = [DateTime]::MaxValue }
@@ -1419,6 +1441,39 @@ Describe 'paste settings (--keep, --dir)' {
         else { $got.Keep | Should -BeExactly $Keep; $got.Dir | Should -BeExactly $Dir }
     }
 
+    It 'reads what an ssh error says, and whether trying again can help: <Name>' -ForEach $sharedCases.sshFailures {
+        $f = Get-SshFailure $Text
+        if ($null -eq $Kind) { $f | Should -BeNullOrEmpty }
+        else { $f.Kind | Should -BeExactly $Kind }
+        if ($null -ne $Methods) {
+            Format-ArgList $f.Methods | Should -BeExactly (Format-ArgList $Methods)
+            $f.KeyLogin | Should -Be $KeyLogin
+            $f.Typed | Should -Be $Typed
+        }
+        Test-FailureFinal $f | Should -Be $Final
+    }
+
+    It 'gives the key setup commands [-p PORT] [USER@]HOST from the --doctor arguments: <Name>' -ForEach $sharedCases.keySetupTargets {
+        $s = Get-KeySetupTarget (Split-SshArguments $SshArgs)
+        $s.Target | Should -BeExactly $Target
+        $s.Dropped | Should -Be $Dropped
+    }
+
+    It 'says whether uploads to a host log in, and what to do: <Name>' -ForEach $sharedCases.loginReports {
+        Get-LoginReport $HostName $Said | Should -BeExactly $Expected
+    }
+
+    It 'prints the commands that set up a key on Windows, with the host and the command the READMEs show' {
+        $lines = @(Get-KeySetupLines '-p 2222 build')
+        $lines | Should -Contain '    ssh-keygen -t ed25519'
+        $lines | Should -Contain ('    Get-Content $HOME\.ssh\id_ed25519.pub | ssh -p 2222 build "' + $script:KeyInstallCommand + '"')
+        $lines | Should -Contain '    ssh-paste --doctor -p 2222 build'
+        foreach ($readme in @('README.md', 'README.zh-CN.md')) {
+            $text = [System.IO.File]::ReadAllText((Join-Path $script:RepoRoot $readme))
+            $text.Contains('Get-Content $HOME\.ssh\id_ed25519.pub | ssh myhost "' + $script:KeyInstallCommand + '"') | Should -BeTrue -Because "$readme shows the same command"
+        }
+    }
+
     It 'says what --disable removed, or that the host was not enabled: <Name>' -ForEach $sharedCases.disableMessages {
         Get-DisableMessage $Managed $Asked | Should -BeExactly $Expected
     }
@@ -1619,6 +1674,10 @@ Describe 'Get-SshPath' {
 Describe 'ssh config editing (Update-SshConfig, Invoke-Enable, Invoke-Disable)' {
     BeforeAll {
         Mock Test-HostResolves { $true }   # the hosts in these tests are made up
+        # --enable checks each host's login once; here every host logs in, with home /home/u.
+        Mock Test-ServerLogin { @{ Home = '/home/u'; Error = $null } }
+        Mock Get-SshPath { 'ssh' }
+        Mock Get-SshVersion { [version]'9.6' }
         $script:HomeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-cfg-' + [guid]::NewGuid().ToString('N'))
         $script:SshDir = Join-Path $script:HomeDir '.ssh'
         $script:Cfg = Join-Path $script:SshDir 'config'
@@ -1831,13 +1890,29 @@ Describe 'ssh config editing (Update-SshConfig, Invoke-Enable, Invoke-Disable)' 
         It 'explains the usage without a host' {
             { Invoke-Enable @() } | Should -Throw '*usage: ssh-paste --enable*'
         }
+
+        It 'checks the login of each host once, and says that uploads log in' {
+            Invoke-Enable @('h1', 'h2', 'h1') | Should -Be 0
+            Should -Invoke Test-ServerLogin -Times 2 -Exactly
+            Should -Invoke Write-Info -ParameterFilter { $Message -ceq 'h1: uploads log in without a password' } -Exactly 1
+        }
+
+        It 'enables a host that asks for a password, and says why uploads cannot log in' {
+            Mock Test-ServerLogin { @{ Home = $null; Error = 'xu@h1: Permission denied (publickey,password).' } }
+            Invoke-Enable @('h1') | Should -Be 0
+            Format-ArgList (Get-ManagedBlock (Read-Config)).Hosts | Should -BeExactly '["h1"]'
+            Should -Invoke Write-Info -ParameterFilter { $Message -clike 'h1 did not accept a key for uploads*ssh-paste --doctor h1 shows how' } -Exactly 1
+        }
+
+        It 'refuses --dir ~/... when it cannot log in to ask for the home folder, and writes nothing' {
+            Mock Test-ServerLogin { @{ Home = $null; Error = 'xu@h1: Permission denied (password).' } }
+            { Invoke-Enable @('--dir', '~/shots', 'h1') } | Should -Throw '*cannot ask h1 for its home folder (h1 wants a password*); give an absolute --dir'
+            Test-Path -LiteralPath $script:Cfg | Should -BeFalse
+        }
     }
 
     Context 'Invoke-Enable with --keep and --dir' {
         BeforeEach {
-            Mock Get-ServerHome { '/home/u' }
-            Mock Get-SshPath { 'ssh' }
-            Mock Get-SshVersion { [version]'9.6' }
             Mock Get-ProxyCommandLine {
                 $l = 'PROXY --proxy %h %p %n'
                 if ($Keep -and $Keep -cne '1d') { $l += ' --keep ' + $Keep }
@@ -1853,7 +1928,7 @@ Describe 'ssh config editing (Update-SshConfig, Invoke-Enable, Invoke-Disable)' 
             @($b.Groups).Count | Should -Be 2
             Format-ArgList $b.Groups[0].Hosts | Should -BeExactly '["h1"]'
             $b.Groups[0].ProxyCommand | Should -BeExactly 'PROXY --proxy %h %p %n --keep 7d --dir /home/u/shots'
-            Should -Invoke Get-ServerHome -Times 1 -Exactly -ParameterFilter { $Parsed.Destination -ceq 'h1' }
+            Should -Invoke Test-ServerLogin -Times 1 -Exactly -ParameterFilter { $Parsed.Destination -ceq 'h1' }
             Format-ArgList $b.Groups[1].Hosts | Should -BeExactly '["h2"]'
             $b.Groups[1].ProxyCommand | Should -BeExactly 'PROXY --proxy %h %p %n'
         }
@@ -3277,7 +3352,7 @@ public static class SshPasteNative {
             Copy-FromApp (New-FakePng 1)
             $script:FailNext = 1
             Invoke-Ticks $w 1
-            Get-FailureSummary $w | Should -Match '1 screenshot upload\(s\) failed: ssh exited with 255: Permission denied'
+            Get-FailureSummary $w | Should -Match '1 screenshot upload\(s\) failed: alice@h did not accept a key for uploads'
         }
     }
 
@@ -5230,6 +5305,76 @@ Describe 'server-side script run through real shells' -Tag 'Unix' -Skip:$onWindo
     }
 }
 
+Describe 'the key setup command ($script:KeyInstallCommand) in real login shells' -Tag 'Unix' -Skip:$onWindows {
+    Context 'login shell <Shell>' -ForEach $unixShells {
+        It 'adds the key on its own line, without CR, to a private .ssh it makes when missing' {
+            $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-keys-' + [guid]::NewGuid().ToString('N'))
+            [void](New-Item -ItemType Directory -Path $dir)
+            try {
+                # As ssh runs it: "<login shell> -c COMMAND" in the home folder, the key on stdin
+                # with the CRLF that Windows PowerShell's pipe adds.
+                $key1 = [System.Text.Encoding]::ASCII.GetBytes("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOne me@pc`r`n")
+                $r = Invoke-Process -FilePath $ShellPath -Arguments @('-c', $script:KeyInstallCommand) -InputBytes $key1 -WorkingDirectory $dir
+                $r.ExitCode | Should -Be 0 -Because $r.Stderr
+                $auth = Join-Path $dir '.ssh/authorized_keys'
+                ((& stat -c '%a' (Join-Path $dir '.ssh')) | Out-String).Trim() | Should -BeExactly '700'
+                ((& stat -c '%a' $auth) | Out-String).Trim() | Should -BeExactly '600'
+                # A last line without its newline, as an editor may leave it.
+                [System.IO.File]::WriteAllText($auth, ([System.IO.File]::ReadAllText($auth) + 'ssh-rsa AAAAB3Old old@pc'))
+                $key2 = [System.Text.Encoding]::ASCII.GetBytes("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITwo me@pc`r`n")
+                $r = Invoke-Process -FilePath $ShellPath -Arguments @('-c', $script:KeyInstallCommand) -InputBytes $key2 -WorkingDirectory $dir
+                $r.ExitCode | Should -Be 0 -Because $r.Stderr
+                $text = [System.IO.File]::ReadAllText($auth)
+                $text.Contains("`r") | Should -BeFalse
+                $lines = @($text -split "`n" | Where-Object { $_ })
+                Format-ArgList $lines | Should -BeExactly (Format-ArgList @('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOne me@pc', 'ssh-rsa AAAAB3Old old@pc', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITwo me@pc'))
+            } finally {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'works with noclobber set, and drops the NUL bytes of a UTF-16 pipe' {
+            # zsh and tcsh refuse >> to a missing file under noclobber; fish has no such option.
+            $noclobber = @{ zsh = 'setopt noclobber; '; tcsh = 'set noclobber; '; fish = '' }[$Shell]
+            if ($null -eq $noclobber) { $noclobber = 'set -C; ' }
+            $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-keys-' + [guid]::NewGuid().ToString('N'))
+            [void](New-Item -ItemType Directory -Path $dir)
+            try {
+                $key = [System.Text.Encoding]::Unicode.GetBytes("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOne me@pc`r`n")
+                $r = Invoke-Process -FilePath $ShellPath -Arguments @('-c', ($noclobber + $script:KeyInstallCommand)) -InputBytes $key -WorkingDirectory $dir
+                $r.ExitCode | Should -Be 0 -Because $r.Stderr
+                $text = [System.IO.File]::ReadAllText((Join-Path $dir '.ssh/authorized_keys'))
+                @($text -split "`n" | Where-Object { $_ }) | Should -BeExactly @('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOne me@pc')
+            } finally {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'the key setup command through the PowerShell pipe that README shows' -Tag 'Windows' -Skip:(-not $onWindows) {
+    It 'gets the key from Get-Content | (a native program) intact, without CR' {
+        # Git for Windows' sh stands in for the server's login shell; ssh passes stdin on unchanged.
+        $sh = Join-Path $env:ProgramFiles 'Git\bin\sh.exe'
+        if (-not (Test-Path -LiteralPath $sh)) { Set-ItResult -Skipped -Because 'Git for Windows is not installed'; return }
+        $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-keys-' + [guid]::NewGuid().ToString('N'))
+        [void](New-Item -ItemType Directory -Path $dir)
+        $pub = Join-Path $dir 'id_ed25519.pub'
+        [System.IO.File]::WriteAllText($pub, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOne me@pc`n")   # as ssh-keygen writes it
+        Push-Location $dir
+        try {
+            Get-Content $pub | & $sh -c $script:KeyInstallCommand
+            $LASTEXITCODE | Should -Be 0
+            $text = [System.IO.File]::ReadAllText((Join-Path $dir '.ssh\authorized_keys'))
+            $text.Contains("`r") | Should -BeFalse
+            @($text -split "`n" | Where-Object { $_ }) | Should -BeExactly @('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOne me@pc')
+        } finally {
+            Pop-Location
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe 'Get-SshVersion and Send-Image with a stand-in for ssh' -Tag 'Unix' -Skip:$onWindows {
     BeforeAll {
         $script:FakeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('fake-ssh-for-ssh-paste-' + [guid]::NewGuid().ToString('N'))
@@ -5850,6 +5995,18 @@ Describe 'end to end against a real ssh server' -Tag 'E2E' -Skip:(-not $e2eHost)
         } finally {
             [void](Invoke-E2ERemote ('rm -rf ' + $serverHome + '/' + $name))
         }
+    }
+
+    It 'checks the login as an upload would (Test-ServerLogin), and reads a refused one' {
+        $ok = Test-ServerLogin $script:E2ESsh (Get-E2EParsed) $script:E2EVersion
+        $ok.Error | Should -BeNullOrEmpty
+        $ok.Home | Should -BeExactly ((Invoke-E2ERemote 'echo $HOME').Stdout.Trim())
+        # A user the server has no key for (-l wins over User in the config): it refuses, as
+        # for someone who never set a key up.
+        $bad = Test-ServerLogin $script:E2ESsh (Get-E2EParsed @('-l', 'ssh-paste-no-such-user')) $script:E2EVersion
+        $bad.Home | Should -BeNullOrEmpty
+        $bad.Error | Should -Match 'Permission denied \('
+        Get-LoginReport 'e2e' $bad.Error | Should -BeLike 'e2e did not accept a key for uploads*ssh-paste --doctor e2e shows how'
     }
 
     It 'the server accepts the key without a prompt' {

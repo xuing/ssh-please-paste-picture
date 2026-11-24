@@ -36,6 +36,13 @@ $script:MaxImageBytes = 64MB
 $script:ImageExtensions = @('png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp')
 $script:MaxCopiedFiles = 20
 $script:RetryFailedSeconds = 30
+# The server half of setting up a key without ssh-copy-id (Windows has none): the public key
+# comes on stdin. It runs in the user's login shell (sh, bash, zsh, fish, tcsh), so it uses
+# only words they all read alike; touch makes the file first, since >> cannot under noclobber
+# in zsh and tcsh; the echo ends a last line that lacks its newline; tr drops the CR that
+# PowerShell adds (and NUL, should $OutputEncoding be UTF-16). --doctor prints it; the
+# READMEs show it.
+$script:KeyInstallCommand = "umask 077; mkdir -p .ssh; touch .ssh/authorized_keys; echo >> .ssh/authorized_keys; tr -d '\r\000' >> .ssh/authorized_keys"
 $script:UploadCacheHours = 6
 # --keep and --dir (ssh-paste --enable, wrapper mode): how long the server keeps your images,
 # and in which folder. The defaults are what ssh-paste always did.
@@ -321,18 +328,33 @@ function ConvertTo-AbsoluteDirectory {
     return $abs
 }
 
-function Get-ServerHome {
-    # The home folder on the server, for --dir ~/...: one ssh connection, as an upload makes.
-    param([string]$SshPath, $Parsed, [version]$SshVersion)
-    $argv = @(Get-ServerSshArguments -Parsed $Parsed -SshVersion $SshVersion) + @('echo $HOME')
-    $r = Invoke-NativeCapture $SshPath $argv 30
+function Test-ServerLogin {
+    # One connection as an upload makes (no prompt): Home, the home folder on the server, when
+    # it logs in; else Error, what ssh said. --enable runs it once for each host it names,
+    # with -NoProxy as ssh mode's uploads connect (not through the relay of an older block).
+    param([string]$SshPath, $Parsed, [version]$SshVersion, [switch]$NoProxy)
+    $argv = @(Get-ServerSshArguments -Parsed $Parsed -NoProxy:$NoProxy -SshVersion $SshVersion) + @('echo $HOME')
+    try { $r = Invoke-NativeCapture $SshPath $argv 30 } catch { return @{ Home = $null; Error = $_.Exception.Message } }
     $lines = @(([string]$r.Out) -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 })
     $line = ''
     if ($lines.Count -gt 0) { $line = $lines[$lines.Count - 1].Trim() }
-    if ($r.ExitCode -ne 0 -or -not $line.StartsWith('/')) {
-        throw ('cannot ask {0} for its home folder (ssh exited {1}: {2}); give an absolute --dir, or check the login with ssh-paste --doctor {0}' -f $Parsed.Destination, $r.ExitCode, ([string]$r.Err).Trim())
-    }
-    return $line
+    if ($r.ExitCode -eq 0 -and $line.StartsWith('/')) { return @{ Home = $line; Error = $null } }
+    $err = ([string]$r.Err).Trim()
+    if (-not $err) { $err = ('ssh exited {0}, and the server sent no home folder' -f $r.ExitCode) }
+    return @{ Home = $null; Error = $err }
+}
+
+function Get-ServerHome {
+    # The home folder on the server, for --dir ~/... in wrapper mode.
+    param([string]$SshPath, $Parsed, [version]$SshVersion)
+    $login = Test-ServerLogin $SshPath $Parsed $SshVersion
+    if ($null -eq $login.Home) { throw (Get-HomeError $Parsed.Destination $login.Error) }
+    return $login.Home
+}
+
+function Get-HomeError {
+    param([string]$HostName, [string]$ErrorText)
+    return ('cannot ask {0} for its home folder ({1}); give an absolute --dir' -f $HostName, (Get-LoginReport $HostName $ErrorText))
 }
 
 function Get-ImageHash {
@@ -405,6 +427,97 @@ function Read-UploadReply {
     if ($size -ne $ExpectedSize) { throw "size mismatch: sent $ExpectedSize bytes, server has $size" }
     if ($path -cnotmatch (Get-ReplyPathPattern $Dir $Hash $Ext $Class)) { throw "unexpected path from the server: $path" }
     return $path
+}
+
+function Get-SshFailure {
+    # What an ssh error says, for the advice and for whether trying again can help:
+    # Kind auth (Methods: the methods the server still takes, as ssh lists them; KeyLogin:
+    # a key would do; Typed: every method needs a person to type), toomany, hostkey,
+    # network, or $null when it says none of these. Only ssh's own list of method names
+    # counts, not a "Permission denied (...)" from a command on the server.
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    if ($Text -cmatch 'Permission denied \(([a-z][a-z0-9@.-]*(,[a-z][a-z0-9@.-]*)*)\)\.') {
+        $methods = @($Matches[1] -split ',')
+        $typed = @($methods | Where-Object { $_ -cne 'password' -and $_ -cne 'keyboard-interactive' }).Count -eq 0
+        return @{ Kind = 'auth'; Methods = $methods; KeyLogin = (@($methods) -ccontains 'publickey'); Typed = $typed }
+    }
+    if ($Text -cmatch 'Too many authentication failures') { return @{ Kind = 'toomany' } }
+    if ($Text -cmatch 'Host key verification failed') { return @{ Kind = 'hostkey' } }
+    if ($Text -cmatch 'Could not resolve hostname|Connection refused|Connection timed out|No route to host|Network is unreachable|Operation timed out') { return @{ Kind = 'network' } }
+    return $null
+}
+
+function Test-FailureFinal {
+    # Whether trying again in this session cannot help: the server takes only methods that a
+    # person types (a password, a one-time code). Anything else may change while the session
+    # runs: a key loaded with ssh-add, a renewed Kerberos ticket, a fixed known_hosts.
+    param($Failure)
+    if ($null -eq $Failure) { return $false }
+    return ($Failure.Kind -ceq 'auth' -and $Failure.Typed)
+}
+
+function Get-LoginAdvice {
+    # One line on why uploads to HostName cannot log in, or $null when the error says nothing
+    # we can advise on. (loginAdvice in src/ssh-paste.js; tests/cases.json loginAdvice.)
+    param($Failure, [string]$HostName)
+    if ($null -eq $Failure) { return $null }
+    if ($Failure.Kind -ceq 'auth' -and $Failure.KeyLogin) {
+        return ('{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor {0} shows how' -f $HostName)
+    }
+    if ($Failure.Kind -ceq 'auth' -and $Failure.Typed) {
+        return ('{0} wants a password or a one-time code ({1}), which uploads cannot type, so ssh-paste cannot upload to it' -f $HostName, (@($Failure.Methods) -join ','))
+    }
+    if ($Failure.Kind -ceq 'toomany') {
+        return ('{0} closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config' -f $HostName)
+    }
+    if ($Failure.Kind -ceq 'hostkey') {
+        return ('ssh could not verify the host key of {0}: run ssh {0} to see why (a new host asks you to accept its key)' -f $HostName)
+    }
+    return $null
+}
+
+function Get-LoginReport {
+    # The line --enable prints about a host: that uploads log in, or why not. ErrorText is
+    # what ssh said when the check failed ($null when it logged in).
+    param([string]$HostName, [string]$ErrorText)
+    if ([string]::IsNullOrEmpty($ErrorText)) { return ('{0}: uploads log in without a password' -f $HostName) }
+    $advice = Get-LoginAdvice (Get-SshFailure $ErrorText) $HostName
+    if ($advice) { return $advice }
+    $first = @($ErrorText -split "`r?`n" | Where-Object { $_.Trim() })[0]
+    return ('could not check the login to {0} now ({1}); ssh-paste --doctor {0} tests it' -f $HostName, $first.Trim())
+}
+
+function Get-KeySetupTarget {
+    # The host for the key setup commands: [-p PORT] [USER@]HOST from the --doctor arguments,
+    # which ssh and ssh-copy-id both read alike; Dropped says other options were left out.
+    param($Parsed)
+    $user = $null
+    $port = $null
+    $dropped = $false
+    foreach ($o in @($Parsed.Options)) {
+        if ($o.Flag -ceq 'l') { if ($null -eq $user) { $user = $o.Value } }
+        elseif ($o.Flag -ceq 'p') { if ($null -eq $port) { $port = $o.Value } }
+        else { $dropped = $true }
+    }
+    $target = $Parsed.Destination
+    if ($null -ne $user -and -not $target.Contains('@') -and -not $target.StartsWith('ssh://')) { $target = $user + '@' + $target }
+    if ($null -ne $port) { $target = '-p ' + $port + ' ' + $target }
+    return @{ Target = $target; Dropped = $dropped }
+}
+
+function Get-KeySetupLines {
+    # The commands that set up a key for HostArgs ([-p PORT] [USER@]HOST). Windows has no
+    # ssh-copy-id, and its ssh-agent is off unless an administrator turns it on, so the key
+    # needs no passphrase. (keySetupLines in src/ssh-paste.js is the macOS twin.)
+    param([string]$HostArgs)
+    return @(
+        '  Set up a key (once; ssh asks your password one last time):',
+        '    ssh-keygen -t ed25519',
+        ('    Get-Content $HOME\.ssh\id_ed25519.pub | ssh ' + $HostArgs + ' "' + $script:KeyInstallCommand + '"'),
+        ('    ssh-paste --doctor ' + $HostArgs),
+        '  ssh-keygen: press Enter at each question (no passphrase: Windows'' ssh-agent is off',
+        '  unless an administrator turns it on); if the key file exists already, answer n.')
 }
 
 function Get-ReplyPathPattern {
@@ -1371,7 +1484,7 @@ function New-Watcher {
         Keep = $keep; KeepMinutes = $minutes; Class = (Get-KeepClass $keep); Dir = $dir; CacheHours = (Get-UploadCacheHours $minutes)
         Matcher = (Get-HostMatcher); Token = [BitConverter]::ToInt64($tokenBytes, 0)
         LastSeq = [long]-1; LastForeground = [long]0; State = $null; WakeAt = [DateTime]::MaxValue
-        Uploaded = @{}; Failed = @{}
+        Uploaded = @{}; Failed = @{}; Blocked = $null
     }
 }
 
@@ -1428,6 +1541,7 @@ function Get-ExpectedText {
 
 function Test-UploadFailing {
     param($W, $State)
+    if (Get-WatcherValue $W 'Blocked' $null) { return $true }
     foreach ($item in (Get-StateItems $State)) { if ($W.Failed.ContainsKey($item.Hash)) { return $true } }
     return $false
 }
@@ -1460,6 +1574,8 @@ function Get-UploadedItemPath {
     # hours so the server's day-old cleanup never removes a path we paste.
     # Moves $W.WakeAt earlier so the watcher comes back for a retry or refresh.
     param($W, $Item)
+    # After a failure that trying again cannot fix, this session uploads nothing more.
+    if (Get-WatcherValue $W 'Blocked' $null) { return $null }
     $now = [DateTime]::UtcNow
     $done = $W.Uploaded[$Item.Hash]
     $cacheHours = Get-WatcherValue $W 'CacheHours' $script:UploadCacheHours
@@ -1499,6 +1615,11 @@ function Get-UploadedItemPath {
         if ($null -ne $failed) { $count = $failed.Count + 1 }
         $W.Failed[$Item.Hash] = @{ Message = $_.Exception.Message; At = [DateTime]::UtcNow; Count = $count }
         Write-WatchDebug ('upload failed ({0}x, {1} bytes): {2}' -f $count, $Item.Bytes.Length, $_.Exception.Message)
+        $failure = Get-SshFailure $_.Exception.Message
+        if (Test-FailureFinal $failure) {
+            $W.Blocked = Get-LoginAdvice $failure $W.Parsed.Destination
+            Write-WatchDebug ('no more uploads in this session: ' + $W.Blocked)
+        }
         Set-WakeAt $W ([DateTime]::UtcNow.AddSeconds([Math]::Min(1800, $script:RetryFailedSeconds * [Math]::Pow(2, $count - 1))))
         if ($count -eq 1) { try { [System.Media.SystemSounds]::Hand.Play() } catch { } }
         return $null
@@ -1614,7 +1735,13 @@ function Restore-Clipboard {
 function Get-FailureSummary {
     param($W)
     if ($null -eq $W -or $W.Failed.Count -eq 0) { return $null }
+    if (Get-WatcherValue $W 'Blocked' $null) { return ('ssh-paste: screenshot paste was off for this session: ' + $W.Blocked) }
     $last = @($W.Failed.Values | Sort-Object { $_.At })[-1]
+    $parsed = Get-WatcherValue $W 'Parsed' $null
+    $destination = ''
+    if ($null -ne $parsed) { $destination = $parsed.Destination }
+    $advice = Get-LoginAdvice (Get-SshFailure $last.Message) $destination
+    if ($advice) { return ('ssh-paste: {0} screenshot upload(s) failed: {1}' -f $W.Failed.Count, $advice) }
     return ('ssh-paste: {0} screenshot upload(s) failed: {1}' -f $W.Failed.Count, $last.Message)
 }
 
@@ -1939,7 +2066,9 @@ function Invoke-Enable {
     # a host that is already enabled keeps the settings that are not given.
     param([string[]]$Arguments)
     $settings = Read-PasteSettings $Arguments
-    $hosts = @($settings.Rest)
+    # Each host once, in order; aliases are case-sensitive, as in ssh.
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $hosts = @(@($settings.Rest) | Where-Object { $seen.Add([string]$_) })
     if ($hosts.Count -eq 0) { throw 'usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]' }
     $configPath = Get-SshConfigPath
     $text = Read-TextFile $configPath
@@ -1952,6 +2081,8 @@ function Invoke-Enable {
     }
     $added = @()
     $changed = @()
+    $logins = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+    $ssh = $null
     foreach ($h in $hosts) {
         if (-not (Test-HostAlias $h)) { throw "use a host name or a Host alias from ~/.ssh/config (no user@, no options): $h" }
         if (-not $want.Contains($h)) {
@@ -1969,6 +2100,10 @@ function Invoke-Enable {
             $want[$h] = @{ Keep = $script:DefaultKeep; Dir = $script:DefaultDir }
             $added += $h
         }
+        # Check once, as an upload would log in, so a host that asks for a password is known
+        # now and not at the first paste; the same connection reads the home folder for ~.
+        if ($null -eq $ssh) { $ssh = Get-SshPath; $sshVersion = Get-SshVersion $ssh }
+        if (-not $logins.ContainsKey($h)) { $logins[$h] = Test-ServerLogin $ssh (Split-SshArguments @($h)) $sshVersion -NoProxy }
         $old = $want[$h]
         $new = @{ Keep = $old.Keep; Dir = $old.Dir }
         if ($null -ne $settings.Keep) { $new.Keep = $settings.Keep }
@@ -1977,9 +2112,8 @@ function Invoke-Enable {
             # absolute path and the path to paste is known before an upload.
             $new.Dir = $settings.Dir
             if ($new.Dir.StartsWith('~')) {
-                $ssh = Get-SshPath
-                $serverHome = Get-ServerHome $ssh (Split-SshArguments @($h)) (Get-SshVersion $ssh)
-                $new.Dir = ConvertTo-AbsoluteDirectory $settings.Dir $serverHome
+                if ($null -eq $logins[$h].Home) { throw (Get-HomeError $h $logins[$h].Error) }
+                $new.Dir = ConvertTo-AbsoluteDirectory $settings.Dir $logins[$h].Home
                 Write-Info ('{0}: {1} is {2} there' -f $h, $settings.Dir, $new.Dir)
             }
         }
@@ -1995,7 +2129,11 @@ function Invoke-Enable {
     } else {
         Write-Info 'Already enabled with these settings; nothing changed.' 'Gray'
     }
-    foreach ($h in $hosts) { Write-Info ('{0}: {1}' -f $h, (Format-PasteSettings $want[$h])) }
+    foreach ($h in $hosts) {
+        Write-Info ('{0}: {1}' -f $h, (Format-PasteSettings $want[$h]))
+        if ($null -eq $logins[$h].Home) { Write-Info (Get-LoginReport $h $logins[$h].Error) 'Yellow' }
+        else { Write-Info (Get-LoginReport $h $null) 'Green' }
+    }
     Write-Info ("This block is at the top of {0}:" -f $configPath)
     Write-Info ''
     foreach ($line in (Set-ManagedBlock '' -Groups $groups -CreatedFile:$createdFile).TrimEnd() -split "`r?`n") { Write-Info ('    ' + $line) 'Cyan' }
@@ -2089,9 +2227,19 @@ function Invoke-Doctor {
     } catch {
         Report $false ('upload to {0}: {1}' -f $parsed.Destination, $_.Exception.Message)
         Write-Host ''
-        Write-Host 'Uploads use a second, non-interactive ssh connection, so the server must'
-        Write-Host 'accept your key without a prompt: a key without a passphrase, or a key loaded'
-        Write-Host 'in ssh-agent (Get-Service ssh-agent; ssh-add). Password-only logins cannot work.'
+        $failure = Get-SshFailure $_.Exception.Message
+        $advice = Get-LoginAdvice $failure $parsed.Destination
+        if ($advice) { Write-Host $advice }
+        if ($null -ne $failure -and $failure.Kind -ceq 'auth' -and $failure.KeyLogin) {
+            Write-Host ''
+            $setup = Get-KeySetupTarget $parsed
+            foreach ($line in (Get-KeySetupLines $setup.Target)) { Write-Host $line }
+            if ($setup.Dropped) { Write-Host '  Add the other ssh options this host needs to the ssh line.' }
+        } elseif (-not $advice) {
+            Write-Host 'Uploads use a second, non-interactive ssh connection, so the server must'
+            Write-Host 'accept your key without a prompt: a key without a passphrase, or a key loaded'
+            Write-Host 'in ssh-agent (Get-Service ssh-agent; ssh-add). Password-only logins cannot work.'
+        }
         return 1
     }
     if ($null -ne $sshMode) {

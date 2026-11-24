@@ -169,6 +169,32 @@ test('paste settings (--keep, --dir), the tables of tests/cases.json and the blo
         }
         assert.equal(m.sshModeSettings(null), null);
     });
+    await t.test('reads what an ssh error says, and whether trying again can help (Get-SshFailure)', () => {
+        for (const c of cases.sshFailures) {
+            const f = m.sshFailure(c.Text);
+            if (c.Kind === null) assert.equal(f, null, c.Name);
+            else assert.equal(f.kind, c.Kind, c.Name);
+            if (c.Methods) { assert.deepEqual(f.methods, c.Methods, c.Name); assert.equal(f.keyLogin, c.KeyLogin, c.Name); assert.equal(f.typed, c.Typed, c.Name); }
+            assert.equal(m.failureFinal(f), c.Final, c.Name);
+        }
+    });
+    await t.test('gives the key setup commands [-p PORT] [USER@]HOST from the --doctor arguments (Get-KeySetupTarget)', () => {
+        for (const c of cases.keySetupTargets) assert.deepEqual(m.keySetupTarget(m.splitSshArguments(c.SshArgs)), { Target: c.Target, Dropped: c.Dropped }, c.Name);
+    });
+    await t.test('says whether uploads to a host log in, and what to do (Get-LoginReport)', () => {
+        for (const c of cases.loginReports) assert.equal(m.loginReport(c.HostName, c.Said), c.Expected, c.Name);
+    });
+    await t.test('prints the commands that set up a key on macOS, as the READMEs show them', () => {
+        const lines = m.keySetupLines('-p 2222 build');
+        assert.ok(lines.includes('    ssh-keygen -t ed25519'));
+        assert.ok(lines.includes('    ssh-copy-id -p 2222 build'));
+        assert.ok(lines.includes('    ssh-paste --doctor -p 2222 build'));
+        for (const readme of ['README.md', 'README.zh-CN.md']) {
+            const text = fs.readFileSync(path.join(__dirname, '..', '..', readme), 'utf8');
+            assert.ok(text.includes('ssh-copy-id myhost'), readme + ' shows ssh-copy-id');
+            assert.ok(text.includes('ssh-add --apple-use-keychain ~/.ssh/id_ed25519'), readme + ' shows ssh-add');
+        }
+    });
     await t.test('says what --disable removed, or that the host was not enabled (Get-DisableMessage)', () => {
         for (const c of cases.disableMessages) assert.equal(m.disableMessage(c.Managed, c.Asked), c.Expected, c.Name);
     });
@@ -611,7 +637,7 @@ function newWorld() {
         },
         finishUpload: (h) => {
             if (w.hold) return undefined;
-            if (h.fail) return { error: 'ssh exited with 255: Permission denied (publickey).' };
+            if (h.fail) return { error: w.failText || 'ssh exited with 255: Permission denied (publickey).' };
             return { path: (w.prefix[h.ssh] || '/tmp') + '/ssh-paste-' + h.hash + '.png' };
         },
         beep: () => { w.beeps++; },
@@ -906,6 +932,37 @@ test('the watcher: one watcher, one terminal window', async (t) => {
         w.ticks(W, 5);
         assert.equal(w.uploads.length, 2);
     });
+    await t.test('uploads nothing more in the session after a server that takes no key refused it, and says why', () => {
+        const w = newWorld(), W = w.watcher(TerminalA);
+        w.focus(TerminalA);
+        w.failNext = 5;
+        w.failText = 'ssh exited with 255: alice@h: Permission denied (password,keyboard-interactive).';
+        w.copy(fakePng(1));
+        w.ticks(W, 4);
+        assert.equal(w.uploads.length, 1);
+        assert.equal(W.Blocked, 'alice@h wants a password or a one-time code (password,keyboard-interactive), which uploads cannot type, so ssh-paste cannot upload to it');
+        const writes = w.writes.length;
+        w.copy(fakePng(2));
+        w.clock += 3600000;
+        w.ticks(W, 4);
+        assert.equal(w.uploads.length, 1, 'no upload of the new image');
+        assert.equal(w.writes.length, writes, 'no path promised for it');
+        assert.equal(m.failureSummary(W), 'ssh-paste: screenshot paste was off for this session: ' + W.Blocked);
+    });
+    await t.test('tries again after the backoff when the server takes keys (the user may load one with ssh-add)', () => {
+        const w = newWorld(), W = w.watcher(TerminalA);
+        w.focus(TerminalA);
+        w.failNext = 1;
+        w.failText = 'ssh exited with 255: alice@h: Permission denied (publickey,password).';
+        w.copy(fakePng(1));
+        w.ticks(W, 4);
+        assert.equal(w.uploads.length, 1);
+        assert.equal(W.Blocked, null);
+        w.clock += 31000;
+        w.ticks(W, 4);
+        assert.equal(w.uploads.length, 2, 'the retry ran');
+        assert.equal(w.entry.Text, pathFor(fakePng(1)));
+    });
     await t.test('uploads each file of a batch once, even when the batch outlasts the cache (--keep 30m)', () => {
         const w = newWorld(), png = fakePng(1), W = w.watcher(TerminalA);
         W.CacheHours = m.uploadCacheHours(30);   // 15 minutes
@@ -1041,7 +1098,7 @@ test('the watcher: a failing upload', async (t) => {
         w.copy(fakePng(1));
         w.failNext = 1;
         w.ticks(W, 1);
-        assert.match(m.failureSummary(W), /1 screenshot upload\(s\) failed: ssh exited with 255: Permission denied/);
+        assert.match(m.failureSummary(W), /1 screenshot upload\(s\) failed: alice@h did not accept a key for uploads/);
         w.copy(fakePng(2));
         w.ticks(W, 2);
         assert.equal(w.uploads.length, 2);

@@ -251,5 +251,34 @@
     {"Name":"a look-alike option","Line":"/opt/ssh-paste-fork/relay --proxyjump %h %p","Keep":null,"Dir":null},
     {"Name":"Windows, both settings","Line":"C:\\W\\powershell.exe -File \"C:\\x\\ssh-paste.ps1\" --proxy %h %p %n --keep 7d --dir /data/x","Keep":"7d","Dir":"/data/x"},
     {"Name":"macOS, the defaults","Line":"'/Users/x/.local/share/ssh-paste/bin/ssh-paste' --proxy '%h' %p '%n'","Keep":"1d","Dir":"/tmp"}
+  ],
+  "sshFailures": [
+    {"Name":"no key, the server takes keys too","Text":"ssh exited with 255: xu@build: Permission denied (publickey,password).","Kind":"auth","Methods":["publickey","password"],"KeyLogin":true,"Typed":false,"Final":false},
+    {"Name":"a password or a code only","Text":"ssh exited with 255: xu@hpc: Permission denied (password,keyboard-interactive).","Kind":"auth","Methods":["password","keyboard-interactive"],"KeyLogin":false,"Typed":true,"Final":true},
+    {"Name":"the key passed, a code is still due (AuthenticationMethods)","Text":"xu@hpc: Permission denied (keyboard-interactive).","Kind":"auth","Methods":["keyboard-interactive"],"KeyLogin":false,"Typed":true,"Final":true},
+    {"Name":"Kerberos, whose ticket may be renewed","Text":"xu@lab: Permission denied (gssapi-with-mic,password).","Kind":"auth","Methods":["gssapi-with-mic","password"],"KeyLogin":false,"Typed":false,"Final":false},
+    {"Name":"a command on the server, not ssh","Text":"ssh exited with 1: mkdir: Permission denied (read-only snapshot)","Kind":null,"Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
+    {"Name":"too many keys offered","Text":"Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures","Kind":"toomany","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
+    {"Name":"host key not verified","Text":"No ED25519 host key is known for build and you have requested strict checking.\r\nHost key verification failed.","Kind":"hostkey","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
+    {"Name":"name does not resolve","Text":"ssh: Could not resolve hostname nope: Name or service not known","Kind":"network","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
+    {"Name":"connection refused","Text":"ssh: connect to host 10.0.0.5 port 22: Connection refused","Kind":"network","Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
+    {"Name":"a timeout of ours","Text":"ssh did not finish in 30 seconds; ssh said: ","Kind":null,"Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
+    {"Name":"the server's own word","Text":"the server received 120 of 400 bytes","Kind":null,"Methods":null,"KeyLogin":null,"Typed":null,"Final":false},
+    {"Name":"nothing","Text":"","Kind":null,"Methods":null,"KeyLogin":null,"Typed":null,"Final":false}
+  ],
+  "loginReports": [
+    {"Name":"logged in","HostName":"build","Said":null,"Expected":"build: uploads log in without a password"},
+    {"Name":"a key would do","HostName":"build","Said":"xu@build: Permission denied (publickey,password).","Expected":"build did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor build shows how"},
+    {"Name":"a password or a code only","HostName":"hpc","Said":"xu@hpc: Permission denied (password,keyboard-interactive).","Expected":"hpc wants a password or a one-time code (password,keyboard-interactive), which uploads cannot type, so ssh-paste cannot upload to it"},
+    {"Name":"too many keys offered","HostName":"lab","Said":"Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures","Expected":"lab closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config"},
+    {"Name":"host key not verified","HostName":"new","Said":"Host key verification failed.","Expected":"ssh could not verify the host key of new: run ssh new to see why (a new host asks you to accept its key)"},
+    {"Name":"cannot reach it","HostName":"lab","Said":"ssh: connect to host lab port 22: Connection timed out\nmore","Expected":"could not check the login to lab now (ssh: connect to host lab port 22: Connection timed out); ssh-paste --doctor lab tests it"},
+    {"Name":"no answer in time","HostName":"lab","Said":"ssh did not finish in 30 seconds","Expected":"could not check the login to lab now (ssh did not finish in 30 seconds); ssh-paste --doctor lab tests it"}
+  ],
+  "keySetupTargets": [
+    {"Name":"an alias","SshArgs":["build"],"Target":"build","Dropped":false},
+    {"Name":"user and port","SshArgs":["-l","alice","-p","2222","build"],"Target":"-p 2222 alice@build","Dropped":false},
+    {"Name":"user@host wins over -l","SshArgs":["-l","alice","bob@build"],"Target":"bob@build","Dropped":false},
+    {"Name":"other options are left out","SshArgs":["-F","/x y/cfg","-n","build"],"Target":"build","Dropped":true}
   ]
 }
