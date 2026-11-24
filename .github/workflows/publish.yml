@@ -14,9 +14,11 @@ name: Publish
 #            install.ps1 and install.sh, write SHA256SUMS and the release notes
 #   attest   sign a build provenance attestation for the seven files
 #   release  publish-release.sh: draft, download and check it, only then publish it
-#   homebrew make the formula in the tap xuing/homebrew-tap the one homebrew-formula.sh writes
-#            for the Latest release, also when this commit released nothing
-#   homebrew-check  when the formula changed, on a Mac: brew install xuing/tap/ssh-paste, brew test
+#   homebrew, scoop  make the Homebrew formula (tap xuing/homebrew-tap) and the Scoop manifest
+#            (bucket xuing/scoop-bucket) the ones homebrew-formula.sh and scoop-manifest.sh
+#            write for the Latest release, also when this commit released nothing
+#   homebrew-check  once the tap is current, on a Mac: brew install xuing/tap/ssh-paste, brew test
+#   scoop-check     once the bucket is current, on Windows: scoop install xuing/ssh-paste
 # The install.ps1 and install.sh attached to the release have their default ref set to the
 # tag, so
 #   irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
@@ -32,9 +34,12 @@ on:
         required: true
         type: string
     secrets:
-      # A secret of the environment homebrew-tap, which only main can use. The caller must
-      # still pass it by name: one that is not passed reads as an empty string here.
+      # Secrets of the environments homebrew-tap and scoop-bucket, which only main can use.
+      # The caller must still pass them by name: one that is not passed reads as an empty
+      # string here.
       HOMEBREW_TAP_DEPLOY_KEY:
+        required: true
+      SCOOP_BUCKET_DEPLOY_KEY:
         required: true
 
 permissions:
@@ -205,74 +210,96 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/publish-release.sh "$TAG" out/dist out/notes.md
 
-  # brew install xuing/tap/ssh-paste installs the Latest release's own files: the formula points
-  # at its ssh-paste.js and ssh-paste-mac and checks them against its attested SHA256SUMS. It runs
-  # after every release run, so a fix to the formula reaches the tap without a new release. The
-  # deploy key, which can write to the tap and nothing else, is a secret of the environment
-  # homebrew-tap, which only main can use.
+  # brew install xuing/tap/ssh-paste and scoop install xuing/ssh-paste install the Latest
+  # release's own files: the formula and the manifest point at them and check them against its
+  # attested SHA256SUMS (.github/scripts/sync-package.sh). These jobs run after every release
+  # run, also when nothing was released, so a fix to the formula or the manifest reaches users
+  # without a new release; they do nothing when a build or attestation failed. Each repository
+  # is written with its own deploy key, which can write to it and nothing else, a secret of an
+  # environment that only main can use. An upstream tap or bucket is updated by the release, as
+  # GoReleaser does; the manifest still has checkver and autoupdate, Scoop's standard way to
+  # find a release.
   homebrew:
     name: Sync the Homebrew tap
     needs: [plan, release]
-    if: always() && needs.plan.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped')
+    if: always() && needs.plan.result == 'success' && (needs.release.result == 'success' || (needs.release.result == 'skipped' && needs.plan.outputs.tag == ''))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: homebrew-tap
     permissions:
       contents: read
     outputs:
-      version: ${{ steps.formula.outputs.version }}
-      changed: ${{ steps.formula.outputs.changed }}
+      version: ${{ steps.sync.outputs.version }}
+      synced: ${{ steps.sync.outputs.synced }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.sha }}
           persist-credentials: false
 
-      # Without the key, checkout falls back to github.token, which cannot push to the tap.
-      - name: The deploy key of the tap is set
+      # Without the key, checkout falls back to github.token, which cannot push there.
+      - name: The deploy key is set
         env:
           KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-        run: '[ -n "$KEY" ] || { echo "::error::HOMEBREW_TAP_DEPLOY_KEY is empty: is it passed by name in ci.yml and set in the environment homebrew-tap?"; exit 1; }'
+        run: '[ -n "$KEY" ] || { echo "::error::HOMEBREW_TAP_DEPLOY_KEY is empty: is it named in ci.yml and set in the environment homebrew-tap?"; exit 1; }'
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: xuing/homebrew-tap
-          path: tap
+          path: target
           ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           persist-credentials: true
 
-      - name: Write the formula of the Latest release and push it if it changed
-        id: formula
+      - name: Write Formula/ssh-paste.rb for the Latest release and push it if it changed
+        id: sync
         env:
           SHA: ${{ inputs.sha }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          . .github/scripts/lib.sh
-          echo "changed=false" >> "$GITHUB_OUTPUT"
-          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" -q .sha)
-          if [ "$head" != "$SHA" ]; then echo "main is at $head now; its own run syncs the tap"; exit 0; fi
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" -q .tag_name)
-          [[ "$latest" =~ $TAG_RE ]] || { echo "::error::the Latest release is $latest"; exit 1; }
-          echo "version=${latest#v}" >> "$GITHUB_OUTPUT"
-          gh release download "$latest" -p SHA256SUMS -D out
-          gh attestation verify out/SHA256SUMS --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish.yml"
-          mkdir -p tap/Formula
-          bash .github/scripts/homebrew-formula.sh "${latest#v}" "https://github.com/$GITHUB_REPOSITORY/releases/download/$latest" out/SHA256SUMS > tap/Formula/ssh-paste.rb
-          cat tap/Formula/ssh-paste.rb
-          cd tap
-          git add Formula/ssh-paste.rb
-          if git diff --cached --quiet; then echo "the tap already has this formula for $latest"; exit 0; fi
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -q -m "ssh-paste ${latest#v}" -m "Written by $GITHUB_REPOSITORY@$SHA"
-          git push origin HEAD
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/sync-package.sh homebrew-formula.sh Formula/ssh-paste.rb target
 
-  # What a user gets: brew install from the tap on GitHub, as a user runs it.
+  scoop:
+    name: Sync the Scoop bucket
+    needs: [plan, release]
+    if: always() && needs.plan.result == 'success' && (needs.release.result == 'success' || (needs.release.result == 'skipped' && needs.plan.outputs.tag == ''))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: scoop-bucket
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.sync.outputs.version }}
+      synced: ${{ steps.sync.outputs.synced }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      # Without the key, checkout falls back to github.token, which cannot push there.
+      - name: The deploy key is set
+        env:
+          KEY: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
+        run: '[ -n "$KEY" ] || { echo "::error::SCOOP_BUCKET_DEPLOY_KEY is empty: is it named in ci.yml and set in the environment scoop-bucket?"; exit 1; }'
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: xuing/scoop-bucket
+          path: target
+          ssh-key: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
+          persist-credentials: true
+
+      - name: Write bucket/ssh-paste.json for the Latest release and push it if it changed
+        id: sync
+        env:
+          SHA: ${{ inputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/sync-package.sh scoop-manifest.sh bucket/ssh-paste.json target
+
+  # What users get: brew install and scoop install from GitHub, as users run them.
   homebrew-check:
     name: Install from the Homebrew tap
     needs: homebrew
-    if: always() && needs.homebrew.outputs.changed == 'true'
+    if: always() && needs.homebrew.outputs.synced == 'true'
     runs-on: macos-latest
     timeout-minutes: 15
     permissions: {}
@@ -288,3 +315,30 @@ jobs:
           echo "ssh-paste --version: $got; the tap should have $VERSION"
           [ "$got" = "$VERSION" ] || { echo "::error::brew installed $got, not $VERSION"; exit 1; }
           brew test xuing/tap/ssh-paste
+
+  scoop-check:
+    name: Install from the Scoop bucket
+    needs: scoop
+    if: always() && needs.scoop.outputs.synced == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions: {}
+    env:
+      VERSION: ${{ needs.scoop.outputs.version }}
+    steps:
+      # Scoop runs in PowerShell; the step itself is bash, like every step of this workflow.
+      - name: scoop install xuing/ssh-paste
+        run: |
+          tmp=$(cygpath -u "$RUNNER_TEMP")
+          cat > "$tmp/scoop-check.ps1" << 'EOF'
+          $installer = Join-Path $env:RUNNER_TEMP 'install-scoop.ps1'
+          Invoke-WebRequest -UseBasicParsing -OutFile $installer -Uri 'https://raw.githubusercontent.com/ScoopInstaller/Install/1e2f334083d609986d8c8bc9e31ae8e87c39fab4/install.ps1'
+          & $installer -RunAsAdmin
+          $env:PATH = (Join-Path $env:USERPROFILE 'scoop\shims') + ';' + $env:PATH
+          scoop bucket add xuing https://github.com/xuing/scoop-bucket
+          scoop install xuing/ssh-paste
+          $got = (& ssh-paste --version) -join ''
+          Write-Host "ssh-paste --version: $got; the bucket should have $env:VERSION"
+          if ($got -ne $env:VERSION) { Write-Host "::error::scoop installed $got, not $env:VERSION"; exit 1 }
+          EOF
+          pwsh -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$tmp/scoop-check.ps1")"

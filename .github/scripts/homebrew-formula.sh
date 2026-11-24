@@ -10,24 +10,15 @@
 # reads the version from that URL, so the formula has no version line (brew audit calls one
 # redundant).
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 usage='usage: homebrew-formula.sh VERSION BASE_URL SHA256SUMS'
 version=${1:?$usage}
 base=${2:?$usage}
 sums=${3:?$usage}
-# Both go into Ruby strings; allow nothing that could end or interpolate one.
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version: $version" >&2; exit 1; }
-[[ "$base" =~ ^(https|file)://[A-Za-z0-9._/:-]+$ ]] || { echo "::error::bad base URL: $base" >&2; exit 1; }
-[[ "$base" == */v"$version" ]] || { echo "::error::$base does not end in /v$version" >&2; exit 1; }
-
-sum() {
-  local s
-  s=$(awk -v f="$1" '$2 == f || $2 == "*" f { print $1 }' "$sums")
-  [[ "$s" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::no single SHA-256 for $1 in $sums" >&2; exit 1; }
-  printf '%s' "$s"
-}
-js=$(sum ssh-paste.js)
-mac=$(sum ssh-paste-mac)
+check_package_args "$version" "$base"
+js=$(release_sha256 ssh-paste.js "$sums")
+mac=$(release_sha256 ssh-paste-mac "$sums")
 
 cat <<EOF
 # Written by .github/scripts/homebrew-formula.sh in xuing/ssh-please-paste-picture for

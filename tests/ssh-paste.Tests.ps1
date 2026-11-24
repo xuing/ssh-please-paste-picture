@@ -3999,6 +3999,58 @@ esac
         }
     }
 
+    Context 'homebrew-formula.sh and scoop-manifest.sh' {
+        BeforeAll {
+            $script:Rel = Join-Path $script:Root 'download/v0.1.7'
+            [void][System.IO.Directory]::CreateDirectory($script:Rel)
+            $script:Sums = Join-Path $script:Rel 'SHA256SUMS'
+            $script:Hex = @{}
+            $lines = foreach ($f in @('ssh-paste.ps1', 'ssh-paste.cmd', 'ssh-paste.js', 'ssh-paste-mac')) {
+                # Stand-in sums: the SHA-256 of each name, unique and well-formed.
+                $h = ([System.BitConverter]::ToString((New-Object System.Security.Cryptography.SHA256Managed).ComputeHash([System.Text.Encoding]::ASCII.GetBytes($f))) -replace '-', '').ToLowerInvariant()
+                $script:Hex[$f] = $h
+                $h + '  ' + $f
+            }
+            [System.IO.File]::WriteAllText($script:Sums, (($lines -join "`n") + "`n"))
+            $script:Base = 'https://github.com/xuing/ssh-please-paste-picture/releases/download/v0.1.7'
+        }
+
+        It 'writes a Scoop manifest with the release URLs, their sums, the shim and the uninstall hook' {
+            $r = Invoke-Process -FilePath $script:Bash -Arguments @((Join-Path $script:ScriptsDir 'scoop-manifest.sh'), '0.1.7', $script:Base, $script:Sums)
+            $r.ExitCode | Should -Be 0 -Because $r.Stderr
+            $m = $r.Stdout | ConvertFrom-Json
+            $m.version | Should -BeExactly '0.1.7'
+            @($m.url) | Should -Be @(($script:Base + '/ssh-paste.ps1'), ($script:Base + '/ssh-paste.cmd'))
+            @($m.hash) | Should -Be @($script:Hex['ssh-paste.ps1'], $script:Hex['ssh-paste.cmd'])
+            $m.bin | Should -BeExactly 'ssh-paste.cmd'
+            (@($m.uninstaller.script) -join "`n") | Should -Match ([regex]::Escape("if (`$cmd -eq 'uninstall')"))
+            (@($m.uninstaller.script) -join "`n") | Should -Match ([regex]::Escape('& "$dir\ssh-paste.cmd" --disable'))
+            @($m.autoupdate.url)[0] | Should -BeExactly 'https://github.com/xuing/ssh-please-paste-picture/releases/download/v$version/ssh-paste.ps1'
+            $m.autoupdate.hash.url | Should -BeExactly '$baseurl/SHA256SUMS'
+        }
+
+        It 'writes a Homebrew formula with the release URLs and their sums, and no version line' {
+            $r = Invoke-Process -FilePath $script:Bash -Arguments @((Join-Path $script:ScriptsDir 'homebrew-formula.sh'), '0.1.7', $script:Base, $script:Sums)
+            $r.ExitCode | Should -Be 0 -Because $r.Stderr
+            $r.Stdout | Should -Match ([regex]::Escape('url "' + $script:Base + '/ssh-paste.js"'))
+            $r.Stdout | Should -Match ([regex]::Escape('sha256 "' + $script:Hex['ssh-paste.js'] + '"'))
+            $r.Stdout | Should -Match ([regex]::Escape('sha256 "' + $script:Hex['ssh-paste-mac'] + '"'))
+            $r.Stdout | Should -Not -Match '(?m)^\s*version "'
+        }
+
+        It 'refuses a bad version, a URL that does not end in the version folder or could end a string, and a missing sum' {
+            foreach ($name in @('scoop-manifest.sh', 'homebrew-formula.sh')) {
+                $path = Join-Path $script:ScriptsDir $name
+                foreach ($bad in @(@('0.1.7"', $script:Base), @('0.1.8', $script:Base), @('0.1.7', ($script:Base -replace 'v0\.1\.7$', 'x"/v0.1.7')), @('0.1.7', 'http://example.com/v0.1.7'))) {
+                    (Invoke-Process -FilePath $script:Bash -Arguments @($path, $bad[0], $bad[1], $script:Sums)).ExitCode | Should -Not -Be 0 -Because ($name + ' ' + ($bad -join ' '))
+                }
+                $partial = Join-Path $script:Root 'partial-sums'
+                [System.IO.File]::WriteAllText($partial, ($script:Hex['ssh-paste.cmd'] + '  ssh-paste.cmd' + "`n"))
+                (Invoke-Process -FilePath $script:Bash -Arguments @($path, '0.1.7', $script:Base, $partial)).ExitCode | Should -Not -Be 0 -Because ($name + ' without all sums')
+            }
+        }
+    }
+
     Context 'plan-release.sh' {
         It 'releases v0.1.0 when nothing is published, and tags exactly the commit it was given' {
             $work = New-ScratchRepo
@@ -4329,6 +4381,90 @@ Describe 'Invoke-Main' {
         [Console]::SetError([System.IO.TextWriter]::Null)
         try { $code = Invoke-Main @('--proxy') } finally { [Console]::SetError($oldError) }
         $code | Should -Be 2
+    }
+}
+
+Describe 'Test-ScoopInstall' {
+    It 'is true only for a folder that holds scoop-install.json' {
+        $dir = Join-Path $script:SandboxRoot ('scoop-' + [guid]::NewGuid().ToString('N'))
+        [void][System.IO.Directory]::CreateDirectory($dir)
+        Test-ScoopInstall $dir | Should -BeFalse
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $dir 'scoop-install.json'))
+        Test-ScoopInstall $dir | Should -BeFalse
+        Remove-Item -LiteralPath (Join-Path $dir 'scoop-install.json')
+        [System.IO.File]::WriteAllText((Join-Path $dir 'scoop-install.json'), '{}')
+        Test-ScoopInstall $dir | Should -BeTrue
+        Test-ScoopInstall '' | Should -BeFalse
+    }
+
+    It 'also knows install.json, which Scoop wrote before 0.6' {
+        $dir = Join-Path $script:SandboxRoot ('scoop-' + [guid]::NewGuid().ToString('N'))
+        [void][System.IO.Directory]::CreateDirectory($dir)
+        [System.IO.File]::WriteAllText((Join-Path $dir 'install.json'), '{}')
+        Test-ScoopInstall $dir | Should -BeTrue
+    }
+}
+
+Describe 'Get-ProxyScriptPath' {
+    BeforeEach {
+        $script:App = Join-Path $script:SandboxRoot ('apps-' + [guid]::NewGuid().ToString('N') + '/ssh-paste')
+        $script:VersionDir = Join-Path $script:App '0.1.0'
+        [void][System.IO.Directory]::CreateDirectory($script:VersionDir)
+        [System.IO.File]::WriteAllText((Join-Path $script:VersionDir 'ssh-paste.ps1'), '#')
+        [System.IO.File]::WriteAllText((Join-Path $script:VersionDir 'scoop-install.json'), '{}')
+    }
+
+    It 'keeps the path of an install that Scoop did not make' {
+        $p = Join-Path $script:SandboxRoot 'Programs/ssh-paste/ssh-paste.ps1'
+        Get-ProxyScriptPath $p | Should -BeExactly $p
+    }
+
+    It 'gives the current path of a Scoop install, also when called from a version folder' {
+        $current = Join-Path $script:App 'current'
+        [void][System.IO.Directory]::CreateDirectory($current)
+        [System.IO.File]::WriteAllText((Join-Path $current 'ssh-paste.ps1'), '#')
+        [System.IO.File]::WriteAllText((Join-Path $current 'scoop-install.json'), '{}')
+        $want = Join-Path $current 'ssh-paste.ps1'
+        Get-ProxyScriptPath (Join-Path $script:VersionDir 'ssh-paste.ps1') | Should -BeExactly $want
+        Get-ProxyScriptPath $want | Should -BeExactly $want
+    }
+
+    It 'refuses a Scoop install without the current junction (no_junction)' {
+        { Get-ProxyScriptPath (Join-Path $script:VersionDir 'ssh-paste.ps1') } | Should -Throw '*no_junction*wrapper mode*'
+    }
+}
+
+Describe 'Invoke-Main under Scoop' {
+    BeforeEach {
+        Mock Invoke-Update { return 0 }
+        Mock Invoke-Uninstall { return 0 }
+        $script:OldError = [Console]::Error
+        $script:Err = New-Object System.IO.StringWriter
+        [Console]::SetError($script:Err)
+    }
+    AfterEach { [Console]::SetError($script:OldError) }
+
+    It 'leaves --update to scoop update' {
+        Mock Test-ScoopInstall { return $true }
+        Invoke-Main @('--update') | Should -Be 1
+        $script:Err.ToString() | Should -Match 'scoop update ssh-paste'
+        Should -Invoke Invoke-Update -Times 0 -Exactly
+    }
+
+    It 'leaves --uninstall to scoop uninstall' {
+        Mock Test-ScoopInstall { return $true }
+        Invoke-Main @('--uninstall') | Should -Be 1
+        $script:Err.ToString() | Should -Match 'scoop uninstall ssh-paste'
+        Should -Invoke Invoke-Uninstall -Times 0 -Exactly
+    }
+
+    It 'still updates and uninstalls an install that Scoop did not make' {
+        Mock Test-ScoopInstall { return $false }
+        Invoke-Main @('--update') | Should -Be 0
+        Invoke-Main @('--uninstall') | Should -Be 0
+        Should -Invoke Invoke-Update -Times 1 -Exactly
+        Should -Invoke Invoke-Uninstall -Times 1 -Exactly
+        Should -Invoke Test-ScoopInstall -Times 2 -Exactly
     }
 }
 

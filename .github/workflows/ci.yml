@@ -11,7 +11,7 @@ name: CI
 # The checks are scripts in the repository, so a person can run what CI runs:
 #   ./check.ps1 [-E2E] [-Footprint]
 # lint -> tests/lint.ps1, unit -> tests/run-pester.ps1, e2e -> tests/e2e-linux.sh,
-# footprint -> tests/footprint.ps1, proxy-windows -> tests/proxy-windows.ps1,
+# footprint -> tests/footprint.ps1, proxy-windows -> tests/proxy-windows.ps1, scoop -> tests/scoop.ps1,
 # mac-logic -> tests/mac/unit.test.js, macos -> tests/mac/*.sh (on a Mac).
 #
 # "CI ok" is the one job to require in branch protection (Settings > Branches): it
@@ -197,6 +197,30 @@ jobs:
           & ./tests/proxy-windows.ps1 -TimeoutSeconds 30
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  # The Scoop manifest of .github/scripts/scoop-manifest.sh, installed with the real Scoop from
+  # a local copy of release files: install, --enable, scoop update, scoop uninstall.
+  scoop:
+    name: Scoop (${{ matrix.shell }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run tests/scoop.ps1
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          & ./tests/scoop.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   # The TLA+ model of the clipboard watcher (verify/watcher): TLC checks every order of the
   # user, two sessions, a paste and the Windows clipboard within small bounds, and that each
   # broken variant of the code is still caught. The runner's own Java runs TLC; check.sh
@@ -320,7 +344,7 @@ jobs:
   ci-ok:
     name: CI ok
     if: always()
-    needs: [lint, unit, e2e, footprint, proxy-windows, model, mac-logic, macos]
+    needs: [lint, unit, e2e, footprint, proxy-windows, scoop, model, mac-logic, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -343,6 +367,7 @@ jobs:
       sha: ${{ github.sha }}
     secrets:
       HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+      SCOOP_BUCKET_DEPLOY_KEY: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
     permissions:
       contents: write
       id-token: write
