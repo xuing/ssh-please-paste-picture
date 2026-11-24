@@ -26,6 +26,9 @@
 # A shell script with CRLF fails with "bad interpreter" or "command not found\r", so a
 # Windows checkout must not convert tests/e2e-linux.sh.
 *.sh   text eol=lf
+# The translations: tests/lint.ps1 checks they are UTF-8 without BOM or CR on every
+# platform, so a Windows checkout must not turn their line endings into CRLF.
+src/locale/*.json text eol=lf
 
 # --- Binary files: never touched ----------------------------------------------------------
 # Without these, text=auto could guess wrong and rewrite image bytes.

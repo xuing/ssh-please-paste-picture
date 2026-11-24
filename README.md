@@ -235,6 +235,7 @@ The same commands, with Cmd+V. A zsh launcher (`ssh-paste-mac`) and a JavaScript
 
 - **Other terminals:** the classic console works; WezTerm and Alacritty are best effort (`ssh-paste --doctor` prints `terminal: ...`).
 - **Other CLIs:** Codex CLI, Gemini CLI and aider get the PNG path too; whether they attach it depends on the program (Claude Code does).
+- **Language:** messages are in English or Simplified Chinese, chosen as git chooses: `SSH_PASTE_LANG`, then `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`, then the system's display language. `SSH_PASTE_LANG=en` keeps English; `C` or `POSIX` also mean English. On Windows, a console whose code page cannot show the language gets English. The installers and a few messages of the macOS launcher stay English. Translations live in `src/locale/` (one JSON file per language, English text to translation).
 - **Another `ssh`:** set `SSH_PASTE_SSH` to its full path for wrapper mode, `--enable` and `--doctor` (Windows ssh mode uploads use the `ssh.exe` that started the relay).
 
 <details>

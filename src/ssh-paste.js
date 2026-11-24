@@ -113,13 +113,13 @@ function splitSshArguments(argv) {
                         value = token.substring(j + 1);
                     } else {
                         i++;
-                        if (i >= argv.length) throw new Error('ssh option -' + letter + ' needs an argument');
+                        if (i >= argv.length) throw new Error(tr('ssh option -{0} needs an argument', letter));
                         value = String(argv[i]);
                     }
                     options.push({ Flag: letter, Value: value, After: after });
                     j = token.length;
                 } else {
-                    throw new Error('unknown ssh option -' + letter);
+                    throw new Error(tr('unknown ssh option -{0}', letter));
                 }
             }
             i++;
@@ -216,12 +216,12 @@ function uploadSshArguments(parsed, hash, size, opts) {
     // serverSshArguments, then the upload command.
     opts = opts || {};
     var ext = opts.ext || 'png';
-    if (!/^[0-9a-f]{32}$/.test(String(hash))) throw new Error('bad image hash: ' + hash);
-    if (IMAGE_EXTENSIONS.indexOf(ext) < 0) throw new Error('bad image extension: ' + ext);
+    if (!/^[0-9a-f]{32}$/.test(String(hash))) throw new Error(tr('bad image hash: {0}', hash));
+    if (IMAGE_EXTENSIONS.indexOf(ext) < 0) throw new Error(tr('bad image extension: {0}', ext));
     var keep = opts.keep || DEFAULT_KEEP;
     var keepMinutes = keepMinutesOf(keep);
     var folder = opts.dir || DEFAULT_DIR;
-    if (!testServerDirectory(folder) || folder.charAt(0) === '~') throw new Error('bad --dir: ' + folder);
+    if (!testServerDirectory(folder) || folder.charAt(0) === '~') throw new Error(tr('bad --dir: {0}', folder));
     var argv = serverSshArguments(parsed, opts);
     argv.push(uploadCommand(hash, size, ext, keep, keepMinutes, folder));
     return argv;
@@ -244,7 +244,7 @@ function uploadCommand(hash, size, ext, keep, keepMinutes, folder) {
 var MUX_HOST = 'ssh-paste-mux';
 
 function muxSshArguments(socket) {
-    if (!/^\/[A-Za-z0-9._\/-]+$/.test(String(socket))) throw new Error('bad control socket: ' + socket);
+    if (!/^\/[A-Za-z0-9._\/-]+$/.test(String(socket))) throw new Error(tr('bad control socket: {0}', socket));
     return ['-F', 'none', '-T', '-x', '-o', 'BatchMode=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=' + socket,
         '-o', 'ProxyCommand=/usr/bin/false', '-o', 'RequestTTY=no', '-o', 'ForwardAgent=no', '-o', 'ClearAllForwardings=yes',
         '-o', 'LogLevel=ERROR', MUX_HOST];
@@ -254,11 +254,11 @@ function muxUploadArguments(socket, hash, size, opts) {
     // uploadSshArguments for an upload through the session's own connection.
     opts = opts || {};
     var ext = opts.ext || 'png';
-    if (!/^[0-9a-f]{32}$/.test(String(hash))) throw new Error('bad image hash: ' + hash);
-    if (IMAGE_EXTENSIONS.indexOf(ext) < 0) throw new Error('bad image extension: ' + ext);
+    if (!/^[0-9a-f]{32}$/.test(String(hash))) throw new Error(tr('bad image hash: {0}', hash));
+    if (IMAGE_EXTENSIONS.indexOf(ext) < 0) throw new Error(tr('bad image extension: {0}', ext));
     var keep = opts.keep || DEFAULT_KEEP;
     var folder = opts.dir || DEFAULT_DIR;
-    if (!testServerDirectory(folder) || folder.charAt(0) === '~') throw new Error('bad --dir: ' + folder);
+    if (!testServerDirectory(folder) || folder.charAt(0) === '~') throw new Error(tr('bad --dir: {0}', folder));
     return muxSshArguments(socket).concat([uploadCommand(hash, size, ext, keep, keepMinutesOf(keep), folder)]);
 }
 
@@ -329,7 +329,7 @@ function absoluteDirectory(dir, home) {
     if (dir.charAt(0) !== '~') return dir;
     var abs = String(home).replace(/\/+$/, '') + dir.substring(1);
     if (abs.charAt(0) !== '/' || !testServerDirectory(abs)) {
-        throw new Error('the home folder on the server (' + home + ') makes ' + abs + ', which --dir cannot use; give an absolute --dir');
+        throw new Error(tr('the home folder on the server ({0}) makes {1}, which --dir cannot use; give an absolute --dir', home, abs));
     }
     return abs;
 }
@@ -357,7 +357,7 @@ function serverHome(ssh, parsed) {
 }
 
 function homeError(host, errorText) {
-    return 'cannot ask ' + host + ' for its home folder (' + loginReport(host, errorText) + '); give an absolute --dir';
+    return tr('cannot ask {0} for its home folder ({1}); give an absolute --dir', host, loginReport(host, errorText));
 }
 
 function sshFailure(text) {
@@ -391,21 +391,21 @@ function loginAdvice(f, host, here) {
     // Get-LoginAdvice: one line on why uploads to host cannot log in, or null. here: the key
     // commands follow, so the pointer to --doctor is left out.
     if (!f) return null;
-    if (f.kind === 'auth' && f.keyLogin) return host + ' did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add' + (here ? '' : '; ssh-paste --doctor ' + host + ' shows how');
-    if (f.kind === 'auth' && f.typed) return host + ' wants a password or a one-time code (' + f.methods.join(',') + '), which uploads cannot type, so ssh-paste cannot upload to it';
-    if (f.kind === 'toomany') return host + ' closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config';
-    if (f.kind === 'muxrefused') return host + ' refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none ' + host + ' uploads over new connections';
-    if (f.kind === 'hostkey') return 'ssh could not verify the host key of ' + host + ': run ssh ' + host + ' to see why (a new host asks you to accept its key)';
+    if (f.kind === 'auth' && f.keyLogin) return here ? tr('{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add', host) : tr('{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor {0} shows how', host);
+    if (f.kind === 'auth' && f.typed) return tr('{0} wants a password or a one-time code ({1}), which uploads cannot type, so ssh-paste cannot upload to it', host, f.methods.join(','));
+    if (f.kind === 'toomany') return tr('{0} closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config', host);
+    if (f.kind === 'muxrefused') return tr('{0} refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none {0} uploads over new connections', host);
+    if (f.kind === 'hostkey') return tr('ssh could not verify the host key of {0}: run ssh {0} to see why (a new host asks you to accept its key)', host);
     return null;
 }
 
 function loginReport(host, errorText) {
     // Get-LoginReport: the line --enable prints about a host.
-    if (!errorText) return host + ': uploads log in without a password';
+    if (!errorText) return tr('{0}: uploads log in without a password', host);
     var advice = loginAdvice(sshFailure(errorText), host);
     if (advice) return advice;
     var first = String(errorText).split(/\r?\n/).filter(function (l) { return l.trim().length > 0; })[0] || '';
-    return 'could not check the login to ' + host + ' now (' + first.trim() + '); ssh-paste --doctor ' + host + ' tests it';
+    return tr('could not check the login to {0} now ({1}); ssh-paste --doctor {0} tests it', host, first.trim());
 }
 
 function formatShellWords(words) {
@@ -415,7 +415,9 @@ function formatShellWords(words) {
 
 // On a Mac, wrapper mode pastes where uploads cannot log in on their own: they share the
 // connection the user logged in to (see muxEligible).
-var WRAPPER_HINT = '  Or paste there without a key: ssh-paste HOST (wrapper mode) shares the connection you log in to.';
+function wrapperHint(words) {
+    return tr('  Or paste there without a key: ssh-paste {0} (wrapper mode) shares the connection you log in to.', formatShellWords(words));
+}
 
 function enableRefusal(host, errorText, wrapperCan) {
     // Get-EnableRefusal: what --enable says instead of enabling host, whose uploads were
@@ -425,11 +427,11 @@ function enableRefusal(host, errorText, wrapperCan) {
     var advice = loginAdvice(f, host, true);
     if (!advice) {
         var first = String(errorText).split(/\r?\n/).filter(function (l) { return l.trim().length > 0; })[0] || '';
-        advice = host + ' refused the login for uploads (' + first.trim() + ')';
+        advice = tr('{0} refused the login for uploads ({1})', host, first.trim());
     }
     var lines = [advice];
     if (f.kind === 'auth' && f.keyLogin) lines = lines.concat(keySetupLines(host));
-    if (f.kind === 'auth' && wrapperCan) lines.push(WRAPPER_HINT.replace(/HOST/g, formatShellWords([host])));
+    if (f.kind === 'auth' && wrapperCan) lines.push(wrapperHint([host]));
     return lines;
 }
 
@@ -452,14 +454,14 @@ function keySetupLines(hostArgs) {
     // The commands that set up a key, as --doctor prints them (Get-KeySetupLines is the
     // Windows twin). macOS has ssh-copy-id; a key with a passphrase works through ssh-agent.
     return [
-        '  Set up a key (once; ssh-copy-id asks your password one last time):',
+        tr('  Set up a key (once; ssh-copy-id asks your password one last time):'),
         '    ssh-keygen -t ed25519',
         '    ssh-copy-id -i ~/.ssh/id_ed25519.pub ' + hostArgs,
         '    ssh-paste --doctor ' + hostArgs,
-        '  ssh-keygen: press Enter at each question; if the key file exists already, answer n.',
-        '  With a passphrase, also run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519',
-        '  If you log in with ssh -i KEY, or ~/.ssh/config names an IdentityFile for this host,',
-        '  use that key instead, and name it with IdentityFile in the Host entry.'
+        tr('  ssh-keygen: press Enter at each question; if the key file exists already, answer n.'),
+        tr('  With a passphrase, also run: {0}', 'ssh-add --apple-use-keychain ~/.ssh/id_ed25519'),
+        tr('  If you log in with ssh -i KEY, or ~/.ssh/config names an IdentityFile for this host,'),
+        tr('  use that key instead, and name it with IdentityFile in the Host entry.')
     ];
 }
 
@@ -469,18 +471,18 @@ function readUploadReply(output, expectedSize, hash, ext, dir, cls) {
     dir = dir || DEFAULT_DIR;
     cls = cls || '';
     var lines = String(output === null || output === undefined ? '' : output).split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
-    if (lines.length === 0) throw new Error('the server sent no reply (is sh available there?)');
+    if (lines.length === 0) throw new Error(tr('the server sent no reply (is sh available there?)'));
     var last = lines[lines.length - 1].trim();
     var m = /^short (\d+)$/.exec(last);
-    if (m) throw new Error('the server received ' + m[1] + ' of ' + expectedSize + ' bytes');
-    if (last === 'nodir') throw new Error('the server cannot write to the folder ' + dir + ' (--dir)');
-    if (last === 'notprivate') throw new Error('the folder ' + dir + ' on the server is not yours alone (owned by you, not a link, not writable by group or others); use /tmp or such a folder');
+    if (m) throw new Error(tr('the server received {0} of {1} bytes', m[1], expectedSize));
+    if (last === 'nodir') throw new Error(tr('the server cannot write to the folder {0} (--dir)', dir));
+    if (last === 'notprivate') throw new Error(tr('the folder {0} on the server is not yours alone (owned by you, not a link, not writable by group or others); use /tmp or such a folder', dir));
     m = /^(\d+) (\/\S+)$/.exec(last);
-    if (!m) throw new Error('unexpected reply from the server: ' + last);
+    if (!m) throw new Error(tr('unexpected reply from the server: {0}', last));
     var size = Number(m[1]);
     var path = m[2];
-    if (size !== Number(expectedSize)) throw new Error('size mismatch: sent ' + expectedSize + ' bytes, server has ' + size);
-    if (!new RegExp(replyPathPattern(dir, hash, ext, cls)).test(path)) throw new Error('unexpected path from the server: ' + path);
+    if (size !== Number(expectedSize)) throw new Error(tr('size mismatch: sent {0} bytes, server has {1}', expectedSize, size));
+    if (!new RegExp(replyPathPattern(dir, hash, ext, cls)).test(path)) throw new Error(tr('unexpected path from the server: {0}', path));
     return path;
 }
 
@@ -490,7 +492,7 @@ function uploadOutcome(r) {
     var err = String(r.err || '').trim();
     if (r.timedOut) {
         var tail = err.split(/\r?\n/).slice(-12).join(' | ');
-        return { error: 'ssh did not finish in ' + r.timeoutSeconds + ' seconds; ssh said: ' + tail };
+        return { error: tr('ssh did not finish in {0} seconds; ssh said: {1}', r.timeoutSeconds, tail) };
     }
     if (r.code !== 0) {
         if (err.length === 0) {
@@ -530,10 +532,10 @@ function keepMinutesOf(keep) {
     // outlasts the longest upload, 5 minutes) to 3650 days.
     if (keep === 'never') return 0;
     var m = /^([1-9][0-9]{0,6})([mhd])$/.exec(String(keep));
-    if (!m) throw new Error('--keep takes a time like 30m, 2h or 7d, or never: ' + keep);
+    if (!m) throw new Error(tr('--keep takes a time like 30m, 2h or 7d, or never: {0}', keep));
     var minutes = Number(m[1]) * (m[2] === 'h' ? 60 : m[2] === 'd' ? 1440 : 1);
-    if (minutes < 10) throw new Error('--keep is at least 10m: ' + keep);
-    if (minutes > 5256000) throw new Error('--keep is at most 3650d: ' + keep);
+    if (minutes < 10) throw new Error(tr('--keep is at least 10m: {0}', keep));
+    if (minutes > 5256000) throw new Error(tr('--keep is at most 3650d: {0}', keep));
     return minutes;
 }
 
@@ -551,17 +553,17 @@ function readPasteSettings(argv) {
     var i = 0;
     while (i < argv.length && (argv[i] === '--keep' || argv[i] === '--dir')) {
         var name = argv[i];
-        if (i + 1 >= argv.length) throw new Error(name + ' needs a value');
+        if (i + 1 >= argv.length) throw new Error(tr('{0} needs a value', name));
         var value = String(argv[i + 1]);
         if (name === '--keep') {
-            if (r.Keep !== null) throw new Error('--keep is given twice');
+            if (r.Keep !== null) throw new Error(tr('--keep is given twice'));
             keepMinutesOf(value);
             r.Keep = value;
         } else {
-            if (r.Dir !== null) throw new Error('--dir is given twice');
+            if (r.Dir !== null) throw new Error(tr('--dir is given twice'));
             if (value.length > 1) value = value.replace(/\/+$/, '') || '/';
             if (!testServerDirectory(value)) {
-                throw new Error('--dir takes a folder on the server, /... or ~/... (quote ~ so that your shell keeps it), with letters, digits and . _ - / only: ' + value);
+                throw new Error(tr('--dir takes a folder on the server, /... or ~/... (quote ~ so that your shell keeps it), with letters, digits and . _ - / only: {0}', value));
             }
             r.Dir = value;
         }
@@ -587,7 +589,7 @@ function proxySettings(proxyCommand) {
 }
 
 function formatPasteSettings(s) {
-    return 'images in ' + s.Dir + ' on the server, ' + (s.Keep === 'never' ? 'never deleted' : 'kept ' + s.Keep);
+    return s.Keep === 'never' ? tr('images in {0} on the server, never deleted', s.Dir) : tr('images in {0} on the server, kept {1}', s.Dir, s.Keep);
 }
 
 function uploadCacheHours(keepMinutes) {
@@ -616,8 +618,8 @@ function proxyCommandLine(launcher, keep, dir) {
     // under the user's login shell, so it is one absolute path in single quotes
     // (POSIX quoting, the same in sh, bash and zsh) and three ssh tokens. ssh
     // expands % before the shell sees the line, so % in the path is doubled.
-    if (!/^\//.test(launcher)) throw new Error('the ssh-paste command path is not absolute: ' + launcher);
-    if (/[\r\n]/.test(launcher)) throw new Error('the ssh-paste command path contains a line break');
+    if (!/^\//.test(launcher)) throw new Error(tr('the ssh-paste command path is not absolute: {0}', launcher));
+    if (/[\r\n]/.test(launcher)) throw new Error(tr('the ssh-paste command path contains a line break'));
     var quoted = "'" + launcher.replace(/%/g, '%%').replace(/'/g, "'\\''") + "'";
     // %h and %n are quoted: a Host alias may contain [ and ], which zsh would
     // take for a file pattern. ssh refuses quotes in a host name.
@@ -692,7 +694,7 @@ function setManagedBlock(configText, hosts, proxyCommand, createdFile, groups) {
         }
         kept.push(line);
     });
-    if (inBlock) throw new Error('the ssh-paste block in the ssh config has no end marker; fix it by hand');
+    if (inBlock) throw new Error(tr('the ssh-paste block in the ssh config has no end marker; fix it by hand'));
     var rest = kept.join(newline);
     var used = groups.filter(function (g) { return g && g.Hosts && g.Hosts.length > 0; });
     if (used.length === 0) return rest;
@@ -809,30 +811,30 @@ function retryDelaySeconds(count) {
 
 function usage() {
     return [
-        'ssh-paste ' + VERSION + ' - paste macOS screenshots into programs running over SSH',
+        tr('ssh-paste {0} - paste macOS screenshots into programs running over SSH', VERSION),
         '',
-        'Start:',
-        '    ssh-paste --enable myhost    once per host',
-        '    ssh myhost                   then connect as usual',
-        '    Copy a screenshot (Cmd+Ctrl+Shift+4) or image files in Finder, switch to',
-        '    the ssh window, press Cmd+V: the image goes to the server and its path is',
-        '    pasted. Other apps still paste the image.',
+        tr('Start:'),
+        tr('    ssh-paste --enable myhost    once per host'),
+        tr('    ssh myhost                   then connect as usual'),
+        tr('    Copy a screenshot (Cmd+Ctrl+Shift+4) or image files in Finder, switch to'),
+        tr('    the ssh window, press Cmd+V: the image goes to the server and its path is'),
+        tr('    pasted. Other apps still paste the image.'),
         '',
-        'Or without changing ~/.ssh/config:',
+        tr('Or without changing ~/.ssh/config:'),
         '    ssh-paste myhost',
         '',
-        'All commands:',
-        '  ssh-paste --enable [OPTIONS] HOST...    make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)',
-        '  ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)',
-        '  ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config',
-        '  ssh-paste --doctor [HOST]               check this computer and test an upload to HOST',
-        '  ssh-paste --update                      install the latest release',
-        '  ssh-paste --uninstall                   remove ssh-paste and everything it changed',
+        tr('All commands:'),
+        tr('  ssh-paste --enable [OPTIONS] HOST...    make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)'),
+        tr('  ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)'),
+        tr('  ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config'),
+        tr('  ssh-paste --doctor [HOST]               check this computer and test an upload to HOST'),
+        tr('  ssh-paste --update                      install the latest release'),
+        tr('  ssh-paste --uninstall                   remove ssh-paste and everything it changed'),
         '  ssh-paste --version | --help',
         '',
-        'OPTIONS (images on the server; per host for --enable):',
-        '  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never',
-        '  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)',
+        tr('OPTIONS (images on the server; per host for --enable):'),
+        tr('  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never'),
+        tr('  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)'),
         '',
         'https://github.com/xuing/ssh-please-paste-picture'
     ].join('\n');
@@ -867,7 +869,7 @@ function newWatcher(P, o) {
     var s = o.settings || {};
     var keep = s.Keep || DEFAULT_KEEP;
     var dir = s.Dir || DEFAULT_DIR;
-    if (!testServerDirectory(dir) || dir.charAt(0) === '~') throw new Error('bad --dir: ' + dir);
+    if (!testServerDirectory(dir) || dir.charAt(0) === '~') throw new Error(tr('bad --dir: {0}', dir));
     var minutes = keepMinutesOf(keep);
     return {
         P: P, SshPath: o.sshPath, SshVersion: o.sshVersion || null, Parsed: o.parsed, NoProxy: !!o.noProxy, Pin: o.pin || null,
@@ -1173,12 +1175,12 @@ function restoreClipboard(W) {
 
 function failureSummary(W) {
     if (!W) return null;
-    if (W.Blocked) return 'ssh-paste: screenshot paste was off for this session: ' + W.Blocked;
+    if (W.Blocked) return tr('ssh-paste: screenshot paste was off for this session: {0}', W.Blocked);
     var keys = Object.keys(W.Failed);
     if (keys.length === 0) return null;
     var last = keys.map(function (k) { return W.Failed[k]; }).sort(function (a, b) { return a.At - b.At; })[keys.length - 1];
     var advice = loginAdvice(sshFailure(last.Message), W.Parsed.Destination);
-    return 'ssh-paste: ' + keys.length + ' screenshot upload(s) failed: ' + (advice || last.Message);
+    return tr('ssh-paste: {0} screenshot upload(s) failed: {1}', keys.length, advice || last.Message);
 }
 
 function formatWatchState(W, s) {
@@ -1271,7 +1273,7 @@ function privateDirectory() {
             return path;
         }
     }
-    throw new Error('could not create a private folder in ' + base);
+    throw new Error(tr('could not create a private folder in {0}', base));
 }
 
 function removePrivateDirectory() {
@@ -1316,7 +1318,7 @@ function startTask(path, args, o) {
     var h = { task: t, out: null, err: null, handles: [] };
     if (!o.inherit) {
         var input = o.stdinFile ? $.NSFileHandle.fileHandleForReadingAtPath(o.stdinFile) : $.NSFileHandle.fileHandleWithNullDevice;
-        if (input.isNil()) throw new Error('cannot read ' + o.stdinFile);
+        if (input.isNil()) throw new Error(tr('cannot read {0}', o.stdinFile));
         h.out = newOutputFile('task' + n + '.out');
         h.err = newOutputFile('task' + n + '.err');
         var out = $.NSFileHandle.fileHandleForWritingAtPath(h.out);
@@ -1330,7 +1332,7 @@ function startTask(path, args, o) {
         t.launch;
     } catch (e) {
         finishTask(h);
-        throw new Error('could not start ' + path + ': ' + e.message);
+        throw new Error(tr('could not start {0}: {1}', path, e.message));
     }
     return h;
 }
@@ -1364,7 +1366,7 @@ function runCapture(path, args, timeoutSeconds, o) {
         if (nowMs() > deadline) {
             stopTask(h);
             finishTask(h);
-            throw new Error(path + ' did not finish in ' + (timeoutSeconds || 20) + ' seconds');
+            throw new Error(tr('{0} did not finish in {1} seconds', path, timeoutSeconds || 20));
         }
         sleepSeconds(0.005);
     }
@@ -1457,9 +1459,9 @@ function findTerminal(startPid) {
         }
         named = terminalFromEnvironment({ __CFBundleIdentifier: env('__CFBundleIdentifier'), TERM_PROGRAM: env('TERM_PROGRAM') });
     }
-    if (!named) throw new Error('cannot tell which terminal app runs this session; set SSH_PASTE_TERMINAL to its bundle id');
+    if (!named) throw new Error(tr('cannot tell which terminal app runs this session; set SSH_PASTE_TERMINAL to its bundle id'));
     var apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(named.bundle);
-    if (apps.isNil() || Number(apps.count) === 0) throw new Error('the terminal app ' + named.bundle + ' (from ' + named.from + ') is not running');
+    if (apps.isNil() || Number(apps.count) === 0) throw new Error(tr('the terminal app {0} (from {1}) is not running', named.bundle, named.from));
     return { pid: Number(apps.objectAtIndex(0).processIdentifier), bundle: named.bundle, from: named.from };
 }
 
@@ -1489,14 +1491,14 @@ function macPlatform(sessionDebug) {
             }
         }
         var tmp = work + '/hash.tmp';
-        if (!data.writeToFileAtomically(tmp, true)) throw new Error('could not write ' + tmp);
+        if (!data.writeToFileAtomically(tmp, true)) throw new Error(tr('could not write {0}', tmp));
         var r = runCapture('/usr/bin/shasum', ['-a', '256', tmp], 60);
         var hex = parseShasum(r.out);
-        if (!hex) throw new Error('shasum failed: ' + r.err.trim());
+        if (!hex) throw new Error(tr('shasum failed: {0}', r.err.trim()));
         var entry = { data: data, hash: hex.substring(0, 32), size: size, file: work + '/' + hex.substring(0, 32) };
         var fm = $.NSFileManager.defaultManager;
         fm.removeItemAtPathError(entry.file, null);
-        if (!fm.moveItemAtPathToPathError(tmp, entry.file, null)) throw new Error('could not keep ' + entry.file);
+        if (!fm.moveItemAtPathToPathError(tmp, entry.file, null)) throw new Error(tr('could not keep {0}', entry.file));
         memo.unshift(entry);
         // Keep every file of one copy (up to MAX_COPIED_FILES) plus a few recent
         // images: an upload reads the file of each item it has not started yet.
@@ -1678,11 +1680,11 @@ function macPlatform(sessionDebug) {
         // holds the clipboard open), so a copy that lands between this check and
         // clearContents is lost. Everything is built before the check to keep
         // that gap as short as two calls.
-        if (Number(pb.changeCount) !== e.basis) throw new Error('could not write the clipboard: the clipboard changed since it was read');
+        if (Number(pb.changeCount) !== e.basis) throw new Error(tr('could not write the clipboard: the clipboard changed since it was read'));
         var count = Number(pb.clearContents);
         rec = { count: count, open: !!(e.text && e.promise), done: false, result: null, owner: e.owner, text: e.text || null,
             written: !!(e.text && !e.promise), answered: false, dead: false };
-        if (!pb.writeObjects($(items))) throw new Error('could not write the clipboard');
+        if (!pb.writeObjects($(items))) throw new Error(tr('could not write the clipboard'));
         return count;
     };
 
@@ -1809,7 +1811,7 @@ function bindTerminal(startPid) {
     try {
         var terminal = findTerminal(startPid);
         var window = firstWindowOf(terminal.pid);
-        if (!window) return { error: 'the terminal app ' + terminal.bundle + ' has no window on screen' };
+        if (!window) return { error: tr('the terminal app {0} has no window on screen', terminal.bundle) };
         return { terminal: terminal, window: window };
     } catch (e) {
         return { error: e.message };
@@ -1868,7 +1870,7 @@ function watchWrapper(args) {
         if (sshModeSettings(effective) !== null) {
             // ssh mode already serves this connection; a second watcher would upload twice.
             if (given.length > 0) {
-                warn('ssh-paste: ssh mode serves ' + parsed.Destination + ', with its own --keep and --dir; change them with ssh-paste --enable --keep TIME --dir DIR ' + parsed.Destination);
+                warn(tr('ssh-paste: ssh mode serves {0}, with its own --keep and --dir; change them with ssh-paste --enable --keep TIME --dir DIR {0}', parsed.Destination));
             }
         } else if (testInteractiveSsh(parsed, effective)) {
             try {
@@ -1884,9 +1886,9 @@ function watchWrapper(args) {
                 }
                 W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed, settings: settings, mux: mux });
                 if (mux) fm.createFileAtPathContentsAttributes(dir + '/mux', $.NSData.data, $());
-                warn('ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Cmd+V.');
+                warn(tr('ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Cmd+V.'));
             } catch (e) {
-                warn('ssh-paste: screenshot paste is off: ' + e.message);
+                warn(tr('ssh-paste: screenshot paste is off: {0}', e.message));
                 W = null;
             }
         }
@@ -1898,7 +1900,7 @@ function watchWrapper(args) {
     var summary = failureSummary(W);
     if (summary) {
         warn(summary);
-        warn('Run: ssh-paste --doctor ' + parsed.Destination);
+        warn(tr('Run: ssh-paste --doctor {0}', parsed.Destination));
     }
     return 0;
 }
@@ -1918,7 +1920,7 @@ function watchProxy(args) {
     var settingsError = null;
     try {
         settings = readPasteSettings(args.slice(5));
-        if (settings.Rest.length > 0) throw new Error('unknown --proxy arguments: ' + settings.Rest.join(' '));
+        if (settings.Rest.length > 0) throw new Error(tr('unknown --proxy arguments: {0}', settings.Rest.join(' ')));
     } catch (e) { settingsError = e.message; }
     var W = null;
     var bound = bindTerminal(sshPid);
@@ -1951,7 +1953,7 @@ function watchProxy(args) {
         if (settingsError) throw new Error(settingsError);
         W = startWatcher({ bound: bound, sshPath: ssh, parsed: parsed, noProxy: true, pin: { HostName: host, Port: port, HostKeyAlias: keyAlias }, settings: settings });
     } catch (e) {
-        warn('ssh-paste: screenshot paste is off: ' + e.message);
+        warn(tr('ssh-paste: screenshot paste is off: {0}', e.message));
         return 0;
     }
     // The session ends when the relay goes away, or when the ssh that started it
@@ -1964,7 +1966,7 @@ function watchProxy(args) {
     var summary = failureSummary(W);
     if (summary) {
         warn(summary);
-        warn('Run: ssh-paste --doctor ' + alias);
+        warn(tr('Run: ssh-paste --doctor {0}', alias));
     }
     return 0;
 }
@@ -1985,7 +1987,7 @@ function readConfig(path) {
     var fm = $.NSFileManager.defaultManager;
     if (!fm.fileExistsAtPath(path)) return null;
     var d = $.NSData.dataWithContentsOfFile(path);
-    if (d.isNil()) throw new Error('cannot read ' + path);
+    if (d.isNil()) throw new Error(tr('cannot read {0}', path));
     var s = $.NSString.alloc.initWithDataEncoding(d, $.NSISOLatin1StringEncoding).js;
     var bom = s.substring(0, 3) === UTF8_BOM_LATIN1;
     return { text: bom ? s.substring(3) : s, bom: bom };
@@ -2001,7 +2003,7 @@ function updateSshConfig(path, old, newText, remove) {
     // UTF-8 byte order mark if there was one), and refuses if the file changed
     // since it was read.
     var fm = $.NSFileManager.defaultManager;
-    var changed = path + ' changed while ssh-paste was editing it; run the command again';
+    var changed = tr('{0} changed while ssh-paste was editing it; run the command again', path);
     if (!sameConfig(readConfig(path), old)) throw new Error(changed);
     if (remove) { fm.removeItemAtPathError(path, null); return; }
     var dir = path.replace(/\/[^\/]*$/, '');
@@ -2014,21 +2016,21 @@ function updateSshConfig(path, old, newText, remove) {
     }
     var text = (old !== null && old.bom ? UTF8_BOM_LATIN1 : '') + newText;
     var data = $(text).dataUsingEncoding($.NSISOLatin1StringEncoding);
-    if (data.isNil()) throw new Error('the new ssh config text is not plain text');
+    if (data.isNil()) throw new Error(tr('the new ssh config text is not plain text'));
     if (!sameConfig(readConfig(path), old)) throw new Error(changed);
-    if (!data.writeToFileAtomically(target, true)) throw new Error('could not write ' + target);
+    if (!data.writeToFileAtomically(target, true)) throw new Error(tr('could not write {0}', target));
     fm.setAttributesOfItemAtPathError($({ NSFilePosixPermissions: mode }), target, null);
 }
 
 function launcherPath() {
     var p = env('SSH_PASTE_LAUNCHER');
-    if (!p) throw new Error('SSH_PASTE_LAUNCHER is not set; run this through the ssh-paste command');
+    if (!p) throw new Error(tr('SSH_PASTE_LAUNCHER is not set; run this through the ssh-paste command'));
     return p;
 }
 
 function resolvedSshConfig(alias) {
     var r = runCapture(sshPath(), ['-G', '--', alias], 20);
-    if (r.code !== 0) throw new Error('ssh -G ' + alias + ' failed: ' + r.err.trim());
+    if (r.code !== 0) throw new Error(tr('ssh -G {0} failed: {1}', alias, r.err.trim()));
     return parseSshG(r.out);
 }
 
@@ -2045,7 +2047,7 @@ function enableHosts(args) {
     var settings = readPasteSettings(args || []);
     // Each host once, in order; aliases are case-sensitive, as in ssh.
     var hosts = settings.Rest.filter(function (h, i) { return settings.Rest.indexOf(h) === i; });
-    if (hosts.length === 0) throw new Error('usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]');
+    if (hosts.length === 0) throw new Error(tr('usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]'));
     if (settings.Dir) warnLocalHome(settings.Dir);
     var configPath = sshConfigPath();
     var old = readConfig(configPath);
@@ -2064,14 +2066,14 @@ function enableHosts(args) {
     var ssh = null;
     // Every name is checked before any connection, so a bad one stops the command at once.
     hosts.forEach(function (h) {
-        if (!testHostAlias(h)) throw new Error('use a host name or a Host alias from ~/.ssh/config (no user@, no options): ' + h);
+        if (!testHostAlias(h)) throw new Error(tr('use a host name or a Host alias from ~/.ssh/config (no user@, no options): {0}', h));
         if (!find(h)) {
             var resolved = resolvedSshConfig(h);
             var hostName = resolved.hostname || h;
-            if (!hostResolves(hostName)) throw new Error('cannot find the host ' + hostName + ' (from ' + h + '). Check the name, or add it to ~/.ssh/config, then run --enable again');
+            if (!hostResolves(hostName)) throw new Error(tr('cannot find the host {0} (from {1}). Check the name, or add it to ~/.ssh/config, then run --enable again', hostName, h));
             ['proxyjump', 'proxycommand'].forEach(function (key) {
                 if (resolved[key] && resolved[key] !== 'none') {
-                    throw new Error(h + ' already uses ' + key + ' (' + resolved[key] + '); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste ' + h);
+                    throw new Error(tr('{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}', h, key, resolved[key]));
                 }
             });
         }
@@ -2097,33 +2099,33 @@ function enableHosts(args) {
             // absolute path and the path to paste is known before an upload.
             if (logins[h].home === null) { problems.push(homeError(h, logins[h].error)); return; }
             after.Dir = absoluteDirectory(settings.Dir, logins[h].home);
-            say(h + ': ' + settings.Dir + ' is ' + after.Dir + ' there');
+            say(tr('{0}: {1} is {2} there', h, settings.Dir, after.Dir));
         }
         if (added.indexOf(h) < 0 && changed.indexOf(h) < 0 && (after.Keep !== before.Keep || after.Dir !== before.Dir)) changed.push(h);
         pair[1] = after;
     });
     if (problems.length > 0) {
         // All or nothing: the reasons for every host, and the command to run again.
-        throw new Error(['nothing changed in ~/.ssh/config:'].concat(problems, ['Then run again: ssh-paste --enable ' + formatShellWords(args || [])]).join('\n'));
+        throw new Error([tr('nothing changed in ~/.ssh/config:')].concat(problems, [tr('Then run again: ssh-paste --enable {0}', formatShellWords(args || []))]).join('\n'));
     }
     var groups = settingsGroups(want, launcherPath());
     var createdFile = block.CreatedFile || old === null;
     if (added.length > 0 || changed.length > 0) {
         updateSshConfig(configPath, old, setManagedBlock(text, null, null, createdFile, groups), false);
-        if (added.length > 0) say('Enabled for: ' + added.join(', '));
-        if (changed.length > 0) say('Changed for: ' + changed.join(', '));
+        if (added.length > 0) say(tr('Enabled for: {0}', added.join(', ')));
+        if (changed.length > 0) say(tr('Changed for: {0}', changed.join(', ')));
     } else {
-        say('Already enabled with these settings; nothing changed.');
+        say(tr('Already enabled with these settings; nothing changed.'));
     }
     hosts.forEach(function (h) {
         say(h + ': ' + formatPasteSettings(find(h)[1]));
         say(loginReport(h, logins[h].error));
     });
-    say('This block is at the top of ' + configPath + ':');
+    say(tr('This block is at the top of {0}:', configPath));
     say('');
     setManagedBlock('', null, null, createdFile, groups).replace(/\s+$/, '').split(/\r?\n/).forEach(function (line) { say('    ' + line); });
     say('');
-    say('Now connect as usual: ssh ' + (added.length > 0 ? added[0] : hosts[0]));
+    say(tr('Now connect as usual: ssh {0}', added.length > 0 ? added[0] : hosts[0]));
     return 0;
 }
 
@@ -2131,7 +2133,7 @@ function warnLocalHome(dir) {
     // zsh turns an unquoted ~/x into this Mac's home folder before ssh-paste sees it.
     var home = homeDirectory().replace(/\/+$/, '');
     if (home && (dir === home || dir.indexOf(home + '/') === 0)) {
-        warn('ssh-paste: --dir ' + dir + ' is a folder of this Mac; if you meant the home folder on the server, quote the ~: --dir \'~' + dir.substring(home.length) + '\'');
+        warn(tr('ssh-paste: --dir {0} is a folder of this Mac; if you meant the home folder on the server, quote the ~: --dir \'{1}\'', dir, '~' + dir.substring(home.length)));
     }
 }
 
@@ -2140,7 +2142,7 @@ function disableHosts(hosts) {
     var old = readConfig(configPath);
     var text = old ? old.text : null;
     var block = getManagedBlock(text);
-    if (!block.Present) { say('ssh-paste is not enabled for any host.'); return 0; }
+    if (!block.Present) { say(tr('ssh-paste is not enabled for any host.')); return 0; }
     var keep = (!hosts || hosts.length === 0) ? [] : block.Hosts.filter(function (h) { return hosts.indexOf(h) < 0; });
     // Each remaining host keeps its group's line as it is.
     var groups = block.Groups.map(function (g) {
@@ -2165,8 +2167,8 @@ function disableMessage(managed, asked) {
     // none of the named hosts was enabled. Host aliases are case-sensitive, as in ssh.
     var all = !asked || asked.length === 0;
     var removed = managed.filter(function (h) { return all || asked.indexOf(h) >= 0; });
-    if (removed.length === 0) return 'ssh-paste is not enabled for: ' + asked.join(', ');
-    return 'Disabled for: ' + removed.join(', ');
+    if (removed.length === 0) return tr('ssh-paste is not enabled for: {0}', asked.join(', '));
+    return tr('Disabled for: {0}', removed.join(', '));
 }
 
 // --- --doctor ---------------------------------------------------------------
@@ -2176,33 +2178,33 @@ function doctor(args) {
     function report(pass, what) { say((pass ? '  ok    ' : '  FAIL  ') + what); if (!pass) ok = false; }
     say('ssh-paste ' + VERSION);
     var os = $.NSProcessInfo.processInfo.operatingSystemVersionString.js;
-    report(true, 'macOS ' + os + ', osascript JavaScript');
+    report(true, tr('macOS {0}, osascript JavaScript', os));
     try {
         var count = Number(pasteboard().changeCount);
         var fw = frontWindow();
-        report(true, 'pasteboard and window APIs available (change count ' + count + ', front window ' + fw + ')');
-    } catch (e) { report(false, 'pasteboard or window API: ' + e.message); return 1; }
+        report(true, tr('pasteboard and window APIs available (change count {0}, front window {1})', count, fw));
+    } catch (e) { report(false, tr('pasteboard or window API: {0}', e.message)); return 1; }
     var ssh;
     try {
         ssh = sshPath();
         var v = runCapture(ssh, ['-V'], 20);
-        report(true, 'ssh: ' + ssh + ' (' + (v.err + v.out).trim() + ')');
-    } catch (e) { report(false, 'ssh: ' + e.message); return 1; }
+        report(true, tr('ssh: {0} ({1})', ssh, (v.err + v.out).trim()));
+    } catch (e) { report(false, tr('ssh: {0}', e.message)); return 1; }
     try {
         var t = findTerminal(Number($.getppid()));
         var w = firstWindowOf(t.pid);
-        report(w !== 0, 'terminal: ' + t.bundle + ' (from ' + t.from + ')' + (w ? ', window ' + w : ', no window on screen'));
-    } catch (e) { report(false, 'terminal: ' + e.message); }
+        report(w !== 0, w ? tr('terminal: {0} (from {1}), window {2}', t.bundle, t.from, w) : tr('terminal: {0} (from {1}), no window on screen', t.bundle, t.from));
+    } catch (e) { report(false, tr('terminal: {0}', e.message)); }
     try {
         var P = macPlatform(false);
         var s = P.readState();
-        if (s.Files) report(true, 'clipboard: ' + s.Files.length + ' copied image file(s)');
-        else if (s.Png) report(true, 'clipboard: image, ' + s.Items[0].Size + ' bytes');
-        else report(true, 'clipboard: readable (no image right now)');
-    } catch (e) { report(false, 'clipboard: ' + e.message); }
+        if (s.Files) report(true, tr('clipboard: {0} copied image file(s)', s.Files.length));
+        else if (s.Png) report(true, tr('clipboard: image, {0} bytes', s.Items[0].Size));
+        else report(true, tr('clipboard: readable (no image right now)'));
+    } catch (e) { report(false, tr('clipboard: {0}', e.message)); }
     if (!args || args.length === 0) {
         say('');
-        say('Add a host to test an upload: ssh-paste --doctor myhost');
+        say(tr('Add a host to test an upload: {0}', 'ssh-paste --doctor myhost'));
         return ok ? 0 : 1;
     }
     var parsed = splitSshArguments(args);
@@ -2229,9 +2231,9 @@ function doctor(args) {
         var r = finishTask(h);
         var outcome = uploadOutcome({ code: r.code, out: r.out, err: r.err, timedOut: timedOut, timeoutSeconds: 30, size: bytes.length, hash: hash, ext: 'png', dir: settings.Dir, cls: keepClass(settings.Keep) });
         if (outcome.error) throw new Error(outcome.error);
-        report(true, 'upload to ' + parsed.Destination + ': ' + outcome.path + ' (' + ((nowMs() - started) / 1000).toFixed(1) + ' s)');
+        report(true, tr('upload to {0}: {1} ({2} s)', parsed.Destination, outcome.path, ((nowMs() - started) / 1000).toFixed(1)));
     } catch (e) {
-        report(false, 'upload to ' + parsed.Destination + ': ' + e.message);
+        report(false, tr('upload to {0}: {1}', parsed.Destination, e.message));
         say('');
         var failure = sshFailure(e.message);
         var advice = loginAdvice(failure, parsed.Destination, true);
@@ -2240,21 +2242,21 @@ function doctor(args) {
             say('');
             var setup = keySetupTarget(parsed);
             keySetupLines(setup.Target).forEach(say);
-            if (setup.Dropped) say('  Add the other ssh options this host needs to the ssh-copy-id line.');
+            if (setup.Dropped) say(tr('  Add the other ssh options this host needs to the ssh-copy-id line.'));
         }
         if (failure && failure.kind === 'auth' && muxEligible(parsed, effective)) {
-            say(WRAPPER_HINT.replace(/HOST/g, formatShellWords(args)));
+            say(wrapperHint(args));
         } else if (!advice) {
-            say('Uploads use a second, non-interactive ssh connection, so the server must');
-            say('accept your key without a prompt: a key without a passphrase, or a key loaded');
-            say('in ssh-agent (ssh-add --apple-use-keychain). Password-only logins cannot work.');
+            say(tr('Uploads use a second, non-interactive ssh connection, so the server must'));
+            say(tr('accept your key without a prompt: a key without a passphrase, or a key loaded'));
+            say(tr('in ssh-agent (ssh-add --apple-use-keychain). Password-only logins cannot work.'));
         }
         return 1;
     }
     if (sshMode) {
-        report(true, 'ssh mode: enabled, "ssh ' + args.join(' ') + '" pastes screenshots (' + formatPasteSettings(sshMode) + ')');
+        report(true, tr('ssh mode: enabled, "ssh {0}" pastes screenshots ({1})', args.join(' '), formatPasteSettings(sshMode)));
     } else {
-        say('  info  ssh mode is off for ' + parsed.Destination + '. Turn it on: ssh-paste --enable ' + parsed.Destination + '   (or use: ssh-paste ' + parsed.Destination + ')');
+        say(tr('  info  ssh mode is off for {0}. Turn it on: ssh-paste --enable {0}   (or use: ssh-paste {0})', parsed.Destination));
     }
     return ok ? 0 : 1;
 }
@@ -2276,17 +2278,17 @@ function update(options) {
     // ssh-paste --update: run the latest release's install.sh after checking it
     // against that release's SHA256SUMS. The installer replaces the files in
     // place and says what changed ("Upgraded", or "Reinstalled" when current).
-    if (options.length > 0) throw new Error('--update takes no options: ' + options.join(' '));
+    if (options.length > 0) throw new Error(tr('--update takes no options: {0}', options.join(' ')));
     var base = (env('SSH_PASTE_UPDATE_URL') || UPDATE_BASE).replace(/\/+$/, '');
-    say('Downloading the latest release from ' + base);
+    say(tr('Downloading the latest release from {0}', base));
     var dir = privateDirectory();
     ['install.sh', 'SHA256SUMS'].forEach(function (name) {
         var r = runCapture('/usr/bin/curl', ['-fsSL', '--proto-redir', '=https', '-o', dir + '/' + name, base + '/' + name], 120);
-        if (r.code !== 0) throw new Error('could not download ' + base + '/' + name + ': ' + r.err.trim());
+        if (r.code !== 0) throw new Error(tr('could not download {0}: {1}', base + '/' + name, r.err.trim()));
     });
     var sums = readFileText(dir + '/SHA256SUMS');
     var hex = parseShasum(runCapture('/usr/bin/shasum', ['-a', '256', dir + '/install.sh'], 20).out);
-    if (!hex || !checkReleaseChecksum(sums, 'install.sh', hex)) throw new Error('install.sh does not match SHA256SUMS; nothing was changed');
+    if (!hex || !checkReleaseChecksum(sums, 'install.sh', hex)) throw new Error(tr('install.sh does not match SHA256SUMS; nothing was changed'));
     // SSH_PASTE_UNINSTALL and SSH_PASTE_REF are for running the installer by
     // hand; an update must not inherit them.
     var e = ObjC.deepUnwrap($.NSProcessInfo.processInfo.environment);
@@ -2313,7 +2315,7 @@ function main(argv) {
         case '--version': say(VERSION); return 0;
         case '--help': case '-h': say(usage()); return 0;
         default:
-            warn('ssh-paste: unknown command ' + argv[0] + '; run ssh-paste --help');
+            warn(tr('ssh-paste: unknown command {0}; run ssh-paste --help', argv[0]));
             return 2;
     }
 }
@@ -2330,8 +2332,80 @@ function checkSettings(args) {
 }
 
 // osascript calls run(argv).
+// --- messages in the user's language ---------------------------------------
+// The English text in the code is the key (as in gettext): tr('Enabled for: {0}', h) looks it
+// up in the catalog of the user's language and falls back to the English text. The catalogs
+// are src/locale/<name>.json; the line below is generated from them, ASCII with \u escapes,
+// by `node tests/locale.js --write`, and a test fails when it is stale.
+// >>> locale
+var LOCALE_DATA = {"zh-CN":{"    Copy a screenshot (Cmd+Ctrl+Shift+4) or image files in Finder, switch to":"    \u622a\u4e00\u5f20\u56fe\uff08Cmd+Ctrl+Shift+4\uff09\uff0c\u6216\u5728 Finder \u91cc\u590d\u5236\u56fe\u7247\u6587\u4ef6\uff0c\u5207\u6362\u5230","    Copy a screenshot (Win+Shift+S), switch to the ssh window, press Ctrl+V:":"    \u622a\u4e00\u5f20\u56fe\uff08Win+Shift+S\uff09\uff0c\u5207\u6362\u5230 ssh \u7a97\u53e3\uff0c\u6309 Ctrl+V\uff1a","    paste the image.":"    \u7c98\u8d34\u7684\u4ecd\u7136\u662f\u56fe\u7247\u3002","    pasted. Other apps still paste the image.":"    \u7c98\u8d34\u7684\u662f\u8def\u5f84\u3002\u5728\u5176\u4ed6\u7a0b\u5e8f\u91cc\u7c98\u8d34\u7684\u4ecd\u7136\u662f\u56fe\u7247\u3002","    ssh myhost                   then connect as usual":"    ssh myhost                   \u7136\u540e\u7167\u5e38\u8fde\u63a5","    ssh-paste --enable myhost    once per host":"    ssh-paste --enable myhost    \u6bcf\u53f0\u4e3b\u673a\u8fd0\u884c\u4e00\u6b21","    the image goes to the server and its path is pasted. Other apps still":"    \u56fe\u7247\u4f1a\u4f20\u5230\u670d\u52a1\u5668\u4e0a\uff0c\u7c98\u8d34\u7684\u662f\u5b83\u7684\u8def\u5f84\u3002\u5728\u5176\u4ed6\u7a0b\u5e8f\u91cc","    the ssh window, press Cmd+V: the image goes to the server and its path is":"    ssh \u7a97\u53e3\uff0c\u6309 Cmd+V\uff1a\u56fe\u7247\u4f1a\u4f20\u5230\u670d\u52a1\u5668\u4e0a\uff0c","  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)":"  --dir DIR     \u56fe\u7247\u653e\u5728 DIR\uff1a/tmp\uff08\u9ed8\u8ba4\uff09\u3001\u4efb\u610f /path\uff0c\u6216 ~/path\uff08~ \u8981\u52a0\u5f15\u53f7\uff09","  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never":"  --keep TIME   \u8d85\u8fc7 TIME \u5c31\u5220\u9664\uff1a30m\u30012h\u30017d\uff08\u9ed8\u8ba4 1d\uff09\uff0c\u6216 never\uff08\u4e0d\u5220\uff09","  Add the other ssh options this host needs to the ssh line.":"  \u8fd9\u53f0\u4e3b\u673a\u8fd8\u9700\u8981\u7684\u5176\u4ed6 ssh \u9009\u9879\uff0c\u8bf7\u81ea\u5df1\u52a0\u5230 ssh \u90a3\u4e00\u884c\u91cc\u3002","  Add the other ssh options this host needs to the ssh-copy-id line.":"  \u8fd9\u53f0\u4e3b\u673a\u8fd8\u9700\u8981\u7684\u5176\u4ed6 ssh \u9009\u9879\uff0c\u8bf7\u81ea\u5df1\u52a0\u5230 ssh-copy-id \u90a3\u4e00\u884c\u91cc\u3002","  If you log in with ssh -i KEY, or ~/.ssh/config names an IdentityFile for this host,":"  \u5982\u679c\u4f60\u5e73\u65f6\u7528 ssh -i KEY \u767b\u5f55\uff0c\u6216\u8005 ~/.ssh/config \u7ed9\u8fd9\u53f0\u4e3b\u673a\u6307\u5b9a\u4e86 IdentityFile\uff0c","  Or paste there without a key: ssh-paste {0} (wrapper mode) shares the connection you log in to.":"  \u4e5f\u53ef\u4ee5\u4e0d\u914d key\uff1assh-paste {0}\uff08wrapper \u6a21\u5f0f\uff09\u4f1a\u5171\u7528\u4f60\u767b\u5f55\u7684\u90a3\u6761\u8fde\u63a5\u6765\u4e0a\u4f20\u3002","  Set up a key (once; ssh asks your password one last time):":"  \u914d\u7f6e key\uff08\u53ea\u9700\u4e00\u6b21\uff1bssh \u4f1a\u6700\u540e\u4e00\u6b21\u63d0\u793a\u4f60\u8f93\u5165\u5bc6\u7801\uff09\uff1a","  Set up a key (once; ssh-copy-id asks your password one last time):":"  \u914d\u7f6e key\uff08\u53ea\u9700\u4e00\u6b21\uff1bssh-copy-id \u4f1a\u6700\u540e\u4e00\u6b21\u63d0\u793a\u4f60\u8f93\u5165\u5bc6\u7801\uff09\uff1a","  With a passphrase, also run: {0}":"  \u5982\u679c\u7ed9 key \u8bbe\u4e86 passphrase\uff0c\u8fd8\u8981\u8fd0\u884c\uff1a{0}","  info  ssh mode is off for {0}. Turn it on: ssh-paste --enable {0}   (or use: ssh-paste {0})":"  info  {0} \u6ca1\u6709\u5f00\u542f ssh \u6a21\u5f0f\u3002\u5f00\u542f\uff1assh-paste --enable {0}   \uff08\u6216\u8005\u7528\uff1assh-paste {0}\uff09","  ssh-keygen: press Enter at each question (no passphrase: Windows\u0027 ssh-agent is off":"  ssh-keygen\uff1a\u6bcf\u4e2a\u95ee\u9898\u76f4\u63a5\u6309\u56de\u8f66\uff08\u4e0d\u8bbe passphrase\uff1aWindows \u7684 ssh-agent \u9ed8\u8ba4\u5173\u95ed\uff0c","  ssh-keygen: press Enter at each question; if the key file exists already, answer n.":"  ssh-keygen\uff1a\u6bcf\u4e2a\u95ee\u9898\u76f4\u63a5\u6309\u56de\u8f66\uff1b\u5982\u679c\u63d0\u793a key \u6587\u4ef6\u5df2\u7ecf\u5b58\u5728\uff0c\u56de\u7b54 n\u3002","  ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)":"  ssh-paste --disable [HOST...]           \u64a4\u9500 --enable\uff08\u4e0d\u5199\u4e3b\u673a\u5c31\u662f\u5168\u90e8\uff09","  ssh-paste --doctor [HOST]               check this computer and test an upload to HOST":"  ssh-paste --doctor [HOST]               \u68c0\u67e5\u672c\u673a\uff0c\u5e76\u8bd5\u7740\u5f80 HOST \u4e0a\u4f20\u4e00\u6b21","  ssh-paste --enable [OPTIONS] HOST...    make plain \"ssh HOST\" paste screenshots (edits ~/.ssh/config)":"  ssh-paste --enable [OPTIONS] HOST...    \u8ba9\u666e\u901a\u7684 \"ssh HOST\" \u4e5f\u80fd\u7c98\u8d34\u622a\u56fe\uff08\u4f1a\u4fee\u6539 ~/.ssh/config\uff09","  ssh-paste --uninstall                   remove ssh-paste and everything it changed":"  ssh-paste --uninstall                   \u5378\u8f7d ssh-paste\uff0c\u5e76\u64a4\u9500\u5b83\u505a\u8fc7\u7684\u6240\u6709\u6539\u52a8","  ssh-paste --update                      install the latest release":"  ssh-paste --update                      \u5b89\u88c5\u6700\u65b0\u7248\u672c","  ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config":"  ssh-paste [OPTIONS] [ssh options] HOST  wrapper \u6a21\u5f0f\uff1a\u5e26\u622a\u56fe\u7c98\u8d34\u7684 ssh\uff0c\u4e0d\u6539\u914d\u7f6e","  unless an administrator turns it on); if the key file exists already, answer n.":"  \u8981\u7ba1\u7406\u5458\u624d\u80fd\u6253\u5f00\uff09\uff1b\u5982\u679c\u63d0\u793a key \u6587\u4ef6\u5df2\u7ecf\u5b58\u5728\uff0c\u56de\u7b54 n\u3002","  use that key instead, and name it with IdentityFile in the Host entry.":"  \u5c31\u6362\u7528\u90a3\u628a key\uff0c\u5e76\u5728 Host \u914d\u7f6e\u91cc\u7528 IdentityFile \u5199\u660e\u3002","--dir is given twice":"--dir \u5199\u4e86\u4e24\u6b21","--dir takes a folder on the server, /... or ~/... (quote ~ so that your shell keeps it), with letters, digits and . _ - / only: {0}":"--dir \u8981\u5199\u670d\u52a1\u5668\u4e0a\u7684\u76ee\u5f55\uff1a/... \u6216 ~/...\uff08~ \u8981\u52a0\u5f15\u53f7\uff0c\u514d\u5f97\u88ab\u4f60\u672c\u673a\u7684 shell \u5c55\u5f00\uff09\uff0c\u53ea\u80fd\u542b\u5b57\u6bcd\u3001\u6570\u5b57\u548c . _ - /\uff1a{0}","--keep is at least 10m: {0}":"--keep \u81f3\u5c11\u662f 10m\uff1a{0}","--keep is at most 3650d: {0}":"--keep \u6700\u591a\u662f 3650d\uff1a{0}","--keep is given twice":"--keep \u5199\u4e86\u4e24\u6b21","--keep takes a time like 30m, 2h or 7d, or never: {0}":"--keep \u8981\u5199 30m\u30012h\u30017d \u8fd9\u6837\u7684\u65f6\u95f4\uff0c\u6216\u8005 never\uff1a{0}","--update takes no options: {0}":"--update \u4e0d\u63a5\u53d7\u9009\u9879\uff1a{0}","Add a host to test an upload: ssh-paste --doctor myhost":"\u52a0\u4e0a\u4e3b\u673a\u540d\uff0c\u53ef\u4ee5\u8bd5\u4e00\u6b21\u4e0a\u4f20\uff1assh-paste --doctor myhost","Add a host to test an upload: {0}":"\u52a0\u4e0a\u4e3b\u673a\u540d\uff0c\u53ef\u4ee5\u8bd5\u4e00\u6b21\u4e0a\u4f20\uff1a{0}","All commands:":"\u5168\u90e8\u547d\u4ee4\uff1a","Already enabled with these settings; nothing changed.":"\u5df2\u7ecf\u7528\u8fd9\u4e9b\u8bbe\u7f6e\u542f\u7528\u8fc7\u4e86\uff0c\u6ca1\u6709\u6539\u52a8\u3002","Changed for: {0}":"\u5df2\u4fee\u6539\uff1a{0}","Deleted {0}":"\u5df2\u5220\u9664 {0}","Disabled for: {0}":"\u5df2\u505c\u7528\uff1a{0}","Downloading the latest release from {0}":"\u6b63\u5728\u4ece {0} \u4e0b\u8f7d\u6700\u65b0\u7248\u672c","Enabled for: {0}":"\u5df2\u542f\u7528\uff1a{0}","Images already uploaded stay in /tmp on your servers until the server clears /tmp.":"\u5df2\u7ecf\u4e0a\u4f20\u7684\u56fe\u7247\u4f1a\u7559\u5728\u670d\u52a1\u5668\u7684 /tmp \u91cc\uff0c\u76f4\u5230\u670d\u52a1\u5668\u6e05\u7406 /tmp\u3002","Now connect as usual: ssh {0}":"\u73b0\u5728\u7167\u5e38\u8fde\u63a5\uff1assh {0}","OPTIONS (images on the server; per host for --enable):":"OPTIONS\uff08\u670d\u52a1\u5668\u4e0a\u7684\u56fe\u7247\uff1b\u914d\u5408 --enable \u65f6\u6309\u4e3b\u673a\u5206\u522b\u8bbe\u7f6e\uff09\uff1a","Or without changing ~/.ssh/config:":"\u6216\u8005\u4e0d\u6539 ~/.ssh/config\uff1a","PowerShell runs in {0} mode here (AppLocker or App Control policy)":"\u8fd9\u53f0\u7535\u8111\u4e0a\u7684 PowerShell \u8fd0\u884c\u5728 {0} \u6a21\u5f0f\uff08AppLocker \u6216 App Control \u7b56\u7565\uff09","Removed from your PATH: {0}":"\u5df2\u4ece PATH \u4e2d\u79fb\u9664\uff1a{0}","Run: ssh-paste --doctor {0}":"\u8bf7\u8fd0\u884c\uff1assh-paste --doctor {0}","SSH_PASTE_LAUNCHER is not set; run this through the ssh-paste command":"\u6ca1\u6709\u8bbe\u7f6e SSH_PASTE_LAUNCHER\uff1b\u8bf7\u901a\u8fc7 ssh-paste \u547d\u4ee4\u6765\u8fd0\u884c","Scoop installed ssh-paste without the apps\\ssh-paste\\current junction (its no_junction setting), so no path to it stays after scoop update. Use wrapper mode instead: ssh-paste HOST":"Scoop \u5b89\u88c5 ssh-paste \u65f6\u6ca1\u6709\u5efa\u7acb apps\\ssh-paste\\current \u94fe\u63a5\uff08\u5b83\u7684 no_junction \u8bbe\u7f6e\uff09\uff0cscoop update \u4e4b\u540e\u5c31\u6ca1\u6709\u56fa\u5b9a\u7684\u8def\u5f84\u53ef\u7528\u3002\u8bf7\u6539\u7528 wrapper \u6a21\u5f0f\uff1assh-paste HOST","Start:":"\u5f00\u59cb\uff1a","Then run again: ssh-paste --enable {0}":"\u7136\u540e\u518d\u8fd0\u884c\u4e00\u6b21\uff1assh-paste --enable {0}","This block is at the top of {0}:":"\u8fd9\u6bb5\u914d\u7f6e\u5728 {0} \u7684\u6700\u524d\u9762\uff1a","To delete them now: {0}":"\u60f3\u73b0\u5728\u5c31\u5220\u6389\uff1a{0}","Uploads use a second, non-interactive ssh connection, so the server must":"\u4e0a\u4f20\u7528\u7684\u662f\u53e6\u4e00\u6761\u4e0d\u80fd\u4ea4\u4e92\u7684 ssh \u8fde\u63a5\uff0c\u6240\u4ee5\u670d\u52a1\u5668\u5fc5\u987b","accept your key without a prompt: a key without a passphrase, or a key loaded":"\u4e0d\u7ecf\u63d0\u793a\u5c31\u63a5\u53d7\u4f60\u7684 key\uff1a\u4e00\u628a\u6ca1\u6709 passphrase \u7684 key\uff0c\u6216\u8005\u5df2\u7ecf\u52a0\u8f7d\u5230","bad --dir: {0}":"--dir \u4e0d\u5bf9\uff1a{0}","bad control socket: {0}":"\u63a7\u5236 socket \u4e0d\u5bf9\uff1a{0}","bad image extension: {0}":"\u56fe\u7247\u6269\u5c55\u540d\u4e0d\u5bf9\uff1a{0}","bad image hash: {0}":"\u56fe\u7247\u54c8\u5e0c\u4e0d\u5bf9\uff1a{0}","cannot ask {0} for its home folder ({1}); give an absolute --dir":"\u6ca1\u6cd5\u95ee {0} \u5b83\u7684\u5bb6\u76ee\u5f55\u5728\u54ea\uff08{1}\uff09\uff1b\u8bf7\u7ed9 --dir \u5199\u5b8c\u6574\u8def\u5f84","cannot connect to {0} port {1}: {2}":"\u8fde\u4e0d\u4e0a {0} \u7684 {1} \u7aef\u53e3\uff1a{2}","cannot find the host {0} (from {1}). Check the name, or add it to ~/.ssh/config, then run --enable again":"\u627e\u4e0d\u5230\u4e3b\u673a {0}\uff08\u6765\u81ea {1}\uff09\u3002\u8bf7\u68c0\u67e5\u540d\u5b57\uff0c\u6216\u8005\u628a\u5b83\u52a0\u8fdb ~/.ssh/config\uff0c\u7136\u540e\u518d\u8fd0\u884c\u4e00\u6b21 --enable","cannot read {0}":"\u8bfb\u4e0d\u4e86 {0}","cannot tell which terminal app runs this session; set SSH_PASTE_TERMINAL to its bundle id":"\u5224\u65ad\u4e0d\u51fa\u8fd9\u4e2a\u4f1a\u8bdd\u8dd1\u5728\u54ea\u4e2a\u7ec8\u7aef\u7a0b\u5e8f\u91cc\uff1b\u8bf7\u628a SSH_PASTE_TERMINAL \u8bbe\u4e3a\u5b83\u7684 bundle id","clipboard and window APIs available":"\u526a\u8d34\u677f\u548c\u7a97\u53e3 API \u53ef\u7528","clipboard: image, {0} bytes":"\u526a\u8d34\u677f\uff1a\u56fe\u7247\uff0c{0} \u5b57\u8282","clipboard: readable (no image right now)":"\u526a\u8d34\u677f\uff1a\u53ef\u4ee5\u8bfb\u53d6\uff08\u73b0\u5728\u6ca1\u6709\u56fe\u7247\uff09","clipboard: {0}":"\u526a\u8d34\u677f\uff1a{0}","clipboard: {0} copied image file(s)":"\u526a\u8d34\u677f\uff1a\u590d\u5236\u4e86 {0} \u4e2a\u56fe\u7247\u6587\u4ef6","could not check the login to {0} now ({1}); ssh-paste --doctor {0} tests it":"\u73b0\u5728\u68c0\u67e5\u4e0d\u4e86\u80fd\u4e0d\u80fd\u767b\u5f55 {0}\uff08{1}\uff09\uff1bssh-paste --doctor {0} \u53ef\u4ee5\u6d4b\u8bd5","could not create a private folder in {0}":"\u6ca1\u6cd5\u5728 {0} \u91cc\u5efa\u79c1\u6709\u76ee\u5f55","could not download {0}: {1}":"\u4e0b\u8f7d {0} \u5931\u8d25\uff1a{1}","could not keep {0}":"\u6ca1\u6cd5\u4fdd\u7559 {0}","could not start {0}: {1}":"\u542f\u52a8 {0} \u5931\u8d25\uff1a{1}","could not write the clipboard":"\u5199\u4e0d\u4e86\u526a\u8d34\u677f","could not write the clipboard: the clipboard changed since it was read":"\u5199\u4e0d\u4e86\u526a\u8d34\u677f\uff1a\u8bfb\u53d6\u4e4b\u540e\u526a\u8d34\u677f\u53c8\u53d8\u4e86","could not write the clipboard: {0}":"\u5199\u4e0d\u4e86\u526a\u8d34\u677f\uff1a{0}","could not write {0}":"\u5199\u4e0d\u4e86 {0}","images in {0} on the server, kept {1}":"\u56fe\u7247\u653e\u5728\u670d\u52a1\u5668\u7684 {0}\uff0c\u4fdd\u7559 {1}","images in {0} on the server, never deleted":"\u56fe\u7247\u653e\u5728\u670d\u52a1\u5668\u7684 {0}\uff0c\u6c38\u4e0d\u5220\u9664","in ssh-agent (Get-Service ssh-agent; ssh-add). Password-only logins cannot work.":"ssh-agent \u91cc\u7684 key\uff08Get-Service ssh-agent; ssh-add\uff09\u3002\u53ea\u80fd\u7528\u5bc6\u7801\u767b\u5f55\u7684\u670d\u52a1\u5668\u4e0d\u884c\u3002","in ssh-agent (ssh-add --apple-use-keychain). Password-only logins cannot work.":"ssh-agent \u91cc\u7684 key\uff08ssh-add --apple-use-keychain\uff09\u3002\u53ea\u80fd\u7528\u5bc6\u7801\u767b\u5f55\u7684\u670d\u52a1\u5668\u4e0d\u884c\u3002","install.ps1 does not match SHA256SUMS; nothing was changed":"install.ps1 \u548c SHA256SUMS \u5bf9\u4e0d\u4e0a\uff1b\u4ec0\u4e48\u90fd\u6ca1\u6539","install.sh does not match SHA256SUMS; nothing was changed":"install.sh \u548c SHA256SUMS \u5bf9\u4e0d\u4e0a\uff1b\u4ec0\u4e48\u90fd\u6ca1\u6539","macOS {0}, osascript JavaScript":"macOS {0}\uff0cosascript JavaScript","no address":"\u6ca1\u6709\u5730\u5740","nothing changed in ~/.ssh/config:":"~/.ssh/config \u6ca1\u6709\u6539\u52a8\uff1a","pasteboard and window APIs available (change count {0}, front window {1})":"\u526a\u8d34\u677f\u548c\u7a97\u53e3 API \u53ef\u7528\uff08\u53d8\u5316\u8ba1\u6570 {0}\uff0c\u524d\u53f0\u7a97\u53e3 {1}\uff09","pasteboard or window API: {0}":"\u526a\u8d34\u677f\u6216\u7a97\u53e3 API\uff1a{0}","shasum failed: {0}":"shasum \u5931\u8d25\uff1a{0}","size mismatch: sent {0} bytes, server has {1}":"\u5927\u5c0f\u5bf9\u4e0d\u4e0a\uff1a\u53d1\u9001\u4e86 {0} \u5b57\u8282\uff0c\u670d\u52a1\u5668\u4e0a\u662f {1}","ssh -G {0} failed: {1}":"ssh -G {0} \u5931\u8d25\uff1a{1}","ssh could not verify the host key of {0}: run ssh {0} to see why (a new host asks you to accept its key)":"ssh \u6ca1\u6cd5\u9a8c\u8bc1 {0} \u7684 host key\uff1a\u8fd0\u884c ssh {0} \u770b\u770b\u539f\u56e0\uff08\u65b0\u4e3b\u673a\u4f1a\u8bf7\u4f60\u786e\u8ba4\u63a5\u53d7\u5b83\u7684 key\uff09","ssh did not finish in {0} seconds (stdin sent: {1}); ssh said: {2}":"ssh \u5728 {0} \u79d2\u5185\u6ca1\u6709\u7ed3\u675f\uff08\u5df2\u53d1\u9001 stdin\uff1a{1}\uff09\uff1bssh \u8bf4\uff1a{2}","ssh did not finish in {0} seconds; ssh said: {1}":"ssh \u5728 {0} \u79d2\u5185\u6ca1\u6709\u7ed3\u675f\uff1bssh \u8bf4\uff1a{1}","ssh exited with {0}, and the server sent no home folder":"ssh \u9000\u51fa\u7801 {0}\uff0c\u670d\u52a1\u5668\u6ca1\u6709\u8fd4\u56de\u5bb6\u76ee\u5f55","ssh mode: enabled, \"ssh {0}\" pastes screenshots ({1})":"ssh \u6a21\u5f0f\uff1a\u5df2\u542f\u7528\uff0c\"ssh {0}\" \u53ef\u4ee5\u7c98\u8d34\u622a\u56fe\uff08{1}\uff09","ssh option -{0} needs an argument":"ssh \u9009\u9879 -{0} \u9700\u8981\u4e00\u4e2a\u53c2\u6570","ssh-paste is not enabled for any host.":"ssh-paste \u6ca1\u6709\u4e3a\u4efb\u4f55\u4e3b\u673a\u542f\u7528\u3002","ssh-paste is not enabled for: {0}":"ssh-paste \u6ca1\u6709\u4e3a\u8fd9\u4e9b\u4e3b\u673a\u542f\u7528\uff1a{0}","ssh-paste is uninstalled.":"ssh-paste \u5df2\u5378\u8f7d\u3002","ssh-paste was installed with Scoop. Remove it with: scoop uninstall ssh-paste (it also runs ssh-paste --disable)":"ssh-paste \u662f\u7528 Scoop \u5b89\u88c5\u7684\uff0c\u5378\u8f7d\u65f6\u4e5f\u4f1a\u8fd0\u884c ssh-paste --disable\u3002\u5378\u8f7d\u8bf7\u8fd0\u884c\uff1ascoop uninstall ssh-paste","ssh-paste was installed with Scoop. Update it with: scoop update ssh-paste":"ssh-paste \u662f\u7528 Scoop \u5b89\u88c5\u7684\u3002\u5347\u7ea7\u8bf7\u8fd0\u884c\uff1ascoop update ssh-paste","ssh-paste {0} - paste Windows screenshots into programs running over SSH":"ssh-paste {0} - \u628a Windows \u622a\u56fe\u7c98\u8d34\u5230\u901a\u8fc7 SSH \u8fd0\u884c\u7684\u7a0b\u5e8f\u91cc","ssh-paste {0} - paste macOS screenshots into programs running over SSH":"ssh-paste {0} - \u628a macOS \u622a\u56fe\u7c98\u8d34\u5230\u901a\u8fc7 SSH \u8fd0\u884c\u7684\u7a0b\u5e8f\u91cc","ssh-paste: --dir {0} is a folder of this Mac; if you meant the home folder on the server, quote the ~: --dir \u0027{1}\u0027":"ssh-paste\uff1a--dir {0} \u662f\u8fd9\u53f0 Mac \u4e0a\u7684\u76ee\u5f55\uff1b\u5982\u679c\u4f60\u6307\u7684\u662f\u670d\u52a1\u5668\u4e0a\u7684\u5bb6\u76ee\u5f55\uff0c\u8bf7\u7ed9 ~ \u52a0\u5f15\u53f7\uff1a--dir \u0027{1}\u0027","ssh-paste: --proxy needs %h %p %n":"ssh-paste\uff1a--proxy \u9700\u8981 %h %p %n","ssh-paste: connection error: {0}":"ssh-paste\uff1a\u8fde\u63a5\u51fa\u9519\uff1a{0}","ssh-paste: screenshot paste is off: {0}":"ssh-paste\uff1a\u622a\u56fe\u7c98\u8d34\u5df2\u5173\u95ed\uff1a{0}","ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Cmd+V.":"ssh-paste\uff1a\u622a\u56fe\u7c98\u8d34\u5df2\u5f00\u542f\u3002\u590d\u5236\u4e00\u5f20\u622a\u56fe\uff0c\u56de\u5230\u8fd9\u91cc\uff0c\u6309 Cmd+V\u3002","ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Ctrl+V.":"ssh-paste\uff1a\u622a\u56fe\u7c98\u8d34\u5df2\u5f00\u542f\u3002\u590d\u5236\u4e00\u5f20\u622a\u56fe\uff0c\u56de\u5230\u8fd9\u91cc\uff0c\u6309 Ctrl+V\u3002","ssh-paste: screenshot paste was off for this session: {0}":"ssh-paste\uff1a\u8fd9\u4e2a\u4f1a\u8bdd\u6ca1\u6709\u622a\u56fe\u7c98\u8d34\uff1a{0}","ssh-paste: ssh mode serves {0}, with its own --keep and --dir; change them with ssh-paste --enable --keep TIME --dir DIR {0}":"ssh-paste\uff1a{0} \u5df2\u7ecf\u7531 ssh \u6a21\u5f0f\u8d1f\u8d23\uff0c\u7528\u7684\u662f\u5b83\u81ea\u5df1\u7684 --keep \u548c --dir\uff1b\u8981\u4fee\u6539\u8bf7\u8fd0\u884c ssh-paste --enable --keep TIME --dir DIR {0}","ssh-paste: the server did not close the connection within 30 seconds":"ssh-paste\uff1a\u670d\u52a1\u5668 30 \u79d2\u5185\u6ca1\u6709\u5173\u95ed\u8fde\u63a5","ssh-paste: unknown command {0}; run ssh-paste --help":"ssh-paste\uff1a\u672a\u77e5\u547d\u4ee4 {0}\uff1b\u8bf7\u8fd0\u884c ssh-paste --help","ssh-paste: {0}":"ssh-paste\uff1a{0}","ssh-paste: {0} screenshot upload(s) failed: {1}":"ssh-paste\uff1a{0} \u6b21\u622a\u56fe\u4e0a\u4f20\u5931\u8d25\uff1a{1}","ssh.exe was not found. Add \"OpenSSH Client\" under Optional features in Windows Settings.":"\u627e\u4e0d\u5230 ssh.exe\u3002\u8bf7\u5728 Windows \u8bbe\u7f6e\u7684\"\u53ef\u9009\u529f\u80fd\"\u91cc\u6dfb\u52a0 \"OpenSSH Client\"\u3002","ssh: {0}":"ssh\uff1a{0}","ssh: {0} ({1})":"ssh\uff1a{0}\uff08{1}\uff09","terminal: {0}":"\u7ec8\u7aef\uff1a{0}","terminal: {0} (from {1}), no window on screen":"\u7ec8\u7aef\uff1a{0}\uff08\u6765\u81ea {1}\uff09\uff0c\u5c4f\u5e55\u4e0a\u6ca1\u6709\u7a97\u53e3","terminal: {0} (from {1}), window {2}":"\u7ec8\u7aef\uff1a{0}\uff08\u6765\u81ea {1}\uff09\uff0c\u7a97\u53e3 {2}","the folder {0} on the server is not yours alone (owned by you, not a link, not writable by group or others); use /tmp or such a folder":"\u670d\u52a1\u5668\u4e0a\u7684\u76ee\u5f55 {0} \u4e0d\u662f\u53ea\u5c5e\u4e8e\u4f60\u7684\uff08\u8981\u5f52\u4f60\u6240\u6709\u3001\u4e0d\u662f\u94fe\u63a5\u3001\u7ec4\u548c\u5176\u4ed6\u4eba\u90fd\u4e0d\u53ef\u5199\uff09\uff1b\u8bf7\u7528 /tmp \u6216\u8005\u6ee1\u8db3\u8fd9\u4e9b\u6761\u4ef6\u7684\u76ee\u5f55","the home folder on the server ({0}) makes {1}, which --dir cannot use; give an absolute --dir":"\u670d\u52a1\u5668\u4e0a\u7684\u5bb6\u76ee\u5f55\uff08{0}\uff09\u62fc\u51fa\u6765\u662f {1}\uff0c--dir \u7528\u4e0d\u4e86\uff1b\u8bf7\u7ed9 --dir \u5199\u5b8c\u6574\u8def\u5f84","the new ssh config text is not plain text":"\u65b0\u7684 ssh \u914d\u7f6e\u5185\u5bb9\u4e0d\u662f\u7eaf\u6587\u672c","the reply from ssh did not arrive in time":"ssh \u7684\u56de\u590d\u6ca1\u6709\u53ca\u65f6\u5230\u8fbe","the server cannot write to the folder {0} (--dir)":"\u670d\u52a1\u5668\u5199\u4e0d\u4e86\u76ee\u5f55 {0}\uff08--dir\uff09","the server received {0} of {1} bytes":"\u670d\u52a1\u5668\u53ea\u6536\u5230 {1} \u5b57\u8282\u4e2d\u7684 {0} \u5b57\u8282","the server sent no reply (is sh available there?)":"\u670d\u52a1\u5668\u6ca1\u6709\u56de\u590d\uff08\u90a3\u91cc\u6709 sh \u5417\uff1f\uff09","the ssh-paste block in the ssh config has no end marker; fix it by hand":"ssh \u914d\u7f6e\u91cc ssh-paste \u90a3\u6bb5\u7f3a\u5c11\u7ed3\u675f\u6807\u8bb0\uff1b\u8bf7\u624b\u52a8\u4fee\u597d","the ssh-paste command path contains a line break":"ssh-paste \u547d\u4ee4\u7684\u8def\u5f84\u91cc\u6709\u6362\u884c","the ssh-paste command path is not absolute: {0}":"ssh-paste \u547d\u4ee4\u7684\u8def\u5f84\u4e0d\u662f\u7edd\u5bf9\u8def\u5f84\uff1a{0}","the terminal app {0} (from {1}) is not running":"\u7ec8\u7aef\u7a0b\u5e8f {0}\uff08\u6765\u81ea {1}\uff09\u6ca1\u6709\u5728\u8fd0\u884c","the terminal app {0} has no window on screen":"\u7ec8\u7aef\u7a0b\u5e8f {0} \u5728\u5c4f\u5e55\u4e0a\u6ca1\u6709\u7a97\u53e3","unexpected path from the server: {0}":"\u670d\u52a1\u5668\u8fd4\u56de\u4e86\u610f\u6599\u4e4b\u5916\u7684\u8def\u5f84\uff1a{0}","unexpected reply from the server: {0}":"\u670d\u52a1\u5668\u8fd4\u56de\u4e86\u610f\u6599\u4e4b\u5916\u7684\u56de\u590d\uff1a{0}","unknown --proxy arguments: {0}":"\u672a\u77e5\u7684 --proxy \u53c2\u6570\uff1a{0}","unknown ssh option -{0}":"\u672a\u77e5\u7684 ssh \u9009\u9879 -{0}","upload to {0}: {1}":"\u4e0a\u4f20\u5230 {0}\uff1a{1}","upload to {0}: {1} ({2:N1} s)":"\u4e0a\u4f20\u5230 {0}\uff1a{1}\uff08{2:N1} \u79d2\uff09","upload to {0}: {1} ({2} s)":"\u4e0a\u4f20\u5230 {0}\uff1a{1}\uff08{2} \u79d2\uff09","usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]":"\u7528\u6cd5\uff1assh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]","usage: ssh-paste [--keep TIME] [--dir DIR] [ssh options] HOST":"\u7528\u6cd5\uff1assh-paste [--keep TIME] [--dir DIR] [ssh options] HOST","use a host name or a Host alias from ~/.ssh/config (no user@, no options): {0}":"\u8bf7\u5199\u4e3b\u673a\u540d\u6216 ~/.ssh/config \u91cc\u7684 Host \u522b\u540d\uff08\u4e0d\u5e26 user@\uff0c\u4e0d\u5e26\u9009\u9879\uff09\uff1a{0}","{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}":"{0} \u5df2\u7ecf\u7528\u4e86 {1}\uff08{2}\uff09\uff1bssh-paste \u6ca1\u6cd5\u63a5\u7ba1\u5b83\u7684\u8fde\u63a5\u3002\u8bf7\u6539\u7528 wrapper \u6a21\u5f0f\uff1assh-paste {0}","{0} changed while ssh-paste was editing it; run the command again":"ssh-paste \u4fee\u6539 {0} \u65f6\u5b83\u88ab\u522b\u5904\u6539\u52a8\u4e86\uff1b\u8bf7\u518d\u8fd0\u884c\u4e00\u6b21","{0} closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config":"{0} \u56e0\u4e3a\u8bd5\u4e86\u592a\u591a\u628a key \u800c\u65ad\u5f00\u4e86\u767b\u5f55\uff1a\u8bf7\u5728 ~/.ssh/config \u91cc\u7528 IdentityFile \u548c IdentitiesOnly yes \u6307\u5b9a\u6b63\u786e\u7684\u90a3\u628a","{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add":"{0} \u6ca1\u6709\u63a5\u53d7\u4e0a\u4f20\u7528\u7684 key\uff08\u4e0a\u4f20\u6ca1\u6cd5\u8f93\u5bc6\u7801\uff09\uff1a\u8bf7\u914d\u7f6e\u4e00\u628a key\uff0c\u6216\u8005\u7528 ssh-add \u52a0\u8f7d\u4f60\u5df2\u6709\u7684 key","{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor {0} shows how":"{0} \u6ca1\u6709\u63a5\u53d7\u4e0a\u4f20\u7528\u7684 key\uff08\u4e0a\u4f20\u6ca1\u6cd5\u8f93\u5bc6\u7801\uff09\uff1a\u8bf7\u914d\u7f6e\u4e00\u628a key\uff0c\u6216\u8005\u7528 ssh-add \u52a0\u8f7d\u4f60\u5df2\u6709\u7684 key\uff1bssh-paste --doctor {0} \u4f1a\u544a\u8bc9\u4f60\u600e\u4e48\u505a","{0} did not finish in {1} seconds":"{0} \u5728 {1} \u79d2\u5185\u6ca1\u6709\u7ed3\u675f","{0} needs a value":"{0} \u9700\u8981\u4e00\u4e2a\u503c","{0} refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none {0} uploads over new connections":"{0} \u62d2\u7edd\u5728\u8fd9\u6761\u8fde\u63a5\u4e0a\u5f00\u7b2c\u4e8c\u4e2a\u4f1a\u8bdd\uff0c\u6240\u4ee5\u4e0a\u4f20\u6ca1\u6cd5\u5171\u7528\u5b83\uff1b\u914d\u597d key \u540e\uff0cssh-paste -S none {0} \u4f1a\u7528\u65b0\u8fde\u63a5\u4e0a\u4f20","{0} refused the login for uploads ({1})":"{0} \u62d2\u7edd\u4e86\u4e0a\u4f20\u7528\u7684\u767b\u5f55\uff08{1}\uff09","{0} wants a password or a one-time code ({1}), which uploads cannot type, so ssh-paste cannot upload to it":"{0} \u8981\u6c42\u8f93\u5165\u5bc6\u7801\u6216\u4e00\u6b21\u6027\u9a8c\u8bc1\u7801\uff08{1}\uff09\uff0c\u4e0a\u4f20\u6ca1\u6cd5\u8f93\u5165\uff0c\u6240\u4ee5 ssh-paste \u4f20\u4e0d\u4e86\u56fe\u7247","{0}: timed out":"{0}\uff1a\u8d85\u65f6","{0}: uploads log in without a password":"{0}\uff1a\u4e0a\u4f20\u53ef\u4ee5\u514d\u5bc6\u767b\u5f55","{0}: {1}":"{0}\uff1a{1}","{0}: {1} is {2} there":"{0}\uff1a{1} \u5728\u90a3\u53f0\u670d\u52a1\u5668\u4e0a\u662f {2}"}};
+// <<< locale
+var MESSAGES = null;
+
+function catalogName(tag, available) {
+    // ConvertTo-CatalogName: a language tag as a catalog name from available, 'en' for
+    // English (C, POSIX, en*), or null when no catalog has it.
+    var t = String(tag || '').split(/[.@]/)[0].replace(/_/g, '-');
+    if (t === 'C' || t === 'POSIX' || /^en(-|$)/i.test(t)) return 'en';
+    var low = t.toLowerCase();
+    if (/^zh(-|$)/.test(low)) {
+        if (/(^|-)(hant|tw|hk|mo)(-|$)/.test(low)) return null;
+        t = 'zh-CN';
+    }
+    var i;
+    for (i = 0; i < available.length; i++) if (available[i].toLowerCase() === t.toLowerCase()) return available[i];
+    var lang = t.split('-')[0].toLowerCase();
+    for (i = 0; i < available.length; i++) if (available[i].split('-')[0].toLowerCase() === lang) return available[i];
+    return null;
+}
+
+function uiLanguage(environment, systemLanguages, available) {
+    // Get-UiLanguage: SSH_PASTE_LANG; else the locale (LC_ALL, LC_MESSAGES, LANG), C or POSIX
+    // meaning English, then LANGUAGE, then the locale; else the system's preferred languages
+    // in order (macOS: NSLocale), skipping those with no catalog.
+    var c;
+    if (environment.SSH_PASTE_LANG) {
+        c = catalogName(environment.SSH_PASTE_LANG, available);
+        return c === null ? 'en' : c;
+    }
+    var locale = environment.LC_ALL || environment.LC_MESSAGES || environment.LANG || null;
+    if (locale) {
+        if (/^(C|POSIX)$/.test(locale.split(/[.@]/)[0])) return 'en';
+        var tags = String(environment.LANGUAGE || '').split(':').filter(function (x) { return x.length > 0; });
+        for (var j = 0; j < tags.length; j++) {
+            c = catalogName(tags[j], available);
+            if (c !== null) return c;
+        }
+        c = catalogName(locale, available);
+        return c === null ? 'en' : c;
+    }
+    for (var k = 0; k < (systemLanguages || []).length; k++) {
+        if (!systemLanguages[k]) continue;
+        c = catalogName(systemLanguages[k], available);
+        if (c !== null) return c;
+    }
+    return 'en';
+}
+
+function tr(template) {
+    // Get-Text: template in the user's language with {0}, {1}... from the other arguments.
+    var t = MESSAGES && Object.prototype.hasOwnProperty.call(MESSAGES, template) ? MESSAGES[template] : template;
+    var values = Array.prototype.slice.call(arguments, 1);
+    return values.length === 0 ? t : t.replace(/\{(\d+)\}/g, function (all, n) { return Number(n) < values.length ? String(values[Number(n)]) : all; });
+}
+
+function initLanguage() {
+    var environment = {};
+    ['SSH_PASTE_LANG', 'LANGUAGE', 'LC_ALL', 'LC_MESSAGES', 'LANG'].forEach(function (n) { environment[n] = env(n); });
+    var system = [];
+    try { system = ObjC.deepUnwrap($.NSLocale.preferredLanguages) || []; } catch (e) { system = []; }
+    var language = uiLanguage(environment, system, Object.keys(LOCALE_DATA));
+    MESSAGES = language === 'en' ? null : LOCALE_DATA[language] || null;
+}
+
 function run(argv) {
     initMac();
+    initLanguage();
     var code = 1;
     try {
         code = main(argv.map(String));
@@ -2352,6 +2426,7 @@ if (typeof module !== 'undefined' && module.exports) {
         readPasteSettings: readPasteSettings, proxySettings: proxySettings, replyPathPattern: replyPathPattern, uploadCacheHours: uploadCacheHours,
         settingsGroups: settingsGroups, disableMessage: disableMessage, sshModeSettings: sshModeSettings,
         sshFailure: sshFailure, failureFinal: failureFinal, loginAdvice: loginAdvice, loginReport: loginReport, keySetupLines: keySetupLines, keySetupTarget: keySetupTarget, enableRefusal: enableRefusal,
+        catalogName: catalogName, uiLanguage: uiLanguage, tr: tr, setMessages: function (m) { MESSAGES = m; }, LOCALE_DATA: LOCALE_DATA,
         muxEligible: muxEligible, muxSshArguments: muxSshArguments, muxUploadArguments: muxUploadArguments, uploadCommand: uploadCommand, MUX_HOST: MUX_HOST, formatShellWords: formatShellWords, keepClass: keepClass, absoluteDirectory: absoluteDirectory,
         serverSshArguments: serverSshArguments,
         SSH_FLAGS_NO_ARG: SSH_FLAGS_NO_ARG, SSH_FLAGS_WITH_ARG: SSH_FLAGS_WITH_ARG, SSH_KEEP_NO_ARG: SSH_KEEP_NO_ARG,

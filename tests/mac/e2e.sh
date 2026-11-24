@@ -96,6 +96,9 @@ if wait_for 20 ssh -o BatchMode=yes -o ConnectTimeout=2 ssh-paste-e2e true; then
 section 'install, --enable and --doctor'
 sh "$repo/install.sh" > "$work/install.out" 2>&1 || { fail 'install.sh'; cat "$work/install.out"; }
 check "$("$cmd" --version)" 0.0.0-dev 'ssh-paste --version'
+# The help in the user's language: the Chinese lines are not ASCII; English is.
+check "$(SSH_PASTE_LANG=zh-CN "$cmd" --help | LC_ALL=C grep -c '[^ -~]')" 18 'SSH_PASTE_LANG=zh-CN: the help is in Chinese (18 lines are not ASCII)'
+check "$(SSH_PASTE_LANG=en "$cmd" --help | LC_ALL=C grep -c '[^ -~]')" 0 'SSH_PASTE_LANG=en: the help is in English'
 # The server refuses a user it has no key for: --enable writes nothing and shows the commands.
 cp "$HOME/.ssh/config" "$work/config-before"
 "$cmd" --enable ssh-paste-e2e-nokey > "$work/nokey.out" 2>&1

@@ -6,6 +6,8 @@
 
 # shellcheck disable=SC2154 # $work is set by the script that sources this file.
 repo=$(cd "$(dirname "$0")/../.." && pwd)
+# The checks read ssh-paste's English messages, whatever the runner's language.
+export SSH_PASTE_LANG=en
 pbjs=$repo/tests/mac/pb.js
 failures=0
 

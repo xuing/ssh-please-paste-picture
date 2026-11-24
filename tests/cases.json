@@ -292,6 +292,27 @@
     {"Name":"cannot reach it","Said":"ssh: connect to host lab port 22: Connection refused","Refuse":false},
     {"Name":"no answer in time","Said":"ssh did not finish in 30 seconds","Refuse":false}
   ],
+  "uiLanguages": [
+    {"Name":"nothing set, English system","Env":{},"System":["en-US"],"Expected":"en"},
+    {"Name":"nothing set, Chinese system (Windows)","Env":{},"System":["zh-CN"],"Expected":"zh-CN"},
+    {"Name":"nothing set, Chinese system (macOS)","Env":{},"System":["zh-Hans-CN","en-US"],"Expected":"zh-CN"},
+    {"Name":"Traditional Chinese has no catalog yet","Env":{},"System":["zh-Hant-TW"],"Expected":"en"},
+    {"Name":"LANG","Env":{"LANG":"zh_CN.UTF-8"},"System":["en-US"],"Expected":"zh-CN"},
+    {"Name":"LC_ALL wins over LANG","Env":{"LC_ALL":"C","LANG":"zh_CN.UTF-8"},"System":["zh-CN"],"Expected":"en"},
+    {"Name":"LC_MESSAGES wins over LANG","Env":{"LC_MESSAGES":"zh_CN.UTF-8","LANG":"en_US.UTF-8"},"System":[],"Expected":"zh-CN"},
+    {"Name":"LANGUAGE, a list, when a locale is set","Env":{"LANGUAGE":"fr_FR:zh_CN:en","LANG":"en_US.UTF-8"},"System":[],"Expected":"zh-CN"},
+    {"Name":"a language set with no catalog means English","Env":{"LANG":"fr_FR.UTF-8"},"System":["zh-CN"],"Expected":"en"},
+    {"Name":"SSH_PASTE_LANG wins over everything","Env":{"SSH_PASTE_LANG":"en","LANG":"zh_CN.UTF-8"},"System":["zh-CN"],"Expected":"en"},
+    {"Name":"SSH_PASTE_LANG to Chinese","Env":{"SSH_PASTE_LANG":"zh-CN","LC_ALL":"C"},"System":[],"Expected":"zh-CN"},
+    {"Name":"POSIX","Env":{"LANG":"POSIX"},"System":["zh-CN"],"Expected":"en"},
+    {"Name":"Singapore Chinese","Env":{"LANG":"zh_SG.UTF-8"},"System":[],"Expected":"zh-CN"},
+    {"Name":"Hong Kong Chinese","Env":{"LANG":"zh_HK.UTF-8"},"System":[],"Expected":"en"},
+    {"Name":"LANGUAGE is ignored under the C locale, as in gettext","Env":{"LC_ALL":"C","LANGUAGE":"zh_CN"},"System":["zh-CN"],"Expected":"en"},
+    {"Name":"C.UTF-8 is the C locale","Env":{"LANG":"C.UTF-8","LANGUAGE":"zh_CN"},"System":[],"Expected":"en"},
+    {"Name":"LANGUAGE alone, no locale: the system language","Env":{"LANGUAGE":"zh_CN"},"System":["en-US"],"Expected":"en"},
+    {"Name":"the system list goes past a language with no catalog","Env":{},"System":["fr-FR","zh-Hans-CN","en-US"],"Expected":"zh-CN"},
+    {"Name":"English before Chinese in the system list","Env":{},"System":["en-US","zh-Hans-CN"],"Expected":"en"}
+  ],
   "shellWords": [
     {"Name":"plain words","Words":["--keep","7d","build"],"Expected":"--keep 7d build"},
     {"Name":"a ~ for the server","Words":["--dir","~/shots","build"],"Expected":"--dir '~/shots' build"},

@@ -58,7 +58,15 @@ try {
         Write-Host '== Ascii: files hold only printable ASCII'
         # Windows PowerShell 5.1 reads a file without a byte order mark as ANSI, so a
         # single non-ASCII character in a script would be mis-decoded on user machines.
-        $files = Get-RepoFile '*.ps1', '*.psd1', '*.cmd', '*.sh', '*.yml', '*.js', '*.json', 'src/ssh-paste-mac'
+        # The translation sources (src/locale/*.json) are the exception: people edit them in
+        # their own script; the clients carry them as ASCII \u escapes (tests/locale.js).
+        $files = @(Get-RepoFile '*.ps1', '*.psd1', '*.cmd', '*.sh', '*.yml', '*.js', '*.json', 'src/ssh-paste-mac' | Where-Object { $_ -notlike 'src/locale/*' })
+        foreach ($file in @(Get-RepoFile 'src/locale/*.json')) {
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $repo $file))
+            if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { Write-Problem $file 1 'has a byte order mark' }
+            try { [void](New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes) } catch { Write-Problem $file 1 'is not valid UTF-8' }
+            if ($bytes -contains 13) { Write-Problem $file 1 'has a carriage return' }
+        }
         foreach ($file in $files) {
             $bytes = [System.IO.File]::ReadAllBytes((Join-Path $repo $file))
             $line = 1

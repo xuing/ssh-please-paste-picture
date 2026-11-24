@@ -7,7 +7,8 @@ When the terminal is in front, it uploads the image to `/tmp` on the server and 
 
 ## Hard constraints
 
-- Every `.ps1`, `.psd1`, `.cmd`, `.sh`, `.yml`, `.js` and `.json` file and `src/ssh-paste-mac` is ASCII. Windows PowerShell 5.1 reads a file without a BOM as ANSI, so one non-ASCII byte breaks the script on user machines.
+- Every `.ps1`, `.psd1`, `.cmd`, `.sh`, `.yml`, `.js` and `.json` file and `src/ssh-paste-mac` is ASCII. Windows PowerShell 5.1 reads a file without a BOM as ANSI, so one non-ASCII byte breaks the script on user machines. The one exception is the translations in `src/locale/*.json` (UTF-8, no BOM): no client reads them; `node tests/locale.js --write` copies them into both clients as ASCII `\u` escapes, and a node test fails when a copy is stale.
+- User-facing messages go through `Get-Text '...'` (PowerShell) or `tr('...')` (JavaScript) with the full English text as one literal and `{0}` for values; a node test fails when a message has no translation in `src/locale/zh-CN.json`. Debug logs, `--version`, the server script, markers, and text that code parses stay English.
 - Code parses and runs on Windows PowerShell 5.1 and on PowerShell 7. Do not use `??`, `?.`, the ternary operator, `&&` or `||` in scripts.
 - In `--proxy` mode, stdout is the SSH byte stream. Write messages to `[Console]::Error` only, never with `Write-Host` or `Write-Output`.
 - Code that only runs on Windows (clipboard, windows, P/Invoke, the relay under Win32-OpenSSH, the launcher) needs a Windows run before you call it done. Linux tests cannot reach it. If you could not run it, the commit says so under "Not run:".

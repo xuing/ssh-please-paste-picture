@@ -23,6 +23,8 @@ serves the release files from http://127.0.0.1 with Python. It edits the real pr
 #>
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
+# The checks read ssh-paste's English messages, whatever the runner's language.
+$env:SSH_PASTE_LANG = 'en'
 
 if ($env:OS -ne 'Windows_NT') { Write-Host 'scoop.ps1 runs on Windows only.'; exit 2 }
 if ($env:CI -ne 'true') {

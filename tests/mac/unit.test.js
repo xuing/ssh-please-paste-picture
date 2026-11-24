@@ -1011,6 +1011,43 @@ test('the watcher: a pasteboard read between a writer\'s clear and its write', a
     });
 });
 
+test('messages in the user\'s language', async (t) => {
+    const locale = require('../locale.js');
+    await t.test('chooses the language as git does, then the system language (Get-UiLanguage)', () => {
+        for (const c of cases.uiLanguages) assert.equal(m.uiLanguage(c.Env, c.System, ['zh-CN']), c.Expected, c.Name);
+    });
+    await t.test('falls back to the English text, and fills {0}, {1}', () => {
+        m.setMessages(null);
+        assert.equal(m.tr('Enabled for: {0}', 'h1, h2'), 'Enabled for: h1, h2');
+        m.setMessages({ 'Enabled for: {0}': 'X {0} Y' });
+        assert.equal(m.tr('Enabled for: {0}', 'h1'), 'X h1 Y');
+        assert.equal(m.tr('not there {0}', 'a'), 'not there a');
+        m.setMessages(null);
+    });
+    await t.test('both clients carry the catalogs of src/locale, as tests/locale.js writes them', () => {
+        for (const f of locale.expected()) assert.ok(f.before === f.after, path.relative(path.join(__dirname, '..', '..'), f.full) + ' is stale: run node tests/locale.js --write');
+        assert.deepEqual(m.LOCALE_DATA, locale.catalogs());
+    });
+    await t.test('every message in the code has a translation, every translation a message, with the same {n}', () => {
+        const root = path.join(__dirname, '..', '..');
+        const used = new Set();
+        const ps = fs.readFileSync(path.join(root, 'src', 'ssh-paste.ps1'), 'utf8');
+        const code = (text, comment) => text.split(/\r?\n/).filter((l) => !comment.test(l)).join('\n');
+        for (const x of code(ps, /^\s*#/).matchAll(/Get-Text '((?:[^']|'')*)'/g)) used.add(x[1].replace(/''/g, "'"));
+        const js = fs.readFileSync(path.join(root, 'src', 'ssh-paste.js'), 'utf8');
+        for (const x of code(js, /^\s*\/\//).matchAll(/\btr\('((?:[^'\\]|\\.)*)'/g)) used.add(x[1].replace(/\\'/g, "'"));
+        // {0}, and PowerShell's composite format items such as {2:N1}
+        const holes = (s) => (s.match(/\{\d+(?::[^}]*)?\}/g) || []).sort().join(',');
+        for (const [name, catalog] of Object.entries(locale.catalogs())) {
+            for (const u of used) assert.ok(Object.prototype.hasOwnProperty.call(catalog, u), name + ' has no translation of: ' + u);
+            for (const [key, value] of Object.entries(catalog)) {
+                assert.ok(used.has(key), name + ' translates text the code no longer has: ' + key);
+                assert.equal(holes(value), holes(key), name + ': the {n} of the translation differ for: ' + key);
+            }
+        }
+    });
+});
+
 test('wrapper mode shares the session\'s connection (ControlMaster) for uploads', async (t) => {
     const parse = (args) => m.splitSshArguments(args.concat(['alice@h']));
     const plain = { controlmaster: 'false', controlpersist: 'no', forkafterauthentication: 'no' };
@@ -1498,7 +1535,7 @@ test('repository guards', async (t) => {
         }
         for (const c of commands) assert.ok(launcher.includes(c), 'src/ssh-paste-mac handles ' + c);
         assert.deepEqual(m.usage().match(/^ {2}ssh-paste .*$/gm).map((l) => l.replace(/\s{2,}.*$/, '')),
-            read('src/ssh-paste.ps1').match(/^ {8}' {2}ssh-paste .*$/gm).map((l) => l.trim().slice(1).replace(/\s{2,}.*$/, '').trim()),
+            read('src/ssh-paste.ps1').match(/^ {8}(?:\(Get-Text )?' {2}ssh-paste .*$/gm).map((l) => l.trim().replace(/^\(Get-Text /, '').slice(1).replace(/\s{2,}.*$/, '').trim()),
             'the same commands as the Windows help text');
     });
     await t.test('the macOS files are ASCII without carriage returns, and the launcher is executable', () => {
