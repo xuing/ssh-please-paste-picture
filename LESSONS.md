@@ -180,8 +180,10 @@ on it can pass once by luck and leave the real cause in place.
   next runs failed the same way. A CI experiment (four ways of writing, before
   and while the watcher runs, macOS 15 and 26) showed 1 or 2 of 2 read at
   random with every way, so neither the way of writing nor the watcher; the
-  cause is not known (not tried on a Mac that a person uses). The test now
-  follows what it reads, as 89aef10 had it.
+  cause is not known. On a Mac that a person uses, `pb.js file-paths` read
+  both files of a two-file copy made in Finder itself (once, 2026-11-24); the
+  stand-in writer was not tried there. The test now follows what it reads, as
+  89aef10 had it.
 - Seen 1x (2026-11-24).
 
 **A test that covers whatever it finds must fail when something it should
