@@ -1459,6 +1459,46 @@ Describe 'paste settings (--keep, --dir)' {
         $s.Dropped | Should -Be $Dropped
     }
 
+    It 'chooses the language as git does, then the system language: <Name>' -ForEach $sharedCases.uiLanguages {
+        $environment = @{}
+        foreach ($p in $Env.PSObject.Properties) { $environment[$p.Name] = [string]$p.Value }
+        Get-UiLanguage $environment @($System) @('zh-CN') | Should -BeExactly $Expected
+    }
+
+    It 'falls back to the English text, and fills {0}, {1}' {
+        $saved = $script:Messages
+        try {
+            $script:Messages = $null
+            Get-Text 'Enabled for: {0}' 'h1, h2' | Should -BeExactly 'Enabled for: h1, h2'
+            $script:Messages = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+            $script:Messages['Enabled for: {0}'] = 'X {0} Y'
+            Get-Text 'Enabled for: {0}' 'h1' | Should -BeExactly 'X h1 Y'
+            Get-Text 'not there {0}' 'a' | Should -BeExactly 'not there a'
+            Get-Text 'two {0} {1}' 'a' 'b' | Should -BeExactly 'two a b'
+        } finally { $script:Messages = $saved }
+    }
+
+    It 'speaks the chosen language when run, and English with SSH_PASTE_LANG=en' -Skip:$onWindows {
+        # Run as a user runs it (Initialize-Language happens only then). Not on Windows: a runner's
+        # console code page may not show Chinese, and the script then keeps English by design.
+        $script = Join-Path $script:RepoRoot 'src/ssh-paste.ps1'
+        $old = $env:SSH_PASTE_LANG
+        try {
+            $env:SSH_PASTE_LANG = 'zh-CN'
+            $zh = (& pwsh -NoProfile -File $script --help) -join "`n"
+            $env:SSH_PASTE_LANG = 'en'
+            $en = (& pwsh -NoProfile -File $script --help) -join "`n"
+        } finally { $env:SSH_PASTE_LANG = $old }
+        $zh | Should -Match '[\u4e00-\u9fff]'
+        $en | Should -Not -Match '[^\x00-\x7f]'
+        $en | Should -Match 'Start:'
+    }
+
+    It 'reads the catalogs it carries' {
+        $data = ConvertFrom-Json $script:LocaleData
+        @($data.PSObject.Properties | ForEach-Object { $_.Name }) | Should -Contain 'zh-CN'
+    }
+
     It 'writes words as a command line to type again: <Name>' -ForEach $sharedCases.shellWords {
         Format-ShellWords $Words | Should -BeExactly $Expected
     }

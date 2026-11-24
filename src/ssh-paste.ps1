@@ -95,6 +95,116 @@ $script:SshDropOptions = @('requesttty', 'remotecommand', 'localcommand', 'permi
     'loglevel', 'proxyusefdpass', 'enableescapecommandline', 'permitremoteopen', 'streamlocalbindunlink')
 
 # ---------------------------------------------------------------------------
+# Messages in the user's language
+# ---------------------------------------------------------------------------
+# The English text in the code is the key (as in gettext): Get-Text 'Enabled for: {0}' $h
+# looks it up in the catalog of the user's language and falls back to the English text.
+# The catalogs are src/locale/<name>.json; the line below is generated from them, ASCII
+# with \u escapes, by `node tests/locale.js --write`, and a test fails when it is stale.
+# >>> locale
+$script:LocaleData = '{"zh-CN":{"    Copy a screenshot (Cmd+Ctrl+Shift+4) or image files in Finder, switch to":"    \u622a\u4e00\u5f20\u56fe\uff08Cmd+Ctrl+Shift+4\uff09\uff0c\u6216\u5728 Finder \u91cc\u590d\u5236\u56fe\u7247\u6587\u4ef6\uff0c\u5207\u6362\u5230","    Copy a screenshot (Win+Shift+S), switch to the ssh window, press Ctrl+V:":"    \u622a\u4e00\u5f20\u56fe\uff08Win+Shift+S\uff09\uff0c\u5207\u6362\u5230 ssh \u7a97\u53e3\uff0c\u6309 Ctrl+V\uff1a","    paste the image.":"    \u7c98\u8d34\u7684\u4ecd\u7136\u662f\u56fe\u7247\u3002","    pasted. Other apps still paste the image.":"    \u7c98\u8d34\u7684\u662f\u8def\u5f84\u3002\u5728\u5176\u4ed6\u7a0b\u5e8f\u91cc\u7c98\u8d34\u7684\u4ecd\u7136\u662f\u56fe\u7247\u3002","    ssh myhost                   then connect as usual":"    ssh myhost                   \u7136\u540e\u7167\u5e38\u8fde\u63a5","    ssh-paste --enable myhost    once per host":"    ssh-paste --enable myhost    \u6bcf\u53f0\u4e3b\u673a\u8fd0\u884c\u4e00\u6b21","    the image goes to the server and its path is pasted. Other apps still":"    \u56fe\u7247\u4f1a\u4f20\u5230\u670d\u52a1\u5668\u4e0a\uff0c\u7c98\u8d34\u7684\u662f\u5b83\u7684\u8def\u5f84\u3002\u5728\u5176\u4ed6\u7a0b\u5e8f\u91cc","    the ssh window, press Cmd+V: the image goes to the server and its path is":"    ssh \u7a97\u53e3\uff0c\u6309 Cmd+V\uff1a\u56fe\u7247\u4f1a\u4f20\u5230\u670d\u52a1\u5668\u4e0a\uff0c","  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)":"  --dir DIR     \u56fe\u7247\u653e\u5728 DIR\uff1a/tmp\uff08\u9ed8\u8ba4\uff09\u3001\u4efb\u610f /path\uff0c\u6216 ~/path\uff08~ \u8981\u52a0\u5f15\u53f7\uff09","  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never":"  --keep TIME   \u8d85\u8fc7 TIME \u5c31\u5220\u9664\uff1a30m\u30012h\u30017d\uff08\u9ed8\u8ba4 1d\uff09\uff0c\u6216 never\uff08\u4e0d\u5220\uff09","  Add the other ssh options this host needs to the ssh line.":"  \u8fd9\u53f0\u4e3b\u673a\u8fd8\u9700\u8981\u7684\u5176\u4ed6 ssh \u9009\u9879\uff0c\u8bf7\u81ea\u5df1\u52a0\u5230 ssh \u90a3\u4e00\u884c\u91cc\u3002","  Add the other ssh options this host needs to the ssh-copy-id line.":"  \u8fd9\u53f0\u4e3b\u673a\u8fd8\u9700\u8981\u7684\u5176\u4ed6 ssh \u9009\u9879\uff0c\u8bf7\u81ea\u5df1\u52a0\u5230 ssh-copy-id \u90a3\u4e00\u884c\u91cc\u3002","  If you log in with ssh -i KEY, or ~/.ssh/config names an IdentityFile for this host,":"  \u5982\u679c\u4f60\u5e73\u65f6\u7528 ssh -i KEY \u767b\u5f55\uff0c\u6216\u8005 ~/.ssh/config \u7ed9\u8fd9\u53f0\u4e3b\u673a\u6307\u5b9a\u4e86 IdentityFile\uff0c","  Or paste there without a key: ssh-paste {0} (wrapper mode) shares the connection you log in to.":"  \u4e5f\u53ef\u4ee5\u4e0d\u914d key\uff1assh-paste {0}\uff08wrapper \u6a21\u5f0f\uff09\u4f1a\u5171\u7528\u4f60\u767b\u5f55\u7684\u90a3\u6761\u8fde\u63a5\u6765\u4e0a\u4f20\u3002","  Set up a key (once; ssh asks your password one last time):":"  \u914d\u7f6e key\uff08\u53ea\u9700\u4e00\u6b21\uff1bssh \u4f1a\u6700\u540e\u4e00\u6b21\u63d0\u793a\u4f60\u8f93\u5165\u5bc6\u7801\uff09\uff1a","  Set up a key (once; ssh-copy-id asks your password one last time):":"  \u914d\u7f6e key\uff08\u53ea\u9700\u4e00\u6b21\uff1bssh-copy-id \u4f1a\u6700\u540e\u4e00\u6b21\u63d0\u793a\u4f60\u8f93\u5165\u5bc6\u7801\uff09\uff1a","  With a passphrase, also run: {0}":"  \u5982\u679c\u7ed9 key \u8bbe\u4e86 passphrase\uff0c\u8fd8\u8981\u8fd0\u884c\uff1a{0}","  info  ssh mode is off for {0}. Turn it on: ssh-paste --enable {0}   (or use: ssh-paste {0})":"  info  {0} \u6ca1\u6709\u5f00\u542f ssh \u6a21\u5f0f\u3002\u5f00\u542f\uff1assh-paste --enable {0}   \uff08\u6216\u8005\u7528\uff1assh-paste {0}\uff09","  ssh-keygen: press Enter at each question (no passphrase: Windows\u0027 ssh-agent is off":"  ssh-keygen\uff1a\u6bcf\u4e2a\u95ee\u9898\u76f4\u63a5\u6309\u56de\u8f66\uff08\u4e0d\u8bbe passphrase\uff1aWindows \u7684 ssh-agent \u9ed8\u8ba4\u5173\u95ed\uff0c","  ssh-keygen: press Enter at each question; if the key file exists already, answer n.":"  ssh-keygen\uff1a\u6bcf\u4e2a\u95ee\u9898\u76f4\u63a5\u6309\u56de\u8f66\uff1b\u5982\u679c\u63d0\u793a key \u6587\u4ef6\u5df2\u7ecf\u5b58\u5728\uff0c\u56de\u7b54 n\u3002","  ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)":"  ssh-paste --disable [HOST...]           \u64a4\u9500 --enable\uff08\u4e0d\u5199\u4e3b\u673a\u5c31\u662f\u5168\u90e8\uff09","  ssh-paste --doctor [HOST]               check this computer and test an upload to HOST":"  ssh-paste --doctor [HOST]               \u68c0\u67e5\u672c\u673a\uff0c\u5e76\u8bd5\u7740\u5f80 HOST \u4e0a\u4f20\u4e00\u6b21","  ssh-paste --enable [OPTIONS] HOST...    make plain \"ssh HOST\" paste screenshots (edits ~/.ssh/config)":"  ssh-paste --enable [OPTIONS] HOST...    \u8ba9\u666e\u901a\u7684 \"ssh HOST\" \u4e5f\u80fd\u7c98\u8d34\u622a\u56fe\uff08\u4f1a\u4fee\u6539 ~/.ssh/config\uff09","  ssh-paste --uninstall                   remove ssh-paste and everything it changed":"  ssh-paste --uninstall                   \u5378\u8f7d ssh-paste\uff0c\u5e76\u64a4\u9500\u5b83\u505a\u8fc7\u7684\u6240\u6709\u6539\u52a8","  ssh-paste --update                      install the latest release":"  ssh-paste --update                      \u5b89\u88c5\u6700\u65b0\u7248\u672c","  ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config":"  ssh-paste [OPTIONS] [ssh options] HOST  wrapper \u6a21\u5f0f\uff1a\u5e26\u622a\u56fe\u7c98\u8d34\u7684 ssh\uff0c\u4e0d\u6539\u914d\u7f6e","  unless an administrator turns it on); if the key file exists already, answer n.":"  \u8981\u7ba1\u7406\u5458\u624d\u80fd\u6253\u5f00\uff09\uff1b\u5982\u679c\u63d0\u793a key \u6587\u4ef6\u5df2\u7ecf\u5b58\u5728\uff0c\u56de\u7b54 n\u3002","  use that key instead, and name it with IdentityFile in the Host entry.":"  \u5c31\u6362\u7528\u90a3\u628a key\uff0c\u5e76\u5728 Host \u914d\u7f6e\u91cc\u7528 IdentityFile \u5199\u660e\u3002","--dir is given twice":"--dir \u5199\u4e86\u4e24\u6b21","--dir takes a folder on the server, /... or ~/... (quote ~ so that your shell keeps it), with letters, digits and . _ - / only: {0}":"--dir \u8981\u5199\u670d\u52a1\u5668\u4e0a\u7684\u76ee\u5f55\uff1a/... \u6216 ~/...\uff08~ \u8981\u52a0\u5f15\u53f7\uff0c\u514d\u5f97\u88ab\u4f60\u672c\u673a\u7684 shell \u5c55\u5f00\uff09\uff0c\u53ea\u80fd\u542b\u5b57\u6bcd\u3001\u6570\u5b57\u548c . _ - /\uff1a{0}","--keep is at least 10m: {0}":"--keep \u81f3\u5c11\u662f 10m\uff1a{0}","--keep is at most 3650d: {0}":"--keep \u6700\u591a\u662f 3650d\uff1a{0}","--keep is given twice":"--keep \u5199\u4e86\u4e24\u6b21","--keep takes a time like 30m, 2h or 7d, or never: {0}":"--keep \u8981\u5199 30m\u30012h\u30017d \u8fd9\u6837\u7684\u65f6\u95f4\uff0c\u6216\u8005 never\uff1a{0}","--update takes no options: {0}":"--update \u4e0d\u63a5\u53d7\u9009\u9879\uff1a{0}","Add a host to test an upload: ssh-paste --doctor myhost":"\u52a0\u4e0a\u4e3b\u673a\u540d\uff0c\u53ef\u4ee5\u8bd5\u4e00\u6b21\u4e0a\u4f20\uff1assh-paste --doctor myhost","Add a host to test an upload: {0}":"\u52a0\u4e0a\u4e3b\u673a\u540d\uff0c\u53ef\u4ee5\u8bd5\u4e00\u6b21\u4e0a\u4f20\uff1a{0}","All commands:":"\u5168\u90e8\u547d\u4ee4\uff1a","Already enabled with these settings; nothing changed.":"\u5df2\u7ecf\u7528\u8fd9\u4e9b\u8bbe\u7f6e\u542f\u7528\u8fc7\u4e86\uff0c\u6ca1\u6709\u6539\u52a8\u3002","Changed for: {0}":"\u5df2\u4fee\u6539\uff1a{0}","Deleted {0}":"\u5df2\u5220\u9664 {0}","Disabled for: {0}":"\u5df2\u505c\u7528\uff1a{0}","Downloading the latest release from {0}":"\u6b63\u5728\u4ece {0} \u4e0b\u8f7d\u6700\u65b0\u7248\u672c","Enabled for: {0}":"\u5df2\u542f\u7528\uff1a{0}","Images already uploaded stay in /tmp on your servers until the server clears /tmp.":"\u5df2\u7ecf\u4e0a\u4f20\u7684\u56fe\u7247\u4f1a\u7559\u5728\u670d\u52a1\u5668\u7684 /tmp \u91cc\uff0c\u76f4\u5230\u670d\u52a1\u5668\u6e05\u7406 /tmp\u3002","Now connect as usual: ssh {0}":"\u73b0\u5728\u7167\u5e38\u8fde\u63a5\uff1assh {0}","OPTIONS (images on the server; per host for --enable):":"OPTIONS\uff08\u670d\u52a1\u5668\u4e0a\u7684\u56fe\u7247\uff1b\u914d\u5408 --enable \u65f6\u6309\u4e3b\u673a\u5206\u522b\u8bbe\u7f6e\uff09\uff1a","Or without changing ~/.ssh/config:":"\u6216\u8005\u4e0d\u6539 ~/.ssh/config\uff1a","PowerShell runs in {0} mode here (AppLocker or App Control policy)":"\u8fd9\u53f0\u7535\u8111\u4e0a\u7684 PowerShell \u8fd0\u884c\u5728 {0} \u6a21\u5f0f\uff08AppLocker \u6216 App Control \u7b56\u7565\uff09","Removed from your PATH: {0}":"\u5df2\u4ece PATH \u4e2d\u79fb\u9664\uff1a{0}","Run: ssh-paste --doctor {0}":"\u8bf7\u8fd0\u884c\uff1assh-paste --doctor {0}","SSH_PASTE_LAUNCHER is not set; run this through the ssh-paste command":"\u6ca1\u6709\u8bbe\u7f6e SSH_PASTE_LAUNCHER\uff1b\u8bf7\u901a\u8fc7 ssh-paste \u547d\u4ee4\u6765\u8fd0\u884c","Scoop installed ssh-paste without the apps\\ssh-paste\\current junction (its no_junction setting), so no path to it stays after scoop update. Use wrapper mode instead: ssh-paste HOST":"Scoop \u5b89\u88c5 ssh-paste \u65f6\u6ca1\u6709\u5efa\u7acb apps\\ssh-paste\\current \u94fe\u63a5\uff08\u5b83\u7684 no_junction \u8bbe\u7f6e\uff09\uff0cscoop update \u4e4b\u540e\u5c31\u6ca1\u6709\u56fa\u5b9a\u7684\u8def\u5f84\u53ef\u7528\u3002\u8bf7\u6539\u7528 wrapper \u6a21\u5f0f\uff1assh-paste HOST","Start:":"\u5f00\u59cb\uff1a","Then run again: ssh-paste --enable {0}":"\u7136\u540e\u518d\u8fd0\u884c\u4e00\u6b21\uff1assh-paste --enable {0}","This block is at the top of {0}:":"\u8fd9\u6bb5\u914d\u7f6e\u5728 {0} \u7684\u6700\u524d\u9762\uff1a","To delete them now: {0}":"\u60f3\u73b0\u5728\u5c31\u5220\u6389\uff1a{0}","Uploads use a second, non-interactive ssh connection, so the server must":"\u4e0a\u4f20\u7528\u7684\u662f\u53e6\u4e00\u6761\u4e0d\u80fd\u4ea4\u4e92\u7684 ssh \u8fde\u63a5\uff0c\u6240\u4ee5\u670d\u52a1\u5668\u5fc5\u987b","accept your key without a prompt: a key without a passphrase, or a key loaded":"\u4e0d\u7ecf\u63d0\u793a\u5c31\u63a5\u53d7\u4f60\u7684 key\uff1a\u4e00\u628a\u6ca1\u6709 passphrase \u7684 key\uff0c\u6216\u8005\u5df2\u7ecf\u52a0\u8f7d\u5230","bad --dir: {0}":"--dir \u4e0d\u5bf9\uff1a{0}","bad control socket: {0}":"\u63a7\u5236 socket \u4e0d\u5bf9\uff1a{0}","bad image extension: {0}":"\u56fe\u7247\u6269\u5c55\u540d\u4e0d\u5bf9\uff1a{0}","bad image hash: {0}":"\u56fe\u7247\u54c8\u5e0c\u4e0d\u5bf9\uff1a{0}","cannot ask {0} for its home folder ({1}); give an absolute --dir":"\u6ca1\u6cd5\u95ee {0} \u5b83\u7684\u5bb6\u76ee\u5f55\u5728\u54ea\uff08{1}\uff09\uff1b\u8bf7\u7ed9 --dir \u5199\u5b8c\u6574\u8def\u5f84","cannot connect to {0} port {1}: {2}":"\u8fde\u4e0d\u4e0a {0} \u7684 {1} \u7aef\u53e3\uff1a{2}","cannot find the host {0} (from {1}). Check the name, or add it to ~/.ssh/config, then run --enable again":"\u627e\u4e0d\u5230\u4e3b\u673a {0}\uff08\u6765\u81ea {1}\uff09\u3002\u8bf7\u68c0\u67e5\u540d\u5b57\uff0c\u6216\u8005\u628a\u5b83\u52a0\u8fdb ~/.ssh/config\uff0c\u7136\u540e\u518d\u8fd0\u884c\u4e00\u6b21 --enable","cannot read {0}":"\u8bfb\u4e0d\u4e86 {0}","cannot tell which terminal app runs this session; set SSH_PASTE_TERMINAL to its bundle id":"\u5224\u65ad\u4e0d\u51fa\u8fd9\u4e2a\u4f1a\u8bdd\u8dd1\u5728\u54ea\u4e2a\u7ec8\u7aef\u7a0b\u5e8f\u91cc\uff1b\u8bf7\u628a SSH_PASTE_TERMINAL \u8bbe\u4e3a\u5b83\u7684 bundle id","clipboard and window APIs available":"\u526a\u8d34\u677f\u548c\u7a97\u53e3 API \u53ef\u7528","clipboard: image, {0} bytes":"\u526a\u8d34\u677f\uff1a\u56fe\u7247\uff0c{0} \u5b57\u8282","clipboard: readable (no image right now)":"\u526a\u8d34\u677f\uff1a\u53ef\u4ee5\u8bfb\u53d6\uff08\u73b0\u5728\u6ca1\u6709\u56fe\u7247\uff09","clipboard: {0}":"\u526a\u8d34\u677f\uff1a{0}","clipboard: {0} copied image file(s)":"\u526a\u8d34\u677f\uff1a\u590d\u5236\u4e86 {0} \u4e2a\u56fe\u7247\u6587\u4ef6","could not check the login to {0} now ({1}); ssh-paste --doctor {0} tests it":"\u73b0\u5728\u68c0\u67e5\u4e0d\u4e86\u80fd\u4e0d\u80fd\u767b\u5f55 {0}\uff08{1}\uff09\uff1bssh-paste --doctor {0} \u53ef\u4ee5\u6d4b\u8bd5","could not create a private folder in {0}":"\u6ca1\u6cd5\u5728 {0} \u91cc\u5efa\u79c1\u6709\u76ee\u5f55","could not download {0}: {1}":"\u4e0b\u8f7d {0} \u5931\u8d25\uff1a{1}","could not keep {0}":"\u6ca1\u6cd5\u4fdd\u7559 {0}","could not start {0}: {1}":"\u542f\u52a8 {0} \u5931\u8d25\uff1a{1}","could not write the clipboard":"\u5199\u4e0d\u4e86\u526a\u8d34\u677f","could not write the clipboard: the clipboard changed since it was read":"\u5199\u4e0d\u4e86\u526a\u8d34\u677f\uff1a\u8bfb\u53d6\u4e4b\u540e\u526a\u8d34\u677f\u53c8\u53d8\u4e86","could not write the clipboard: {0}":"\u5199\u4e0d\u4e86\u526a\u8d34\u677f\uff1a{0}","could not write {0}":"\u5199\u4e0d\u4e86 {0}","images in {0} on the server, kept {1}":"\u56fe\u7247\u653e\u5728\u670d\u52a1\u5668\u7684 {0}\uff0c\u4fdd\u7559 {1}","images in {0} on the server, never deleted":"\u56fe\u7247\u653e\u5728\u670d\u52a1\u5668\u7684 {0}\uff0c\u6c38\u4e0d\u5220\u9664","in ssh-agent (Get-Service ssh-agent; ssh-add). Password-only logins cannot work.":"ssh-agent \u91cc\u7684 key\uff08Get-Service ssh-agent; ssh-add\uff09\u3002\u53ea\u80fd\u7528\u5bc6\u7801\u767b\u5f55\u7684\u670d\u52a1\u5668\u4e0d\u884c\u3002","in ssh-agent (ssh-add --apple-use-keychain). Password-only logins cannot work.":"ssh-agent \u91cc\u7684 key\uff08ssh-add --apple-use-keychain\uff09\u3002\u53ea\u80fd\u7528\u5bc6\u7801\u767b\u5f55\u7684\u670d\u52a1\u5668\u4e0d\u884c\u3002","install.ps1 does not match SHA256SUMS; nothing was changed":"install.ps1 \u548c SHA256SUMS \u5bf9\u4e0d\u4e0a\uff1b\u4ec0\u4e48\u90fd\u6ca1\u6539","install.sh does not match SHA256SUMS; nothing was changed":"install.sh \u548c SHA256SUMS \u5bf9\u4e0d\u4e0a\uff1b\u4ec0\u4e48\u90fd\u6ca1\u6539","macOS {0}, osascript JavaScript":"macOS {0}\uff0cosascript JavaScript","no address":"\u6ca1\u6709\u5730\u5740","nothing changed in ~/.ssh/config:":"~/.ssh/config \u6ca1\u6709\u6539\u52a8\uff1a","pasteboard and window APIs available (change count {0}, front window {1})":"\u526a\u8d34\u677f\u548c\u7a97\u53e3 API \u53ef\u7528\uff08\u53d8\u5316\u8ba1\u6570 {0}\uff0c\u524d\u53f0\u7a97\u53e3 {1}\uff09","pasteboard or window API: {0}":"\u526a\u8d34\u677f\u6216\u7a97\u53e3 API\uff1a{0}","shasum failed: {0}":"shasum \u5931\u8d25\uff1a{0}","size mismatch: sent {0} bytes, server has {1}":"\u5927\u5c0f\u5bf9\u4e0d\u4e0a\uff1a\u53d1\u9001\u4e86 {0} \u5b57\u8282\uff0c\u670d\u52a1\u5668\u4e0a\u662f {1}","ssh -G {0} failed: {1}":"ssh -G {0} \u5931\u8d25\uff1a{1}","ssh could not verify the host key of {0}: run ssh {0} to see why (a new host asks you to accept its key)":"ssh \u6ca1\u6cd5\u9a8c\u8bc1 {0} \u7684 host key\uff1a\u8fd0\u884c ssh {0} \u770b\u770b\u539f\u56e0\uff08\u65b0\u4e3b\u673a\u4f1a\u8bf7\u4f60\u786e\u8ba4\u63a5\u53d7\u5b83\u7684 key\uff09","ssh did not finish in {0} seconds (stdin sent: {1}); ssh said: {2}":"ssh \u5728 {0} \u79d2\u5185\u6ca1\u6709\u7ed3\u675f\uff08\u5df2\u53d1\u9001 stdin\uff1a{1}\uff09\uff1bssh \u8bf4\uff1a{2}","ssh did not finish in {0} seconds; ssh said: {1}":"ssh \u5728 {0} \u79d2\u5185\u6ca1\u6709\u7ed3\u675f\uff1bssh \u8bf4\uff1a{1}","ssh exited with {0}, and the server sent no home folder":"ssh \u9000\u51fa\u7801 {0}\uff0c\u670d\u52a1\u5668\u6ca1\u6709\u8fd4\u56de\u5bb6\u76ee\u5f55","ssh mode: enabled, \"ssh {0}\" pastes screenshots ({1})":"ssh \u6a21\u5f0f\uff1a\u5df2\u542f\u7528\uff0c\"ssh {0}\" \u53ef\u4ee5\u7c98\u8d34\u622a\u56fe\uff08{1}\uff09","ssh option -{0} needs an argument":"ssh \u9009\u9879 -{0} \u9700\u8981\u4e00\u4e2a\u53c2\u6570","ssh-paste is not enabled for any host.":"ssh-paste \u6ca1\u6709\u4e3a\u4efb\u4f55\u4e3b\u673a\u542f\u7528\u3002","ssh-paste is not enabled for: {0}":"ssh-paste \u6ca1\u6709\u4e3a\u8fd9\u4e9b\u4e3b\u673a\u542f\u7528\uff1a{0}","ssh-paste is uninstalled.":"ssh-paste \u5df2\u5378\u8f7d\u3002","ssh-paste was installed with Scoop. Remove it with: scoop uninstall ssh-paste (it also runs ssh-paste --disable)":"ssh-paste \u662f\u7528 Scoop \u5b89\u88c5\u7684\uff0c\u5378\u8f7d\u65f6\u4e5f\u4f1a\u8fd0\u884c ssh-paste --disable\u3002\u5378\u8f7d\u8bf7\u8fd0\u884c\uff1ascoop uninstall ssh-paste","ssh-paste was installed with Scoop. Update it with: scoop update ssh-paste":"ssh-paste \u662f\u7528 Scoop \u5b89\u88c5\u7684\u3002\u5347\u7ea7\u8bf7\u8fd0\u884c\uff1ascoop update ssh-paste","ssh-paste {0} - paste Windows screenshots into programs running over SSH":"ssh-paste {0} - \u628a Windows \u622a\u56fe\u7c98\u8d34\u5230\u901a\u8fc7 SSH \u8fd0\u884c\u7684\u7a0b\u5e8f\u91cc","ssh-paste {0} - paste macOS screenshots into programs running over SSH":"ssh-paste {0} - \u628a macOS \u622a\u56fe\u7c98\u8d34\u5230\u901a\u8fc7 SSH \u8fd0\u884c\u7684\u7a0b\u5e8f\u91cc","ssh-paste: --dir {0} is a folder of this Mac; if you meant the home folder on the server, quote the ~: --dir \u0027{1}\u0027":"ssh-paste\uff1a--dir {0} \u662f\u8fd9\u53f0 Mac \u4e0a\u7684\u76ee\u5f55\uff1b\u5982\u679c\u4f60\u6307\u7684\u662f\u670d\u52a1\u5668\u4e0a\u7684\u5bb6\u76ee\u5f55\uff0c\u8bf7\u7ed9 ~ \u52a0\u5f15\u53f7\uff1a--dir \u0027{1}\u0027","ssh-paste: --proxy needs %h %p %n":"ssh-paste\uff1a--proxy \u9700\u8981 %h %p %n","ssh-paste: connection error: {0}":"ssh-paste\uff1a\u8fde\u63a5\u51fa\u9519\uff1a{0}","ssh-paste: screenshot paste is off: {0}":"ssh-paste\uff1a\u622a\u56fe\u7c98\u8d34\u5df2\u5173\u95ed\uff1a{0}","ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Cmd+V.":"ssh-paste\uff1a\u622a\u56fe\u7c98\u8d34\u5df2\u5f00\u542f\u3002\u590d\u5236\u4e00\u5f20\u622a\u56fe\uff0c\u56de\u5230\u8fd9\u91cc\uff0c\u6309 Cmd+V\u3002","ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Ctrl+V.":"ssh-paste\uff1a\u622a\u56fe\u7c98\u8d34\u5df2\u5f00\u542f\u3002\u590d\u5236\u4e00\u5f20\u622a\u56fe\uff0c\u56de\u5230\u8fd9\u91cc\uff0c\u6309 Ctrl+V\u3002","ssh-paste: screenshot paste was off for this session: {0}":"ssh-paste\uff1a\u8fd9\u4e2a\u4f1a\u8bdd\u6ca1\u6709\u622a\u56fe\u7c98\u8d34\uff1a{0}","ssh-paste: ssh mode serves {0}, with its own --keep and --dir; change them with ssh-paste --enable --keep TIME --dir DIR {0}":"ssh-paste\uff1a{0} \u5df2\u7ecf\u7531 ssh \u6a21\u5f0f\u8d1f\u8d23\uff0c\u7528\u7684\u662f\u5b83\u81ea\u5df1\u7684 --keep \u548c --dir\uff1b\u8981\u4fee\u6539\u8bf7\u8fd0\u884c ssh-paste --enable --keep TIME --dir DIR {0}","ssh-paste: the server did not close the connection within 30 seconds":"ssh-paste\uff1a\u670d\u52a1\u5668 30 \u79d2\u5185\u6ca1\u6709\u5173\u95ed\u8fde\u63a5","ssh-paste: unknown command {0}; run ssh-paste --help":"ssh-paste\uff1a\u672a\u77e5\u547d\u4ee4 {0}\uff1b\u8bf7\u8fd0\u884c ssh-paste --help","ssh-paste: {0}":"ssh-paste\uff1a{0}","ssh-paste: {0} screenshot upload(s) failed: {1}":"ssh-paste\uff1a{0} \u6b21\u622a\u56fe\u4e0a\u4f20\u5931\u8d25\uff1a{1}","ssh.exe was not found. Add \"OpenSSH Client\" under Optional features in Windows Settings.":"\u627e\u4e0d\u5230 ssh.exe\u3002\u8bf7\u5728 Windows \u8bbe\u7f6e\u7684\"\u53ef\u9009\u529f\u80fd\"\u91cc\u6dfb\u52a0 \"OpenSSH Client\"\u3002","ssh: {0}":"ssh\uff1a{0}","ssh: {0} ({1})":"ssh\uff1a{0}\uff08{1}\uff09","terminal: {0}":"\u7ec8\u7aef\uff1a{0}","terminal: {0} (from {1}), no window on screen":"\u7ec8\u7aef\uff1a{0}\uff08\u6765\u81ea {1}\uff09\uff0c\u5c4f\u5e55\u4e0a\u6ca1\u6709\u7a97\u53e3","terminal: {0} (from {1}), window {2}":"\u7ec8\u7aef\uff1a{0}\uff08\u6765\u81ea {1}\uff09\uff0c\u7a97\u53e3 {2}","the folder {0} on the server is not yours alone (owned by you, not a link, not writable by group or others); use /tmp or such a folder":"\u670d\u52a1\u5668\u4e0a\u7684\u76ee\u5f55 {0} \u4e0d\u662f\u53ea\u5c5e\u4e8e\u4f60\u7684\uff08\u8981\u5f52\u4f60\u6240\u6709\u3001\u4e0d\u662f\u94fe\u63a5\u3001\u7ec4\u548c\u5176\u4ed6\u4eba\u90fd\u4e0d\u53ef\u5199\uff09\uff1b\u8bf7\u7528 /tmp \u6216\u8005\u6ee1\u8db3\u8fd9\u4e9b\u6761\u4ef6\u7684\u76ee\u5f55","the home folder on the server ({0}) makes {1}, which --dir cannot use; give an absolute --dir":"\u670d\u52a1\u5668\u4e0a\u7684\u5bb6\u76ee\u5f55\uff08{0}\uff09\u62fc\u51fa\u6765\u662f {1}\uff0c--dir \u7528\u4e0d\u4e86\uff1b\u8bf7\u7ed9 --dir \u5199\u5b8c\u6574\u8def\u5f84","the new ssh config text is not plain text":"\u65b0\u7684 ssh \u914d\u7f6e\u5185\u5bb9\u4e0d\u662f\u7eaf\u6587\u672c","the reply from ssh did not arrive in time":"ssh \u7684\u56de\u590d\u6ca1\u6709\u53ca\u65f6\u5230\u8fbe","the server cannot write to the folder {0} (--dir)":"\u670d\u52a1\u5668\u5199\u4e0d\u4e86\u76ee\u5f55 {0}\uff08--dir\uff09","the server received {0} of {1} bytes":"\u670d\u52a1\u5668\u53ea\u6536\u5230 {1} \u5b57\u8282\u4e2d\u7684 {0} \u5b57\u8282","the server sent no reply (is sh available there?)":"\u670d\u52a1\u5668\u6ca1\u6709\u56de\u590d\uff08\u90a3\u91cc\u6709 sh \u5417\uff1f\uff09","the ssh-paste block in the ssh config has no end marker; fix it by hand":"ssh \u914d\u7f6e\u91cc ssh-paste \u90a3\u6bb5\u7f3a\u5c11\u7ed3\u675f\u6807\u8bb0\uff1b\u8bf7\u624b\u52a8\u4fee\u597d","the ssh-paste command path contains a line break":"ssh-paste \u547d\u4ee4\u7684\u8def\u5f84\u91cc\u6709\u6362\u884c","the ssh-paste command path is not absolute: {0}":"ssh-paste \u547d\u4ee4\u7684\u8def\u5f84\u4e0d\u662f\u7edd\u5bf9\u8def\u5f84\uff1a{0}","the terminal app {0} (from {1}) is not running":"\u7ec8\u7aef\u7a0b\u5e8f {0}\uff08\u6765\u81ea {1}\uff09\u6ca1\u6709\u5728\u8fd0\u884c","the terminal app {0} has no window on screen":"\u7ec8\u7aef\u7a0b\u5e8f {0} \u5728\u5c4f\u5e55\u4e0a\u6ca1\u6709\u7a97\u53e3","unexpected path from the server: {0}":"\u670d\u52a1\u5668\u8fd4\u56de\u4e86\u610f\u6599\u4e4b\u5916\u7684\u8def\u5f84\uff1a{0}","unexpected reply from the server: {0}":"\u670d\u52a1\u5668\u8fd4\u56de\u4e86\u610f\u6599\u4e4b\u5916\u7684\u56de\u590d\uff1a{0}","unknown --proxy arguments: {0}":"\u672a\u77e5\u7684 --proxy \u53c2\u6570\uff1a{0}","unknown ssh option -{0}":"\u672a\u77e5\u7684 ssh \u9009\u9879 -{0}","upload to {0}: {1}":"\u4e0a\u4f20\u5230 {0}\uff1a{1}","upload to {0}: {1} ({2:N1} s)":"\u4e0a\u4f20\u5230 {0}\uff1a{1}\uff08{2:N1} \u79d2\uff09","upload to {0}: {1} ({2} s)":"\u4e0a\u4f20\u5230 {0}\uff1a{1}\uff08{2} \u79d2\uff09","usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]":"\u7528\u6cd5\uff1assh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]","usage: ssh-paste [--keep TIME] [--dir DIR] [ssh options] HOST":"\u7528\u6cd5\uff1assh-paste [--keep TIME] [--dir DIR] [ssh options] HOST","use a host name or a Host alias from ~/.ssh/config (no user@, no options): {0}":"\u8bf7\u5199\u4e3b\u673a\u540d\u6216 ~/.ssh/config \u91cc\u7684 Host \u522b\u540d\uff08\u4e0d\u5e26 user@\uff0c\u4e0d\u5e26\u9009\u9879\uff09\uff1a{0}","{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}":"{0} \u5df2\u7ecf\u7528\u4e86 {1}\uff08{2}\uff09\uff1bssh-paste \u6ca1\u6cd5\u63a5\u7ba1\u5b83\u7684\u8fde\u63a5\u3002\u8bf7\u6539\u7528 wrapper \u6a21\u5f0f\uff1assh-paste {0}","{0} changed while ssh-paste was editing it; run the command again":"ssh-paste \u4fee\u6539 {0} \u65f6\u5b83\u88ab\u522b\u5904\u6539\u52a8\u4e86\uff1b\u8bf7\u518d\u8fd0\u884c\u4e00\u6b21","{0} closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config":"{0} \u56e0\u4e3a\u8bd5\u4e86\u592a\u591a\u628a key \u800c\u65ad\u5f00\u4e86\u767b\u5f55\uff1a\u8bf7\u5728 ~/.ssh/config \u91cc\u7528 IdentityFile \u548c IdentitiesOnly yes \u6307\u5b9a\u6b63\u786e\u7684\u90a3\u628a","{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add":"{0} \u6ca1\u6709\u63a5\u53d7\u4e0a\u4f20\u7528\u7684 key\uff08\u4e0a\u4f20\u6ca1\u6cd5\u8f93\u5bc6\u7801\uff09\uff1a\u8bf7\u914d\u7f6e\u4e00\u628a key\uff0c\u6216\u8005\u7528 ssh-add \u52a0\u8f7d\u4f60\u5df2\u6709\u7684 key","{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor {0} shows how":"{0} \u6ca1\u6709\u63a5\u53d7\u4e0a\u4f20\u7528\u7684 key\uff08\u4e0a\u4f20\u6ca1\u6cd5\u8f93\u5bc6\u7801\uff09\uff1a\u8bf7\u914d\u7f6e\u4e00\u628a key\uff0c\u6216\u8005\u7528 ssh-add \u52a0\u8f7d\u4f60\u5df2\u6709\u7684 key\uff1bssh-paste --doctor {0} \u4f1a\u544a\u8bc9\u4f60\u600e\u4e48\u505a","{0} did not finish in {1} seconds":"{0} \u5728 {1} \u79d2\u5185\u6ca1\u6709\u7ed3\u675f","{0} needs a value":"{0} \u9700\u8981\u4e00\u4e2a\u503c","{0} refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none {0} uploads over new connections":"{0} \u62d2\u7edd\u5728\u8fd9\u6761\u8fde\u63a5\u4e0a\u5f00\u7b2c\u4e8c\u4e2a\u4f1a\u8bdd\uff0c\u6240\u4ee5\u4e0a\u4f20\u6ca1\u6cd5\u5171\u7528\u5b83\uff1b\u914d\u597d key \u540e\uff0cssh-paste -S none {0} \u4f1a\u7528\u65b0\u8fde\u63a5\u4e0a\u4f20","{0} refused the login for uploads ({1})":"{0} \u62d2\u7edd\u4e86\u4e0a\u4f20\u7528\u7684\u767b\u5f55\uff08{1}\uff09","{0} wants a password or a one-time code ({1}), which uploads cannot type, so ssh-paste cannot upload to it":"{0} \u8981\u6c42\u8f93\u5165\u5bc6\u7801\u6216\u4e00\u6b21\u6027\u9a8c\u8bc1\u7801\uff08{1}\uff09\uff0c\u4e0a\u4f20\u6ca1\u6cd5\u8f93\u5165\uff0c\u6240\u4ee5 ssh-paste \u4f20\u4e0d\u4e86\u56fe\u7247","{0}: timed out":"{0}\uff1a\u8d85\u65f6","{0}: uploads log in without a password":"{0}\uff1a\u4e0a\u4f20\u53ef\u4ee5\u514d\u5bc6\u767b\u5f55","{0}: {1}":"{0}\uff1a{1}","{0}: {1} is {2} there":"{0}\uff1a{1} \u5728\u90a3\u53f0\u670d\u52a1\u5668\u4e0a\u662f {2}"}}'
+# <<< locale
+$script:Messages = $null
+
+function ConvertTo-CatalogName {
+    # A language tag (zh_CN.UTF-8, zh-Hans-CN, en_US, C) as a catalog name from Available,
+    # 'en' for English (C, POSIX, en*), or $null when no catalog has it.
+    param([string]$Tag, [string[]]$Available)
+    $t = ($Tag -split '[.@]')[0].Replace('_', '-')
+    if ($t -ceq 'C' -or $t -ceq 'POSIX' -or $t -match '^en(-|$)') { return 'en' }
+    $low = $t.ToLowerInvariant()
+    if ($low -match '^zh(-|$)') {
+        # Simplified Chinese unless the tag says Traditional or a region that writes it.
+        if ($low -match '(^|-)(hant|tw|hk|mo)(-|$)') { return $null }
+        $t = 'zh-CN'
+    }
+    foreach ($a in @($Available)) { if ($a.ToLowerInvariant() -ceq $t.ToLowerInvariant()) { return $a } }
+    $lang = ($t -split '-')[0].ToLowerInvariant()
+    foreach ($a in @($Available)) { if ((($a -split '-')[0]).ToLowerInvariant() -ceq $lang) { return $a } }
+    return $null
+}
+
+function Get-UiLanguage {
+    # The language for messages, chosen as gettext does: SSH_PASTE_LANG first (ours); else
+    # the locale from LC_ALL, LC_MESSAGES or LANG (the first set), where C or POSIX means
+    # English; then LANGUAGE, a list, which gettext reads only when the locale is not C; then
+    # the locale itself. When no locale variable is set, the system's preferred languages in
+    # order (Windows: CurrentUICulture; macOS: NSLocale), skipping those with no catalog.
+    # (uiLanguage in src/ssh-paste.js; tests/cases.json uiLanguages.)
+    param([hashtable]$Environment, [string[]]$SystemLanguages, [string[]]$Available)
+    $own = [string]$Environment['SSH_PASTE_LANG']
+    if ($own) {
+        $c = ConvertTo-CatalogName $own $Available
+        if ($null -ne $c) { return $c }
+        return 'en'
+    }
+    $locale = $null
+    foreach ($name in @('LC_ALL', 'LC_MESSAGES', 'LANG')) {
+        $value = [string]$Environment[$name]
+        if ($value) { $locale = $value; break }
+    }
+    if ($null -ne $locale) {
+        if (($locale -split '[.@]')[0] -cmatch '^(C|POSIX)\z') { return 'en' }
+        foreach ($tag in @(([string]$Environment['LANGUAGE']) -split ':' | Where-Object { $_ })) {
+            $c = ConvertTo-CatalogName $tag $Available
+            if ($null -ne $c) { return $c }
+        }
+        $c = ConvertTo-CatalogName $locale $Available
+        if ($null -ne $c) { return $c }
+        return 'en'
+    }
+    foreach ($tag in @($SystemLanguages)) {
+        if ([string]::IsNullOrEmpty($tag)) { continue }
+        $c = ConvertTo-CatalogName $tag $Available
+        if ($null -ne $c) { return $c }
+    }
+    return 'en'
+}
+
+function Initialize-Language {
+    # Picks the catalog once, before any message is written. Choosing a language must never
+    # stop the program: in ConstrainedLanguage mode (AppLocker, App Control), on any error, and
+    # when the console cannot show the language (Windows PowerShell 5.1 writes stderr in the
+    # console code page, so Chinese on code page 437 would become question marks), English.
+    $script:Messages = $null
+    try {
+        if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') { return }
+        Set-UiLanguage
+    } catch { $script:Messages = $null }
+}
+
+function Set-UiLanguage {
+    $data = ConvertFrom-Json $script:LocaleData
+    $available = @($data.PSObject.Properties | ForEach-Object { $_.Name })
+    $environment = @{}
+    foreach ($name in @('SSH_PASTE_LANG', 'LANGUAGE', 'LC_ALL', 'LC_MESSAGES', 'LANG')) { $environment[$name] = [Environment]::GetEnvironmentVariable($name) }
+    $language = Get-UiLanguage $environment @([System.Globalization.CultureInfo]::CurrentUICulture.Name) $available
+    $script:Messages = $null
+    if ($language -ceq 'en') { return }
+    $messages = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+    foreach ($p in $data.$language.PSObject.Properties) { $messages[$p.Name] = [string]$p.Value }
+    if (-not (Test-ConsoleCanShow (@($messages.Values) -join ''))) { return }
+    $script:Messages = $messages
+}
+
+function Test-ConsoleCanShow {
+    # Whether the console's output encoding keeps every character of Text.
+    param([string]$Text)
+    $encoding = [Console]::OutputEncoding
+    return ($encoding.GetString($encoding.GetBytes($Text)) -ceq $Text)
+}
+
+function Get-Text {
+    # Template in the user's language, with {0}, {1}... filled from Values; the English
+    # template when the catalog has no translation (or no catalog is chosen).
+    param([string]$Template, [Parameter(ValueFromRemainingArguments = $true)][object[]]$Values)
+    $t = $Template
+    if ($null -ne $script:Messages -and $script:Messages.ContainsKey($Template)) { $t = $script:Messages[$Template] }
+    if ($null -eq $Values -or $Values.Count -eq 0) { return $t }
+    return ($t -f $Values)
+}
+
+# ---------------------------------------------------------------------------
 # Pure helpers (no Windows APIs; covered by the Pester tests on any platform)
 # ---------------------------------------------------------------------------
 
@@ -176,13 +286,13 @@ function Split-SshArguments {
                         $value = $token.Substring($j + 1)
                     } else {
                         $i++
-                        if ($i -ge $Argv.Count) { throw "ssh option -$letter needs an argument" }
+                        if ($i -ge $Argv.Count) { throw (Get-Text 'ssh option -{0} needs an argument' $letter) }
                         $value = [string]$Argv[$i]
                     }
                     [void]$options.Add(@{ Flag = $letter; Value = $value; After = $after })
                     $j = $token.Length
                 } else {
-                    throw "unknown ssh option -$letter"
+                    throw (Get-Text 'unknown ssh option -{0}' $letter)
                 }
             }
             $i++
@@ -255,7 +365,7 @@ function Get-UploadSshArguments {
     if ($Hash -cnotmatch '^[0-9a-f]{32}\z') { throw "bad image hash: $Hash" }
     if ($script:ImageExtensions -cnotcontains $Ext) { throw "bad image extension: $Ext" }
     $minutes = ConvertTo-KeepMinutes $Keep
-    if (-not (Test-ServerDirectory $Dir) -or $Dir.StartsWith('~')) { throw "bad --dir: $Dir" }
+    if (-not (Test-ServerDirectory $Dir) -or $Dir.StartsWith('~')) { throw (Get-Text 'bad --dir: {0}' $Dir) }
     $argv = New-Object System.Collections.ArrayList
     foreach ($a in (Get-ServerSshArguments -Parsed $Parsed -NoProxy:$NoProxy -SshVersion $SshVersion -Pin $Pin)) { [void]$argv.Add($a) }
     # The folder in single quotes, as the remote login shell reads the command.
@@ -323,7 +433,7 @@ function ConvertTo-AbsoluteDirectory {
     if (-not $Dir.StartsWith('~')) { return $Dir }
     $abs = $HomeDir.TrimEnd('/') + $Dir.Substring(1)
     if (-not $abs.StartsWith('/') -or -not (Test-ServerDirectory $abs)) {
-        throw ("the home folder on the server ({0}) makes {1}, which --dir cannot use; give an absolute --dir" -f $HomeDir, $abs)
+        throw (Get-Text 'the home folder on the server ({0}) makes {1}, which --dir cannot use; give an absolute --dir' $HomeDir $abs)
     }
     return $abs
 }
@@ -341,7 +451,7 @@ function Test-ServerLogin {
     if ($r.ExitCode -eq 0 -and $line.StartsWith('/')) { return @{ Home = $line; Error = $null } }
     $err = ([string]$r.Err).Trim()
     if ($err) { $err = ('ssh exited with {0}: {1}' -f $r.ExitCode, $err) }
-    else { $err = ('ssh exited with {0}, and the server sent no home folder' -f $r.ExitCode) }
+    else { $err = (Get-Text 'ssh exited with {0}, and the server sent no home folder' $r.ExitCode) }
     return @{ Home = $null; Error = $err }
 }
 
@@ -355,7 +465,7 @@ function Get-ServerHome {
 
 function Get-HomeError {
     param([string]$HostName, [string]$ErrorText)
-    return ('cannot ask {0} for its home folder ({1}); give an absolute --dir' -f $HostName, (Get-LoginReport $HostName $ErrorText))
+    return (Get-Text 'cannot ask {0} for its home folder ({1}); give an absolute --dir' $HostName (Get-LoginReport $HostName $ErrorText))
 }
 
 function Get-ImageHash {
@@ -417,16 +527,16 @@ function Read-UploadReply {
     # The last non-empty line of the reply is "<size> <path>".
     param([string]$Output, [long]$ExpectedSize, [string]$Hash, [string]$Ext = 'png', [string]$Dir = '/tmp', [string]$Class = '')
     $lines = @($Output -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 })
-    if ($lines.Count -eq 0) { throw 'the server sent no reply (is sh available there?)' }
+    if ($lines.Count -eq 0) { throw (Get-Text 'the server sent no reply (is sh available there?)') }
     $last = $lines[$lines.Count - 1].Trim()
-    if ($last -cmatch '^short (\d+)\z') { throw "the server received $($Matches[1]) of $ExpectedSize bytes" }
-    if ($last -ceq 'nodir') { throw "the server cannot write to the folder $Dir (--dir)" }
-    if ($last -ceq 'notprivate') { throw "the folder $Dir on the server is not yours alone (owned by you, not a link, not writable by group or others); use /tmp or such a folder" }
-    if ($last -cnotmatch '^(\d+) (/\S+)\z') { throw "unexpected reply from the server: $last" }
+    if ($last -cmatch '^short (\d+)\z') { throw (Get-Text 'the server received {0} of {1} bytes' $Matches[1] $ExpectedSize) }
+    if ($last -ceq 'nodir') { throw (Get-Text 'the server cannot write to the folder {0} (--dir)' $Dir) }
+    if ($last -ceq 'notprivate') { throw (Get-Text 'the folder {0} on the server is not yours alone (owned by you, not a link, not writable by group or others); use /tmp or such a folder' $Dir) }
+    if ($last -cnotmatch '^(\d+) (/\S+)\z') { throw (Get-Text 'unexpected reply from the server: {0}' $last) }
     $size = [long]$Matches[1]
     $path = $Matches[2]
-    if ($size -ne $ExpectedSize) { throw "size mismatch: sent $ExpectedSize bytes, server has $size" }
-    if ($path -cnotmatch (Get-ReplyPathPattern $Dir $Hash $Ext $Class)) { throw "unexpected path from the server: $path" }
+    if ($size -ne $ExpectedSize) { throw (Get-Text 'size mismatch: sent {0} bytes, server has {1}' $ExpectedSize $size) }
+    if ($path -cnotmatch (Get-ReplyPathPattern $Dir $Hash $Ext $Class)) { throw (Get-Text 'unexpected path from the server: {0}' $path) }
     return $path
 }
 
@@ -469,21 +579,20 @@ function Get-LoginAdvice {
     param($Failure, [string]$HostName, [switch]$Here)
     if ($null -eq $Failure) { return $null }
     if ($Failure.Kind -ceq 'auth' -and $Failure.KeyLogin) {
-        $line = ('{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add' -f $HostName)
-        if (-not $Here) { $line += ('; ssh-paste --doctor {0} shows how' -f $HostName) }
-        return $line
+        if ($Here) { return (Get-Text '{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add' $HostName) }
+        return (Get-Text '{0} did not accept a key for uploads (they cannot type a password): set up a key, or load yours with ssh-add; ssh-paste --doctor {0} shows how' $HostName)
     }
     if ($Failure.Kind -ceq 'auth' -and $Failure.Typed) {
-        return ('{0} wants a password or a one-time code ({1}), which uploads cannot type, so ssh-paste cannot upload to it' -f $HostName, (@($Failure.Methods) -join ','))
+        return (Get-Text '{0} wants a password or a one-time code ({1}), which uploads cannot type, so ssh-paste cannot upload to it' $HostName (@($Failure.Methods) -join ','))
     }
     if ($Failure.Kind -ceq 'toomany') {
-        return ('{0} closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config' -f $HostName)
+        return (Get-Text '{0} closed the login after too many keys were tried: name the right key for it with IdentityFile and IdentitiesOnly yes in ~/.ssh/config' $HostName)
     }
     if ($Failure.Kind -ceq 'muxrefused') {
-        return ('{0} refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none {0} uploads over new connections' -f $HostName)
+        return (Get-Text '{0} refused a second session on this connection, so uploads cannot share it; with a key, ssh-paste -S none {0} uploads over new connections' $HostName)
     }
     if ($Failure.Kind -ceq 'hostkey') {
-        return ('ssh could not verify the host key of {0}: run ssh {0} to see why (a new host asks you to accept its key)' -f $HostName)
+        return (Get-Text 'ssh could not verify the host key of {0}: run ssh {0} to see why (a new host asks you to accept its key)' $HostName)
     }
     return $null
 }
@@ -492,11 +601,11 @@ function Get-LoginReport {
     # The line --enable prints about a host: that uploads log in, or why not. ErrorText is
     # what ssh said when the check failed ($null when it logged in).
     param([string]$HostName, [string]$ErrorText)
-    if ([string]::IsNullOrEmpty($ErrorText)) { return ('{0}: uploads log in without a password' -f $HostName) }
+    if ([string]::IsNullOrEmpty($ErrorText)) { return (Get-Text '{0}: uploads log in without a password' $HostName) }
     $advice = Get-LoginAdvice (Get-SshFailure $ErrorText) $HostName
     if ($advice) { return $advice }
     $first = @($ErrorText -split "`r?`n" | Where-Object { $_.Trim() })[0]
-    return ('could not check the login to {0} now ({1}); ssh-paste --doctor {0} tests it' -f $HostName, $first.Trim())
+    return (Get-Text 'could not check the login to {0} now ({1}); ssh-paste --doctor {0} tests it' $HostName ($first.Trim()))
 }
 
 function Format-ShellWords {
@@ -517,7 +626,7 @@ function Get-EnableRefusal {
     $f = Get-SshFailure $ErrorText
     if ($null -eq $f -or ($f.Kind -cne 'auth' -and $f.Kind -cne 'toomany')) { return $null }
     $advice = Get-LoginAdvice $f $HostName -Here
-    if (-not $advice) { $advice = ('{0} refused the login for uploads ({1})' -f $HostName, @($ErrorText -split "`r?`n" | Where-Object { $_.Trim() })[0].Trim()) }
+    if (-not $advice) { $advice = (Get-Text '{0} refused the login for uploads ({1})' $HostName (@($ErrorText -split "`r?`n" | Where-Object { $_.Trim() })[0].Trim())) }
     $lines = @($advice)
     if ($f.Kind -ceq 'auth' -and $f.KeyLogin) { $lines += @(Get-KeySetupLines $HostName) }
     return , $lines
@@ -547,14 +656,14 @@ function Get-KeySetupLines {
     # needs no passphrase. (keySetupLines in src/ssh-paste.js is the macOS twin.)
     param([string]$HostArgs)
     return @(
-        '  Set up a key (once; ssh asks your password one last time):',
+        (Get-Text '  Set up a key (once; ssh asks your password one last time):'),
         '    ssh-keygen -t ed25519',
         ('    Get-Content $HOME\.ssh\id_ed25519.pub | ssh ' + $HostArgs + ' "' + $script:KeyInstallCommand + '"'),
         ('    ssh-paste --doctor ' + $HostArgs),
-        '  ssh-keygen: press Enter at each question (no passphrase: Windows'' ssh-agent is off',
-        '  unless an administrator turns it on); if the key file exists already, answer n.',
-        '  If you log in with ssh -i KEY, or ~/.ssh/config names an IdentityFile for this host,',
-        '  use that key instead, and name it with IdentityFile in the Host entry.')
+        (Get-Text '  ssh-keygen: press Enter at each question (no passphrase: Windows'' ssh-agent is off'),
+        (Get-Text '  unless an administrator turns it on); if the key file exists already, answer n.'),
+        (Get-Text '  If you log in with ssh -i KEY, or ~/.ssh/config names an IdentityFile for this host,'),
+        (Get-Text '  use that key instead, and name it with IdentityFile in the Host entry.'))
 }
 
 function Get-ReplyPathPattern {
@@ -578,12 +687,12 @@ function ConvertTo-KeepMinutes {
     # outlasts the longest upload, 5 minutes) to 3650 days.
     param([string]$Keep)
     if ($Keep -ceq 'never') { return 0 }
-    if ($Keep -cnotmatch '^([1-9][0-9]{0,6})([mhd])\z') { throw ('--keep takes a time like 30m, 2h or 7d, or never: ' + $Keep) }
+    if ($Keep -cnotmatch '^([1-9][0-9]{0,6})([mhd])\z') { throw (Get-Text '--keep takes a time like 30m, 2h or 7d, or never: {0}' $Keep) }
     $n = [long]$Matches[1]
     $minutes = $n
     if ($Matches[2] -ceq 'h') { $minutes = $n * 60 } elseif ($Matches[2] -ceq 'd') { $minutes = $n * 1440 }
-    if ($minutes -lt 10) { throw ('--keep is at least 10m: ' + $Keep) }
-    if ($minutes -gt 5256000) { throw ('--keep is at most 3650d: ' + $Keep) }
+    if ($minutes -lt 10) { throw (Get-Text '--keep is at least 10m: {0}' $Keep) }
+    if ($minutes -gt 5256000) { throw (Get-Text '--keep is at most 3650d: {0}' $Keep) }
     return [int]$minutes
 }
 
@@ -604,18 +713,18 @@ function Read-PasteSettings {
     $i = 0
     while ($i -lt $a.Count -and ($a[$i] -ceq '--keep' -or $a[$i] -ceq '--dir')) {
         $name = $a[$i]
-        if ($i + 1 -ge $a.Count) { throw ($name + ' needs a value') }
+        if ($i + 1 -ge $a.Count) { throw (Get-Text '{0} needs a value' $name) }
         $value = [string]$a[$i + 1]
         if ($name -ceq '--keep') {
-            if ($null -ne $r.Keep) { throw '--keep is given twice' }
+            if ($null -ne $r.Keep) { throw (Get-Text '--keep is given twice') }
             [void](ConvertTo-KeepMinutes $value)
             $r.Keep = $value
         } else {
-            if ($null -ne $r.Dir) { throw '--dir is given twice' }
+            if ($null -ne $r.Dir) { throw (Get-Text '--dir is given twice') }
             if ($value.Length -gt 1) { $value = $value.TrimEnd('/') }
             if ($value -ceq '') { $value = '/' }
             if (-not (Test-ServerDirectory $value)) {
-                throw ("--dir takes a folder on the server, /... or ~/... (quote ~ so that your shell keeps it), with letters, digits and . _ - / only: " + $value)
+                throw (Get-Text '--dir takes a folder on the server, /... or ~/... (quote ~ so that your shell keeps it), with letters, digits and . _ - / only: {0}' $value)
             }
             $r.Dir = $value
         }
@@ -641,9 +750,8 @@ function Get-ProxySettings {
 
 function Format-PasteSettings {
     param($Settings)
-    $keep = 'kept ' + $Settings.Keep
-    if ($Settings.Keep -ceq 'never') { $keep = 'never deleted' }
-    return ('images in {0} on the server, {1}' -f $Settings.Dir, $keep)
+    if ($Settings.Keep -ceq 'never') { return (Get-Text 'images in {0} on the server, never deleted' $Settings.Dir) }
+    return (Get-Text 'images in {0} on the server, kept {1}' $Settings.Dir $Settings.Keep)
 }
 
 function Test-HostAlias {
@@ -737,7 +845,7 @@ function Set-ManagedBlock {
         }
         [void]$kept.Add($line)
     }
-    if ($inBlock) { throw 'the ssh-paste block in the ssh config has no end marker; fix it by hand' }
+    if ($inBlock) { throw (Get-Text 'the ssh-paste block in the ssh config has no end marker; fix it by hand') }
     $rest = ($kept -join $newline)
     $used = @(@($Groups) | Where-Object { $null -ne $_ -and @($_.Hosts).Count -gt 0 })
     if ($used.Count -eq 0) { return $rest }
@@ -1145,7 +1253,7 @@ public sealed class PendingClipboard : IDisposable {
 
 function Initialize-Native {
     if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
-        throw "PowerShell runs in $($ExecutionContext.SessionState.LanguageMode) mode here (AppLocker or App Control policy)"
+        throw (Get-Text 'PowerShell runs in {0} mode here (AppLocker or App Control policy)' $ExecutionContext.SessionState.LanguageMode)
     }
     Add-Type -AssemblyName System.Drawing
     if (-not ('SshPasteNative' -as [type])) { Add-Type -TypeDefinition $script:NativeSource }
@@ -1336,7 +1444,7 @@ function Set-SshPasteClipboard {
         $entry.Png = $Png
         $entry.Dib = New-DibBytes $Png
     }
-    if ($script:Clipboard.Publish($entry) -eq 0) { throw ('could not write the clipboard: ' + $script:Clipboard.LastError) }
+    if ($script:Clipboard.Publish($entry) -eq 0) { throw (Get-Text 'could not write the clipboard: {0}' $script:Clipboard.LastError) }
 }
 
 function New-ChildStartInfo {
@@ -1377,7 +1485,7 @@ function Invoke-NativeCapture {
         $stderr = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             try { $process.Kill() } catch { }
-            throw "$FilePath did not finish in $TimeoutSeconds seconds"
+            throw (Get-Text '{0} did not finish in {1} seconds' $FilePath $TimeoutSeconds)
         }
         [void]$stdout.Wait(5000)
         [void]$stderr.Wait(5000)
@@ -1473,7 +1581,7 @@ function Send-Image {
             # Killing ssh closes its pipes, so what it wrote on stderr can be read now.
             $tail = ''
             if ($stderr.Wait(3000)) { $tail = (@($stderr.Result.Trim() -split "`r?`n") | Select-Object -Last 12) -join ' | ' }
-            throw ("ssh did not finish in {0} seconds (stdin sent: {1}); ssh said: {2}" -f $TimeoutSeconds, ($null -eq $sendError), $tail)
+            throw (Get-Text 'ssh did not finish in {0} seconds (stdin sent: {1}); ssh said: {2}' $TimeoutSeconds ($null -eq $sendError) $tail)
         }
         $err = ''
         if ($stderr.Wait((Get-RemainingMilliseconds $deadline))) { $err = $stderr.Result.Trim() }
@@ -1487,7 +1595,7 @@ function Send-Image {
             if ([string]::IsNullOrEmpty($err)) { $err = 'no error message' }
             throw ('ssh exited with {0}: {1}' -f $process.ExitCode, $err)
         }
-        if (-not $stdout.Wait((Get-RemainingMilliseconds $deadline))) { throw 'the reply from ssh did not arrive in time' }
+        if (-not $stdout.Wait((Get-RemainingMilliseconds $deadline))) { throw (Get-Text 'the reply from ssh did not arrive in time') }
         return (Read-UploadReply $stdout.Result $Png.Length $Hash $Ext $Dir $Class)
     } finally {
         # Closing our ends ends any read still pending on a pipe that a leftover
@@ -1511,7 +1619,7 @@ function New-Watcher {
         if (-not [string]::IsNullOrEmpty($Settings.Keep)) { $keep = $Settings.Keep }
         if (-not [string]::IsNullOrEmpty($Settings.Dir)) { $dir = $Settings.Dir }
     }
-    if (-not (Test-ServerDirectory $dir) -or $dir.StartsWith('~')) { throw ('bad --dir: ' + $dir) }
+    if (-not (Test-ServerDirectory $dir) -or $dir.StartsWith('~')) { throw (Get-Text 'bad --dir: {0}' $dir) }
     $minutes = ConvertTo-KeepMinutes $keep
     $tokenBytes = New-Object byte[] 8
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -1772,15 +1880,15 @@ function Restore-Clipboard {
 function Get-FailureSummary {
     param($W)
     if ($null -eq $W) { return $null }
-    if (Get-WatcherValue $W 'Blocked' $null) { return ('ssh-paste: screenshot paste was off for this session: ' + $W.Blocked) }
+    if (Get-WatcherValue $W 'Blocked' $null) { return (Get-Text 'ssh-paste: screenshot paste was off for this session: {0}' $W.Blocked) }
     if ($W.Failed.Count -eq 0) { return $null }
     $last = @($W.Failed.Values | Sort-Object { $_.At })[-1]
     $parsed = Get-WatcherValue $W 'Parsed' $null
     $destination = ''
     if ($null -ne $parsed) { $destination = $parsed.Destination }
     $advice = Get-LoginAdvice (Get-SshFailure $last.Message) $destination
-    if ($advice) { return ('ssh-paste: {0} screenshot upload(s) failed: {1}' -f $W.Failed.Count, $advice) }
-    return ('ssh-paste: {0} screenshot upload(s) failed: {1}' -f $W.Failed.Count, $last.Message)
+    if ($advice) { return (Get-Text 'ssh-paste: {0} screenshot upload(s) failed: {1}' $W.Failed.Count $advice) }
+    return (Get-Text 'ssh-paste: {0} screenshot upload(s) failed: {1}' $W.Failed.Count $last.Message)
 }
 
 # ---------------------------------------------------------------------------
@@ -1793,7 +1901,7 @@ function Get-SshPath {
     if ($null -ne $cmd) { return $cmd.Source }
     $inbox = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe'
     if (Test-Path -LiteralPath $inbox) { return $inbox }
-    throw 'ssh.exe was not found. Add "OpenSSH Client" under Optional features in Windows Settings.'
+    throw (Get-Text 'ssh.exe was not found. Add "OpenSSH Client" under Optional features in Windows Settings.')
 }
 
 function Write-Info {
@@ -1812,7 +1920,7 @@ function Invoke-Wrapper {
         if ($null -ne (Get-SshModeSettings $effective)) {
             # ssh mode already serves this connection; a second watcher would upload twice.
             if ($null -ne $Settings -and ($null -ne $Settings.Keep -or $null -ne $Settings.Dir)) {
-                Write-Info ('ssh-paste: ssh mode serves {0}, with its own --keep and --dir; change them with ssh-paste --enable --keep TIME --dir DIR {0}' -f $parsed.Destination) 'Yellow'
+                Write-Info (Get-Text 'ssh-paste: ssh mode serves {0}, with its own --keep and --dir; change them with ssh-paste --enable --keep TIME --dir DIR {0}' $parsed.Destination) 'Yellow'
             }
         } elseif (Test-InteractiveSsh $parsed $effective) {
             try {
@@ -1821,9 +1929,9 @@ function Invoke-Wrapper {
                     $Settings.Dir = ConvertTo-AbsoluteDirectory $Settings.Dir (Get-ServerHome $ssh $parsed (Get-SshVersion $ssh))
                 }
                 $watcher = New-Watcher -SshPath $ssh -Parsed $parsed -Settings $Settings
-                Write-Info 'ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Ctrl+V.' 'DarkGray'
+                Write-Info (Get-Text 'ssh-paste: screenshot paste is on. Copy a screenshot, come back here, press Ctrl+V.') 'DarkGray'
             } catch {
-                Write-Info ('ssh-paste: screenshot paste is off: ' + $_.Exception.Message) 'Yellow'
+                Write-Info (Get-Text 'ssh-paste: screenshot paste is off: {0}' $_.Exception.Message) 'Yellow'
             }
         }
     }
@@ -1839,7 +1947,7 @@ function Invoke-Wrapper {
     $summary = Get-FailureSummary $watcher
     if ($summary) {
         Write-Info $summary 'Yellow'
-        Write-Info ('Run: ssh-paste --doctor ' + $parsed.Destination) 'Yellow'
+        Write-Info (Get-Text 'Run: ssh-paste --doctor {0}' $parsed.Destination) 'Yellow'
     }
     return $process.ExitCode
 }
@@ -1852,14 +1960,14 @@ function Connect-Tcp {
         try {
             $task = $client.ConnectAsync($address, $Port)
             if ($task.Wait(15000) -and $client.Connected) { $client.NoDelay = $true; return $client }
-            $errors += "${address}: timed out"
+            $errors += (Get-Text '{0}: timed out' $address)
         } catch {
-            $errors += ('{0}: {1}' -f $address, $_.Exception.GetBaseException().Message)
+            $errors += (Get-Text '{0}: {1}' $address ($_.Exception.GetBaseException().Message))
         }
         $client.Close()
     }
-    if ($errors.Count -eq 0) { $errors = @('no address') }
-    throw ("cannot connect to {0} port {1}: {2}" -f $TargetHost, $Port, ($errors -join '; '))
+    if ($errors.Count -eq 0) { $errors = @((Get-Text 'no address')) }
+    throw (Get-Text 'cannot connect to {0} port {1}: {2}' $TargetHost $Port ($errors -join '; '))
 }
 
 function Split-CommandLine {
@@ -2007,7 +2115,7 @@ function Invoke-Proxy {
             }
         }
     } catch {
-        [Console]::Error.WriteLine('ssh-paste: screenshot paste is off: ' + $_.Exception.Message)
+        [Console]::Error.WriteLine((Get-Text 'ssh-paste: screenshot paste is off: {0}' $_.Exception.Message))
         $watcher = $null
     }
 
@@ -2022,7 +2130,7 @@ function Invoke-Proxy {
                     try { $client.Client.Shutdown([System.Net.Sockets.SocketShutdown]::Send) } catch { }
                     if (-not $down.Wait(30000)) {
                         $code = 1
-                        [Console]::Error.WriteLine('ssh-paste: the server did not close the connection within 30 seconds')
+                        [Console]::Error.WriteLine((Get-Text 'ssh-paste: the server did not close the connection within 30 seconds'))
                     }
                 }
                 break
@@ -2033,7 +2141,7 @@ function Invoke-Proxy {
         foreach ($t in @($up, $down)) {
             if ($t.IsFaulted) {
                 $code = 1
-                [Console]::Error.WriteLine('ssh-paste: connection error: ' + $t.Exception.GetBaseException().Message)
+                [Console]::Error.WriteLine((Get-Text 'ssh-paste: connection error: {0}' ($t.Exception.GetBaseException().Message)))
             }
         }
     } finally {
@@ -2044,7 +2152,7 @@ function Invoke-Proxy {
     $summary = Get-FailureSummary $watcher
     if ($summary) {
         [Console]::Error.WriteLine($summary)
-        [Console]::Error.WriteLine('Run: ssh-paste --doctor ' + $Alias)
+        [Console]::Error.WriteLine((Get-Text 'Run: ssh-paste --doctor {0}' $Alias))
     }
     return $code
 }
@@ -2064,7 +2172,7 @@ function Update-SshConfig {
     # was one, and refuses if the file changed since we read it.
     param([string]$Path, [string]$OldText, [string]$NewText, [switch]$Delete)
     $current = Read-TextFile $Path
-    if ([string]$current -cne [string]$OldText) { throw "$Path changed while ssh-paste was editing it; run the command again" }
+    if ([string]$current -cne [string]$OldText) { throw (Get-Text '{0} changed while ssh-paste was editing it; run the command again' $Path) }
     if ($Delete) { Remove-Item -LiteralPath $Path -Force; return }
     $hadBom = $false
     if (Test-Path -LiteralPath $Path) {
@@ -2076,7 +2184,7 @@ function Update-SshConfig {
     $temp = $Path + '.ssh-paste-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     try {
         [System.IO.File]::WriteAllText($temp, $NewText, (New-Object System.Text.UTF8Encoding($hadBom)))
-        if ([string](Read-TextFile $Path) -cne [string]$OldText) { throw "$Path changed while ssh-paste was editing it; run the command again" }
+        if ([string](Read-TextFile $Path) -cne [string]$OldText) { throw (Get-Text '{0} changed while ssh-paste was editing it; run the command again' $Path) }
         if (Test-Path -LiteralPath $Path) {
             [System.IO.File]::Replace($temp, $Path, [NullString]::Value)
         } else {
@@ -2090,7 +2198,7 @@ function Update-SshConfig {
 function Get-ResolvedSshConfig {
     param([string]$Alias)
     $r = Invoke-NativeCapture (Get-SshPath) @('-G', '--', $Alias)
-    if ($r.ExitCode -ne 0) { throw ('ssh -G {0} failed: {1}' -f $Alias, $r.Err.Trim()) }
+    if ($r.ExitCode -ne 0) { throw (Get-Text 'ssh -G {0} failed: {1}' $Alias ($r.Err.Trim())) }
     return (ConvertFrom-SshG $r.Out)
 }
 
@@ -2107,7 +2215,7 @@ function Invoke-Enable {
     # Each host once, in order; aliases are case-sensitive, as in ssh.
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $hosts = @(@($settings.Rest) | Where-Object { $seen.Add([string]$_) })
-    if ($hosts.Count -eq 0) { throw 'usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]' }
+    if ($hosts.Count -eq 0) { throw (Get-Text 'usage: ssh-paste --enable [--keep TIME] [--dir DIR] HOST [HOST...]') }
     $configPath = Get-SshConfigPath
     $text = Read-TextFile $configPath
     $block = Get-ManagedBlock $text
@@ -2124,17 +2232,17 @@ function Invoke-Enable {
     $ssh = $null
     # Every name is checked before any connection, so a bad one stops the command at once.
     foreach ($h in $hosts) {
-        if (-not (Test-HostAlias $h)) { throw "use a host name or a Host alias from ~/.ssh/config (no user@, no options): $h" }
+        if (-not (Test-HostAlias $h)) { throw (Get-Text 'use a host name or a Host alias from ~/.ssh/config (no user@, no options): {0}' $h) }
         if (-not $want.Contains($h)) {
             $resolved = Get-ResolvedSshConfig $h
             $hostName = $h
             if ($resolved.ContainsKey('hostname')) { $hostName = [string]$resolved['hostname'] }
             if (-not (Test-HostResolves $hostName)) {
-                throw ("cannot find the host {0} (from {1}). Check the name, or add it to ~/.ssh/config, then run --enable again" -f $hostName, $h)
+                throw (Get-Text 'cannot find the host {0} (from {1}). Check the name, or add it to ~/.ssh/config, then run --enable again' $hostName $h)
             }
             foreach ($key in @('proxyjump', 'proxycommand')) {
                 if ($resolved.ContainsKey($key) -and $resolved[$key] -ne 'none') {
-                    throw ("{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}" -f $h, $key, $resolved[$key])
+                    throw (Get-Text '{0} already uses {1} ({2}); ssh-paste cannot take over its connection. Use wrapper mode instead: ssh-paste {0}' $h $key $resolved[$key])
                 }
             }
         }
@@ -2161,7 +2269,7 @@ function Invoke-Enable {
             if ($new.Dir.StartsWith('~')) {
                 if ($null -eq $logins[$h].Home) { $problems += (Get-HomeError $h $logins[$h].Error); continue }
                 $new.Dir = ConvertTo-AbsoluteDirectory $settings.Dir $logins[$h].Home
-                Write-Info ('{0}: {1} is {2} there' -f $h, $settings.Dir, $new.Dir)
+                Write-Info (Get-Text '{0}: {1} is {2} there' $h $settings.Dir $new.Dir)
             }
         }
         if ($added -notcontains $h -and $changed -notcontains $h -and ($new.Keep -cne $old.Keep -or $new.Dir -cne $old.Dir)) { $changed += $h }
@@ -2169,29 +2277,29 @@ function Invoke-Enable {
     }
     if ($problems.Count -gt 0) {
         # All or nothing: the reasons for every host, and the command to run again.
-        throw (@('nothing changed in ~/.ssh/config:') + $problems + @(('Then run again: ssh-paste --enable ' + (Format-ShellWords $Arguments))) -join [Environment]::NewLine)
+        throw (@((Get-Text 'nothing changed in ~/.ssh/config:')) + $problems + @((Get-Text 'Then run again: ssh-paste --enable {0}' (Format-ShellWords $Arguments))) -join [Environment]::NewLine)
     }
     $groups = @(Get-SettingsGroups $want (Get-ProxyScriptPath $PSCommandPath))
     $createdFile = $block.CreatedFile -or ($null -eq $text)
     if ($added.Count -gt 0 -or $changed.Count -gt 0) {
         Update-SshConfig $configPath $text (Set-ManagedBlock $text -Groups $groups -CreatedFile:$createdFile)
-        if ($added.Count -gt 0) { Write-Info ('Enabled for: ' + ($added -join ', ')) 'Green' }
-        if ($changed.Count -gt 0) { Write-Info ('Changed for: ' + ($changed -join ', ')) 'Green' }
+        if ($added.Count -gt 0) { Write-Info (Get-Text 'Enabled for: {0}' ($added -join ', ')) 'Green' }
+        if ($changed.Count -gt 0) { Write-Info (Get-Text 'Changed for: {0}' ($changed -join ', ')) 'Green' }
     } else {
-        Write-Info 'Already enabled with these settings; nothing changed.' 'Gray'
+        Write-Info (Get-Text 'Already enabled with these settings; nothing changed.') 'Gray'
     }
     foreach ($h in $hosts) {
-        Write-Info ('{0}: {1}' -f $h, (Format-PasteSettings $want[$h]))
+        Write-Info (Get-Text '{0}: {1}' $h (Format-PasteSettings $want[$h]))
         if ($null -eq $logins[$h].Home) { Write-Info (Get-LoginReport $h $logins[$h].Error) 'Yellow' }
         else { Write-Info (Get-LoginReport $h $null) 'Green' }
     }
-    Write-Info ("This block is at the top of {0}:" -f $configPath)
+    Write-Info (Get-Text 'This block is at the top of {0}:' $configPath)
     Write-Info ''
     foreach ($line in (Set-ManagedBlock '' -Groups $groups -CreatedFile:$createdFile).TrimEnd() -split "`r?`n") { Write-Info ('    ' + $line) 'Cyan' }
     Write-Info ''
     $example = $hosts[0]
     if ($added.Count -gt 0) { $example = $added[0] }
-    Write-Info ('Now connect as usual: ssh ' + $example)
+    Write-Info (Get-Text 'Now connect as usual: ssh {0}' $example)
     return 0
 }
 
@@ -2201,7 +2309,7 @@ function Invoke-Disable {
     $text = Read-TextFile $configPath
     $block = Get-ManagedBlock $text
     $managed = @($block.Hosts)
-    if (-not $block.Present) { Write-Info 'ssh-paste is not enabled for any host.'; return 0 }
+    if (-not $block.Present) { Write-Info (Get-Text 'ssh-paste is not enabled for any host.'); return 0 }
     if ($null -eq $Hosts -or $Hosts.Count -eq 0) { $keep = @() } else { $keep = @($managed | Where-Object { $Hosts -cnotcontains $_ }) }
     # Each remaining host keeps its group's line as it is.
     $groups = @(foreach ($g in @($block.Groups)) {
@@ -2226,8 +2334,8 @@ function Get-DisableMessage {
     # the named hosts was enabled. Host aliases are case-sensitive, as in ssh.
     param([string[]]$Managed, [string[]]$Asked)
     $removed = @(@($Managed) | Where-Object { $null -eq $Asked -or @($Asked).Count -eq 0 -or @($Asked) -ccontains $_ })
-    if ($removed.Count -eq 0) { return ('ssh-paste is not enabled for: ' + (@($Asked) -join ', ')) }
-    return ('Disabled for: ' + ($removed -join ', '))
+    if ($removed.Count -eq 0) { return (Get-Text 'ssh-paste is not enabled for: {0}' (@($Asked) -join ', ')) }
+    return (Get-Text 'Disabled for: {0}' ($removed -join ', '))
 }
 
 function Invoke-Doctor {
@@ -2239,7 +2347,7 @@ function Invoke-Doctor {
     }
     Write-Host ('ssh-paste ' + $script:Version)
     Report $true ('PowerShell {0} ({1})' -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition)
-    try { Initialize-Native; Report $true 'clipboard and window APIs available' } catch { Report $false $_.Exception.Message; return 1 }
+    try { Initialize-Native; Report $true (Get-Text 'clipboard and window APIs available') } catch { Report $false $_.Exception.Message; return 1 }
     $ssh = $null
     try {
         $ssh = Get-SshPath
@@ -2247,14 +2355,14 @@ function Invoke-Doctor {
         Report $true ('ssh: {0} ({1})' -f $ssh, ($version.Err + $version.Out).Trim())
     } catch { Report $false $_.Exception.Message; return 1 }
     $matcher = Get-HostMatcher
-    Report $true ('terminal: ' + $matcher.Kind)
+    Report $true (Get-Text 'terminal: {0}' $matcher.Kind)
     try {
         $state = Read-ClipboardImage
-        if ($null -ne $state['Files']) { Report $true ('clipboard: {0} copied image file(s)' -f $state.Files.Count) } elseif ($null -eq $state.Png) { Report $true 'clipboard: readable (no image right now)' } else { Report $true ('clipboard: image, {0} bytes' -f $state.Png.Length) }
-    } catch { Report $false ('clipboard: ' + $_.Exception.Message); $ok = $false }
+        if ($null -ne $state['Files']) { Report $true (Get-Text 'clipboard: {0} copied image file(s)' $state.Files.Count) } elseif ($null -eq $state.Png) { Report $true (Get-Text 'clipboard: readable (no image right now)') } else { Report $true (Get-Text 'clipboard: image, {0} bytes' $state.Png.Length) }
+    } catch { Report $false (Get-Text 'clipboard: {0}' $_.Exception.Message); $ok = $false }
     if ($null -eq $SshArgs -or $SshArgs.Count -eq 0) {
         Write-Host ''
-        Write-Host 'Add a host to test an upload: ssh-paste --doctor myhost'
+        Write-Host (Get-Text 'Add a host to test an upload: ssh-paste --doctor myhost')
         if ($ok) { return 0 } else { return 1 }
     }
     $parsed = Split-SshArguments $SshArgs
@@ -2274,9 +2382,9 @@ function Invoke-Doctor {
         if ($null -eq $settings) { $settings = @{ Keep = $script:DefaultKeep; Dir = $script:DefaultDir } }
         $argv = Get-UploadSshArguments -Parsed $parsed -Hash $hash -Size $png.Length -SshVersion (Get-SshVersion $ssh) -Keep $settings.Keep -Dir $settings.Dir
         $path = Send-Image -SshPath $ssh -Arguments $argv -Png $png -Hash $hash -Dir $settings.Dir -Class (Get-KeepClass $settings.Keep)
-        Report $true ('upload to {0}: {1} ({2:N1} s)' -f $parsed.Destination, $path, $timer.Elapsed.TotalSeconds)
+        Report $true (Get-Text 'upload to {0}: {1} ({2:N1} s)' $parsed.Destination $path $timer.Elapsed.TotalSeconds)
     } catch {
-        Report $false ('upload to {0}: {1}' -f $parsed.Destination, $_.Exception.Message)
+        Report $false (Get-Text 'upload to {0}: {1}' $parsed.Destination $_.Exception.Message)
         Write-Host ''
         $failure = Get-SshFailure $_.Exception.Message
         $advice = Get-LoginAdvice $failure $parsed.Destination -Here
@@ -2285,18 +2393,18 @@ function Invoke-Doctor {
             Write-Host ''
             $setup = Get-KeySetupTarget $parsed
             foreach ($line in (Get-KeySetupLines $setup.Target)) { Write-Host $line }
-            if ($setup.Dropped) { Write-Host '  Add the other ssh options this host needs to the ssh line.' }
+            if ($setup.Dropped) { Write-Host (Get-Text '  Add the other ssh options this host needs to the ssh line.') }
         } elseif (-not $advice) {
-            Write-Host 'Uploads use a second, non-interactive ssh connection, so the server must'
-            Write-Host 'accept your key without a prompt: a key without a passphrase, or a key loaded'
-            Write-Host 'in ssh-agent (Get-Service ssh-agent; ssh-add). Password-only logins cannot work.'
+            Write-Host (Get-Text 'Uploads use a second, non-interactive ssh connection, so the server must')
+            Write-Host (Get-Text 'accept your key without a prompt: a key without a passphrase, or a key loaded')
+            Write-Host (Get-Text 'in ssh-agent (Get-Service ssh-agent; ssh-add). Password-only logins cannot work.')
         }
         return 1
     }
     if ($null -ne $sshMode) {
-        Report $true ('ssh mode: enabled, "ssh {0}" pastes screenshots ({1})' -f (Join-NativeArguments $SshArgs), (Format-PasteSettings $sshMode))
+        Report $true (Get-Text 'ssh mode: enabled, "ssh {0}" pastes screenshots ({1})' (Join-NativeArguments $SshArgs) (Format-PasteSettings $sshMode))
     } else {
-        Write-Host ('  info  ssh mode is off for {0}. Turn it on: ssh-paste --enable {0}   (or use: ssh-paste {0})' -f $parsed.Destination)
+        Write-Host (Get-Text '  info  ssh mode is off for {0}. Turn it on: ssh-paste --enable {0}   (or use: ssh-paste {0})' $parsed.Destination)
     }
     if ($ok) { return 0 } else { return 1 }
 }
@@ -2327,7 +2435,7 @@ function Get-ProxyScriptPath {
     if (-not (Test-ScoopInstall $dir)) { return $ScriptPath }
     $current = Join-Path (Join-Path (Split-Path -Parent $dir) 'current') 'ssh-paste.ps1'
     if (Test-Path -LiteralPath $current -PathType Leaf) { return $current }
-    throw 'Scoop installed ssh-paste without the apps\ssh-paste\current junction (its no_junction setting), so no path to it stays after scoop update. Use wrapper mode instead: ssh-paste HOST'
+    throw (Get-Text 'Scoop installed ssh-paste without the apps\ssh-paste\current junction (its no_junction setting), so no path to it stays after scoop update. Use wrapper mode instead: ssh-paste HOST')
 }
 
 function Remove-UserPathEntry {
@@ -2370,18 +2478,18 @@ function Invoke-Uninstall {
     $dir = Get-InstallDirectory
     $changedPath = Remove-UserPathEntry $dir
     Send-EnvironmentChange   # also removes values that older versions left behind
-    if ($changedPath) { Write-Info ('Removed from your PATH: ' + $dir) 'Green' }
+    if ($changedPath) { Write-Info (Get-Text 'Removed from your PATH: {0}' $dir) 'Green' }
     if (Test-Path -LiteralPath $dir) {
         Set-Location -LiteralPath $env:USERPROFILE
         [Environment]::CurrentDirectory = $env:USERPROFILE
         Remove-Item -LiteralPath $dir -Recurse -Force
-        Write-Info ('Deleted ' + $dir) 'Green'
+        Write-Info (Get-Text 'Deleted {0}' $dir) 'Green'
         $parent = Split-Path -Parent $dir
         if ((Test-Path -LiteralPath $parent) -and @(Get-ChildItem -LiteralPath $parent -Force).Count -eq 0) { Remove-Item -LiteralPath $parent -Force }
     }
-    Write-Info 'ssh-paste is uninstalled.'
-    Write-Info 'Images already uploaded stay in /tmp on your servers until the server clears /tmp.'
-    Write-Info 'To delete them now: ssh HOST "rm -f /tmp/ssh-paste-*"'
+    Write-Info (Get-Text 'ssh-paste is uninstalled.')
+    Write-Info (Get-Text 'Images already uploaded stay in /tmp on your servers until the server clears /tmp.')
+    Write-Info (Get-Text 'To delete them now: {0}' 'ssh HOST "rm -f /tmp/ssh-paste-*"')
     return 0
 }
 
@@ -2441,12 +2549,12 @@ function Invoke-Update {
     # against that release's SHA256SUMS. The installer replaces the files in
     # place and says what changed ("Upgraded", or "Reinstalled" when current).
     param([string[]]$Options)
-    if (@($Options).Count -gt 0) { throw ('--update takes no options: ' + (@($Options) -join ' ')) }
+    if (@($Options).Count -gt 0) { throw (Get-Text '--update takes no options: {0}' (@($Options) -join ' ')) }
     $base = Get-UpdateBase
-    Write-Info ('Downloading the latest release from ' + $base)
+    Write-Info (Get-Text 'Downloading the latest release from {0}' $base)
     $installer = Invoke-WebDownload ($base + '/install.ps1')
     $sums = [System.Text.Encoding]::ASCII.GetString((Invoke-WebDownload ($base + '/SHA256SUMS')))
-    if (-not (Test-ReleaseChecksum $sums 'install.ps1' $installer)) { throw 'install.ps1 does not match SHA256SUMS; nothing was changed' }
+    if (-not (Test-ReleaseChecksum $sums 'install.ps1' $installer)) { throw (Get-Text 'install.ps1 does not match SHA256SUMS; nothing was changed') }
     $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('ssh-paste-update-' + [guid]::NewGuid().ToString('N'))
     [void][System.IO.Directory]::CreateDirectory($dir)
     try {
@@ -2460,30 +2568,30 @@ function Invoke-Update {
 
 function Get-Usage {
     return @(
-        ('ssh-paste ' + $script:Version + ' - paste Windows screenshots into programs running over SSH'),
+        (Get-Text 'ssh-paste {0} - paste Windows screenshots into programs running over SSH' $script:Version),
         '',
-        'Start:',
-        '    ssh-paste --enable myhost    once per host',
-        '    ssh myhost                   then connect as usual',
-        '    Copy a screenshot (Win+Shift+S), switch to the ssh window, press Ctrl+V:',
-        '    the image goes to the server and its path is pasted. Other apps still',
-        '    paste the image.',
+        (Get-Text 'Start:'),
+        (Get-Text '    ssh-paste --enable myhost    once per host'),
+        (Get-Text '    ssh myhost                   then connect as usual'),
+        (Get-Text '    Copy a screenshot (Win+Shift+S), switch to the ssh window, press Ctrl+V:'),
+        (Get-Text '    the image goes to the server and its path is pasted. Other apps still'),
+        (Get-Text '    paste the image.'),
         '',
-        'Or without changing ~/.ssh/config:',
+        (Get-Text 'Or without changing ~/.ssh/config:'),
         '    ssh-paste myhost',
         '',
-        'All commands:',
-        '  ssh-paste --enable [OPTIONS] HOST...    make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)',
-        '  ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)',
-        '  ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config',
-        '  ssh-paste --doctor [HOST]               check this computer and test an upload to HOST',
-        '  ssh-paste --update                      install the latest release',
-        '  ssh-paste --uninstall                   remove ssh-paste and everything it changed',
+        (Get-Text 'All commands:'),
+        (Get-Text '  ssh-paste --enable [OPTIONS] HOST...    make plain "ssh HOST" paste screenshots (edits ~/.ssh/config)'),
+        (Get-Text '  ssh-paste --disable [HOST...]           undo --enable (all hosts if none given)'),
+        (Get-Text '  ssh-paste [OPTIONS] [ssh options] HOST  wrapper mode: ssh with screenshot paste, no config'),
+        (Get-Text '  ssh-paste --doctor [HOST]               check this computer and test an upload to HOST'),
+        (Get-Text '  ssh-paste --update                      install the latest release'),
+        (Get-Text '  ssh-paste --uninstall                   remove ssh-paste and everything it changed'),
         '  ssh-paste --version | --help',
         '',
-        'OPTIONS (images on the server; per host for --enable):',
-        '  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never',
-        '  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)',
+        (Get-Text 'OPTIONS (images on the server; per host for --enable):'),
+        (Get-Text '  --keep TIME   delete them when older than TIME: 30m, 2h, 7d (default 1d), or never'),
+        (Get-Text '  --dir DIR     keep them in DIR: /tmp (default), any /path, or ~/path (quote the ~)'),
         '',
         'https://github.com/xuing/ssh-please-paste-picture'
     ) -join [Environment]::NewLine
@@ -2493,7 +2601,7 @@ function Invoke-WrapperWithSettings {
     # ssh-paste [--keep TIME] [--dir DIR] [ssh options] HOST
     param([string[]]$Argv)
     $settings = Read-PasteSettings $Argv
-    if (@($settings.Rest).Count -eq 0) { throw 'usage: ssh-paste [--keep TIME] [--dir DIR] [ssh options] HOST' }
+    if (@($settings.Rest).Count -eq 0) { throw (Get-Text 'usage: ssh-paste [--keep TIME] [--dir DIR] [ssh options] HOST') }
     return (Invoke-Wrapper @($settings.Rest) -Settings $settings)
 }
 
@@ -2506,13 +2614,13 @@ function Invoke-Main {
     if ($Argv.Count -gt 1) { $rest = @($Argv[1..($Argv.Count - 1)]) }
     switch -CaseSensitive ($Argv[0]) {
         '--proxy' {
-            if ($rest.Count -lt 3) { [Console]::Error.WriteLine('ssh-paste: --proxy needs %h %p %n'); return 2 }
+            if ($rest.Count -lt 3) { [Console]::Error.WriteLine((Get-Text 'ssh-paste: --proxy needs %h %p %n')); return 2 }
             # A bad --keep or --dir must not stop the connection: it only turns paste off.
             $settings = $null
             $settingsError = $null
             try {
                 $settings = Read-PasteSettings @($rest | Select-Object -Skip 3)
-                if (@($settings.Rest).Count -gt 0) { throw ('unknown --proxy arguments: ' + (@($settings.Rest) -join ' ')) }
+                if (@($settings.Rest).Count -gt 0) { throw (Get-Text 'unknown --proxy arguments: {0}' (@($settings.Rest) -join ' ')) }
             } catch { $settingsError = $_.Exception.Message }
             return (Invoke-Proxy $rest[0] $rest[1] $rest[2] -Settings $settings -SettingsError $settingsError)
         }
@@ -2520,11 +2628,11 @@ function Invoke-Main {
         '--disable' { return (Invoke-Disable $rest) }
         '--doctor' { return (Invoke-Doctor $rest) }
         '--update' {
-            if (Test-ScoopInstall $PSScriptRoot) { [Console]::Error.WriteLine('ssh-paste was installed with Scoop. Update it with: scoop update ssh-paste'); return 1 }
+            if (Test-ScoopInstall $PSScriptRoot) { [Console]::Error.WriteLine((Get-Text 'ssh-paste was installed with Scoop. Update it with: scoop update ssh-paste')); return 1 }
             return (Invoke-Update $rest)
         }
         '--uninstall' {
-            if (Test-ScoopInstall $PSScriptRoot) { [Console]::Error.WriteLine('ssh-paste was installed with Scoop. Remove it with: scoop uninstall ssh-paste (it also runs ssh-paste --disable)'); return 1 }
+            if (Test-ScoopInstall $PSScriptRoot) { [Console]::Error.WriteLine((Get-Text 'ssh-paste was installed with Scoop. Remove it with: scoop uninstall ssh-paste (it also runs ssh-paste --disable)')); return 1 }
             return (Invoke-Uninstall)
         }
         '--keep' { return (Invoke-WrapperWithSettings $Argv) }
@@ -2539,9 +2647,10 @@ function Invoke-Main {
 if ($MyInvocation.InvocationName -ne '.') {
     $code = 1
     try {
+        Initialize-Language
         $code = Invoke-Main $args
     } catch {
-        [Console]::Error.WriteLine('ssh-paste: ' + $_.Exception.Message)
+        [Console]::Error.WriteLine((Get-Text 'ssh-paste: {0}' $_.Exception.Message))
         $code = 1
     }
     exit $code

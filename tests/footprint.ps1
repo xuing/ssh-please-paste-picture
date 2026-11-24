@@ -27,6 +27,8 @@ param([switch]$Force)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
+# The checks read ssh-paste's English messages, whatever the runner's language.
+$env:SSH_PASTE_LANG = 'en'
 
 if ($env:OS -ne 'Windows_NT') { Write-Host 'footprint.ps1 runs on Windows only.'; exit 2 }
 if (-not $Force -and $env:CI -ne 'true') {

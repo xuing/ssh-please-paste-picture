@@ -235,6 +235,7 @@ macOS：`sh ~/.local/share/ssh-paste/install.sh --uninstall`，或 `curl -fsSL h
 
 - **其他终端**：经典控制台可以用；WezTerm 和 Alacritty 尽力支持（`ssh-paste --doctor` 会打印 `terminal: ...`）。
 - **其他 CLI**：Codex CLI、Gemini CLI 和 aider 也会收到 PNG 路径；能不能作为附件取决于程序本身（Claude Code 可以）。
+- **语言**：提示信息是英文或简体中文，判断方式和 git 一样：先看 `SSH_PASTE_LANG`，再看 `LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG`，最后看系统的显示语言。想用英文就设 `SSH_PASTE_LANG=en`；`C` 或 `POSIX` 也表示英文。Windows 上如果控制台的代码页显示不了中文，就用英文。安装脚本和 macOS 启动器的少数提示仍是英文。译文在 `src/locale/` 里（每种语言一个 JSON 文件，英文原句对应译文）。
 - **别的 `ssh`**：把 `SSH_PASTE_SSH` 设成它的完整路径，wrapper 模式、`--enable` 和 `--doctor` 都会用它（Windows 上 ssh 模式的上传用的是启动转发的那个 `ssh.exe`）。
 
 <details>
