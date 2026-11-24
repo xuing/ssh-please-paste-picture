@@ -16,6 +16,9 @@
 #            SHA256SUMS, without SSH_PASTE_UNINSTALL and SSH_PASTE_REF
 #   round 6  only on runs of xuing/ssh-please-paste-picture: `curl ... | sh` from
 #            GitHub at the tested commit (SSH_PASTE_REF), then uninstall the same way
+#   round 7  Homebrew: the formula of .github/scripts/homebrew-formula.sh for these
+#            files, from a local tap: brew install and brew test, --enable writes the
+#            opt path, --update and --uninstall leave the files to brew, brew uninstall
 #
 # The snapshot: the shell profiles (content hash and mode, or absent), every path
 # under ~/.ssh and ~/.local with a content hash, the names at the top of the home
@@ -99,6 +102,7 @@ if grep -q '^Reinstalled ssh-paste' "$work/out"; then pass 'the second install s
 check "$("$cmd" --version)" 0.0.0-dev 'ssh-paste --version'
 check "$(zsh -lc 'command -v ssh-paste')" "$cmd" 'a new login shell finds ssh-paste on its PATH'
 run '--enable localhost' "$cmd" --enable localhost
+if grep -qF "ProxyCommand '$cmd' --proxy" "$HOME/.ssh/config"; then pass 'the ProxyCommand calls the installed command'; else fail "ssh config: $(cat "$HOME/.ssh/config")"; fi
 run '--disable' "$cmd" --disable
 run 'ssh-paste --uninstall' "$cmd" --uninstall
 compare 'round 1'
@@ -173,5 +177,38 @@ if [ "${GITHUB_REPOSITORY:-}" = xuing/ssh-please-paste-picture ] && [ -n "${GITH
     run 'uninstall through curl | sh -s -- --uninstall' sh -c "curl -fsSL '$url' | sh -s -- --uninstall"
     compare 'round 6'
 fi
+
+section 'round 7: Homebrew'
+export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
+# brew's own state stays out of the home folder: the trust that `brew install user/tap/formula`
+# grants goes to $XDG_CONFIG_HOME/homebrew (else ~/.homebrew), and the gems brew style installs
+# are cached in HOMEBREW_BUNDLE_USER_CACHE (else ~/.bundle).
+export XDG_CONFIG_HOME=$work/xdg HOMEBREW_BUNDLE_USER_CACHE=$work/bundle-cache
+prefix=$(brew --prefix)
+bcmd=$prefix/bin/ssh-paste
+# The files as a release has them: in a folder named for the version, ssh-paste.js stamped.
+rel=$work/brew/v0.1.0
+mkdir -p "$rel" "$XDG_CONFIG_HOME"
+cp "$repo/src/ssh-paste-mac" "$rel/"
+bash "$repo/.github/scripts/stamp-version.sh" "$repo/src/ssh-paste.js" "$rel/ssh-paste.js" 0.1.0 > /dev/null
+(cd "$rel" && shasum -a 256 ssh-paste.js ssh-paste-mac > SHA256SUMS)
+if bash "$repo/.github/scripts/homebrew-formula.sh" 0.1.0 "file://$rel" "$rel/SHA256SUMS" > "$work/brew/ssh-paste.rb"; then pass 'the formula is written'; else fail 'homebrew-formula.sh failed'; fi
+run 'brew tap-new' brew tap-new --no-git ssh-paste/test
+cp "$work/brew/ssh-paste.rb" "$(brew --repository ssh-paste/test)/Formula/"
+run 'brew install' brew install ssh-paste/test/ssh-paste
+run 'brew style' brew style ssh-paste/test/ssh-paste
+run 'brew audit --strict' brew audit --strict ssh-paste/test/ssh-paste
+check "$("$bcmd" --version)" 0.1.0 "$bcmd --version"
+run 'brew test' brew test ssh-paste/test/ssh-paste
+run '--enable localhost' "$bcmd" --enable localhost
+if grep -qF "ProxyCommand '$prefix/opt/ssh-paste/libexec/bin/ssh-paste' --proxy" "$HOME/.ssh/config"; then pass 'the ProxyCommand calls the opt path, which brew upgrade keeps'; else fail "ssh config: $(cat "$HOME/.ssh/config")"; fi
+if "$bcmd" --update > "$work/out" 2>&1; then fail '--update ran under Homebrew'; else pass '--update does not update a Homebrew install'; fi
+if grep -qF 'brew upgrade ssh-paste' "$work/out"; then pass 'and it says brew upgrade ssh-paste'; else fail "message: $(cat "$work/out")"; fi
+run 'ssh-paste --uninstall' "$bcmd" --uninstall
+if grep -qF 'brew uninstall ssh-paste' "$work/out"; then pass 'it says brew uninstall ssh-paste'; else fail "message: $(cat "$work/out")"; fi
+if [ -e "$(brew --prefix ssh-paste)/libexec/ssh-paste.js" ]; then pass 'it left the files to brew'; else fail 'it removed files that brew owns'; fi
+run 'brew uninstall' brew uninstall ssh-paste/test/ssh-paste
+run 'brew untap' brew untap ssh-paste/test
+compare 'round 7'
 
 finish
