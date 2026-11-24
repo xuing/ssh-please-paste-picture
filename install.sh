@@ -304,15 +304,19 @@ do_install() {
     fi
     say "  checked: ssh-paste --version prints $reported; ssh is $(command -v ssh)"
     say ''
+    case ":${PATH:-}:" in
+        *":$dir/bin:"*) ;;
+        *)
+            say 'New terminal tabs find ssh-paste. In this one, first run:'
+            say "  $PATH_LINE"
+            say ''
+            ;;
+    esac
     say 'Next:'
     say '  ssh-paste --enable <host>    then connect as usual: ssh <host>'
     say '  ssh-paste <host>             or run ssh through ssh-paste, with no config change'
     say '  ssh-paste --doctor <host>    check this Mac and test an upload'
     say '  ssh-paste --uninstall        remove ssh-paste and everything it changed'
-    case ":${PATH:-}:" in
-        *":$dir/bin:"*) ;;
-        *) say "Open a new terminal tab so that it sees the new PATH, or run: export PATH=\"\$HOME/.local/share/ssh-paste/bin:\$PATH\"" ;;
-    esac
     return 0
 }
 
