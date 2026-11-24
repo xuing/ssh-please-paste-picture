@@ -6,87 +6,83 @@
 
 [English](README.md) | 简体中文
 
-在 Windows Terminal 里按 Ctrl+V，或在 macOS 的终端里按 Cmd+V，通过 SSH 把截图粘贴到远程 Claude Code。
-本机上就一个脚本（`ssh-paste`）。服务器端不用装任何东西。
+在 Windows Terminal 里按 Ctrl+V，或在 macOS 的终端里按 Cmd+V，通过 SSH 把截图粘贴到远程 Claude Code。本机上就一个脚本（`ssh-paste`），服务器端什么都不用装。
 
 ## 快速开始
 
-**1. 安装**，打开 PowerShell（不是 cmd，不需要管理员权限）运行：
+**1. 安装**。Windows 上打开 PowerShell（不是 cmd，不需要管理员权限）运行：
 
 ```powershell
 irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
 ```
 
-当前窗口马上可用，其他窗口新开标签页即可。重新运行即可升级。
-
-也可以用 [Scoop](https://scoop.sh)：
+当前窗口马上可用，其他窗口新开标签页即可。也可以用 [Scoop](https://scoop.sh)：
 
 ```powershell
 scoop bucket add xuing https://github.com/xuing/scoop-bucket
 scoop install xuing/ssh-paste
 ```
 
-**macOS 上**，用 [Homebrew](https://brew.sh)：
+macOS 上用 [Homebrew](https://brew.sh)：
 
 ```sh
 brew install xuing/tap/ssh-paste
 ```
 
-不用 Homebrew 的话，在终端里运行（只用 macOS 自带的工具，见 [macOS](#macos) 一节）。装完新开一个标签页；想在当前标签页直接用，就运行安装程序打印的那行 `export PATH=...`：
+不用 Homebrew 的话（装完新开一个标签页，或者运行安装程序打印的那行 `export PATH=...`）：
 
 ```sh
 curl -fsSL https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.sh | sh
 ```
 
 <details>
-<summary>更多安装选项（main 分支、先下载再运行、指定版本、策略限制）</summary>
+<summary>更多安装方式</summary>
 
-安装 `main` 上最新的 commit：
+装 main 分支的最新提交（Windows）：
 
 ```powershell
 irm https://raw.githubusercontent.com/xuing/ssh-please-paste-picture/main/install.ps1 | iex
 ```
 
-如果杀毒软件拦截 `irm ... | iex`，请先下载并校验 `install.ps1`（见“安全”一节）。
+如果杀毒软件拦截 `irm ... | iex`，见[校验下载的文件](#校验下载的文件)。
 
-**指定版本。** 设置 `SSH_PASTE_REF` 或传入 `-Ref`，可从 `raw.githubusercontent.com` 安装其他 tag、branch 或 commit：
+指定 tag、分支或 commit（`SSH_PASTE_REF`、`-Ref` 或 `--ref <tag|branch|commit>`）：
 
 ```powershell
 $env:SSH_PASTE_REF = 'v0.1.0'; irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
 ```
 
-在仓库 clone 里运行 `powershell -ExecutionPolicy Bypass -File install.ps1` 会安装该 clone 的 `src` 目录。受 Group Policy（`AllSigned` 或 `Restricted`）限制，或处于 Constrained Language 模式（AppLocker 或 App Control）时，安装会中止；以管理员身份运行时，会装到提权账户下。
+在仓库 clone 里运行 `powershell -ExecutionPolicy Bypass -File install.ps1` 或 `sh install.sh`，装的是它自己的 `src` 目录（`-Help`、`--help` 列出全部选项）。以管理员身份运行时，install.ps1 装给的是那个提权后的账户。
 
 </details>
 
-**2. 启用主机一次：**
+**2. 启用一台主机**：
 
 ```powershell
 ssh-paste --enable myhost
 ```
 
-**3. 连接并粘贴**，运行 `ssh myhost`：
+**3. 用 `ssh myhost` 连上，然后粘贴：**
 
-1. 复制截图（Win+Shift+S；macOS 上是 Cmd+Ctrl+Shift+4）或图片文件（png、jpg、jpeg、gif、webp、bmp）。
-2. 切到你的 SSH 终端窗口。
-3. `ssh-paste` 会上传到 `/tmp/ssh-paste-<hash>.png`。
-4. 按 Ctrl+V（macOS 上按 Cmd+V）把路径粘贴到 Claude Code。
+1. 复制截图（Win+Shift+S；macOS 上 Cmd+Ctrl+Shift+4），或者复制图片文件（`png`、`jpg`、`jpeg`、`gif`、`webp`、`bmp`）。
+2. 切到 SSH 窗口，`ssh-paste` 会把图片上传到 `/tmp/ssh-paste-<hash>.png`。
+3. 按 Ctrl+V（macOS 上 Cmd+V），把这个路径粘进 Claude Code。
 
-其他软件里粘出的仍是图片。`ssh-paste` 只在会话打开期间运行。
+在其他程序里粘贴的仍然是图片。没有连着的会话时，它什么都不做。
 
 ## 使用
 
 ### ssh 模式（推荐）
 
-`ssh-paste --enable myhost` 会在 `%USERPROFILE%\.ssh\config` 开头写入一段托管配置，之后直接用 `ssh myhost` 就能粘贴截图。参数传 `Host` 别名或纯主机名，不能带 `user@` 或选项（多个主机一起启用：`ssh-paste --enable host1 host2`）。主机已用 `ProxyJump` 或 `ProxyCommand` 时，`--enable` 会拒绝修改，请改用 wrapper 模式。
+`--enable` 会在 `~/.ssh/config`（`%USERPROFILE%\.ssh\config`）开头写入一段配置。参数传 Host 别名或主机名，不能带 `user@` 或选项（`ssh-paste --enable host1 host2`）。已经用了 `ProxyJump` 或 `ProxyCommand` 的主机会被拒绝，这种主机请用 wrapper 模式。
 
 ```powershell
-ssh-paste --disable myhost   # 只撤销一个主机
-ssh-paste --disable          # 撤销全部：删掉整段配置
+ssh-paste --disable myhost   # one host
+ssh-paste --disable          # all hosts: removes the whole block
 ```
 
 <details>
-<summary>生成的 ~/.ssh/config 配置块以及 ssh 模式的原理</summary>
+<summary>~/.ssh/config 里的那段配置</summary>
 
 ```
 # >>> ssh-paste (managed by ssh-paste --enable / --disable) >>>
@@ -97,13 +93,11 @@ Host *
 # <<< ssh-paste <<<
 ```
 
-`ssh` 会把 `ssh-paste` 作为 `ProxyCommand` 启动，原样转发 SSH 字节流并监视交互式会话（以 `Host *` 结束配置块）。它会读取 `ssh.exe` 选项，直连转发连上的 IP 地址上传，并按会话使用的名称校验 host key（`-J` 在 wrapper 模式下可用，在 ssh 模式下会去掉）。详见 [SECURITY.md](SECURITY.md)。
+`ssh-paste` 原样转发 SSH 字节流，同时识别交互式会话（配置块以 `Host *` 结束）。上传时沿用你的 `ssh.exe` 选项，直连转发连上的 IP 地址，并按会话用的名字校验 host key；`-J` 只在 wrapper 模式下可用。详见 [SECURITY.md](SECURITY.md)。
 
 </details>
 
 ### wrapper 模式（零配置）
-
-用 `ssh-paste` 代替 `ssh`：
 
 ```powershell
 ssh-paste myhost
@@ -111,7 +105,7 @@ ssh-paste -p 2222 -J bastion me@myhost
 ssh-paste -t myhost claude
 ```
 
-它会用相同参数运行 `ssh.exe` 并监视剪贴板。所有 `ssh` 选项和跳板机都能用；没加 `-t` 的远程命令（`ssh-paste myhost ls`）按普通 `ssh` 运行。
+带着你的全部选项运行 `ssh`，`-J` 也可以用。不带 `-t` 的远程命令（`ssh-paste myhost ls`）按普通 `ssh` 运行。
 
 ### 全部命令
 
@@ -125,64 +119,110 @@ ssh-paste --uninstall               remove ssh-paste and everything it changed
 ssh-paste --version | --help
 ```
 
-## macOS
+### 升级与卸载
 
-macOS 上命令完全一样，只是粘贴键换成 Cmd+V。那边的 `ssh-paste` 是一个 zsh 启动脚本加一个由 `osascript` 运行的 JavaScript 文件，除了 macOS 自带的东西（zsh、`osascript`、`ssh`、`nc`、`curl`、`shasum`）什么都不需要。ssh 模式下的 `ProxyCommand` 是 `'~/.local/share/ssh-paste/bin/ssh-paste' --proxy '%h' %p '%n'`（家目录会写成完整路径；Homebrew 安装的是 `'/opt/homebrew/opt/ssh-paste/libexec/bin/ssh-paste'`，`brew upgrade` 后这个路径不变），用 `nc` 转发连接。
+| 安装方式 | 升级 | 卸载 |
+|---|---|---|
+| `install.ps1` 或 `install.sh` | `ssh-paste --update`，或重新运行安装命令 | `ssh-paste --uninstall` |
+| Scoop | `scoop update ssh-paste` | `scoop uninstall ssh-paste` |
+| Homebrew | `brew upgrade ssh-paste` | 先 `ssh-paste --uninstall`，再 `brew uninstall ssh-paste` |
 
-- **安装**会把 `bin/ssh-paste`、`ssh-paste.js` 和 `install.sh` 放进 `~/.local/share/ssh-paste`，并在 `~/.zprofile` 开头加一段带标记的 `PATH` 配置（登录 shell 是 bash 时，还会加到 bash 登录时读取的那个文件里：`~/.bash_profile`、`~/.bash_login` 或 `~/.profile`）。不装 launch agent，也不加登录项。`ssh-paste --uninstall`，或 `curl -fsSL .../install.sh | sh -s -- --uninstall`，只删掉这些、`--enable` 写的配置块，以及变空的 `~/.local/share` 和 `~/.local`。选项：`--ref <tag|branch|commit>`（或 `SSH_PASTE_REF`）、`--uninstall`（或 `SSH_PASTE_UNINSTALL=1`）。
-- **Scoop**（Windows）安装的是 release 里的 `ssh-paste.ps1` 和 `ssh-paste.cmd`，按该 release 的 `SHA256SUMS` 校验，通过 Scoop 的 shim 把 `ssh-paste` 放进 `PATH`。`--enable` 写入的是 `apps\ssh-paste\current` 路径，`scoop update` 后不变。升级用 `scoop update ssh-paste`；`scoop uninstall ssh-paste` 会顺带运行 `ssh-paste --disable`。
-- **Homebrew** 安装的是 release 里的 `ssh-paste.js` 和 `ssh-paste-mac`，按该 release 的 `SHA256SUMS` 校验，再把 `ssh-paste` 链接到 `$(brew --prefix)/bin`，这个目录本来就在 `PATH` 里。升级用 `brew upgrade ssh-paste`（`ssh-paste --update` 会这样提示）。卸载时先运行 `ssh-paste --uninstall`，把 `--enable` 写的配置块从 `~/.ssh/config` 里删掉，再 `brew uninstall ssh-paste`；跳过第一步的话，ssh 连那些 host 时还会去调用已经删掉的命令。
-- **剪贴板条目**里有图片、路径（以 promise 方式提供：上传途中按 Cmd+V 会等上传完成）、私有类型 `com.github.xuing.ssh-paste.owner`，以及 `org.nspasteboard.TransientType` 和 `org.nspasteboard.AutoGeneratedType`，遵循 nspasteboard.org 约定的剪贴板管理工具会跳过它。在 Finder 里复制的图片文件，会以第一张图片加远程路径的形式提供；切到别的应用时，又会恢复成文件。
-- **和 Windows 的不同。** 用 `curl ... | sh` 装完要新开一个标签页（Homebrew 不用）。终端是通过进程树找到的，找不到时用 `__CFBundleIdentifier` 或 `TERM_PROGRAM`；如果 `ssh-paste --doctor` 说认不出终端，把 `SSH_PASTE_TERMINAL` 设成它的 bundle id（比如 `com.googlecode.iterm2`）。焦点按窗口算，和 Windows 一样。ssh 模式下会话结束时会恢复成纯图片；上传连接的是转发时用的主机名（不是 IP 地址），并按会话里用的名字校验 host key。ssh 模式通过 `ps` 读取会话的 `ssh` 参数，所以参数值里带空格（比如 `-i "/path/with space"`）时，会话会被当成非交互式，这种情况请用 wrapper 模式。
-- **已测试**（CI，GitHub runner 上 macOS 15 和 26 的 Terminal.app）：上传途中粘贴、上传失败、在别的应用里粘贴、Finder 复制、ssh 模式和 wrapper 模式连真实 `sshd`，以及安装卸载后家目录和之前完全一样。**未测试：** 真人日常使用的 Mac，iTerm2、Ghostty、WezTerm 等其他终端，以及 macOS 的剪贴板隐私提示（测试机上 `osascript` 读剪贴板时没有弹提示；开启剪贴板隐私的 Mac 可能会弹）。
-- **排查问题：** `SSH_PASTE_DEBUG=1 ssh myhost` 会把 watcher 的每一步判断记到 `$TMPDIR/ssh-paste-debug.log`。
+用 Scoop 或 Homebrew 装的，`--update` 和 `--uninstall` 只会打印对应的包管理器命令；`--enable` 写入的路径升级后依然有效（`apps\ssh-paste\current`，或 Homebrew 的 `opt` 路径）。`scoop uninstall` 会自己运行 `--disable`；Homebrew 做不到，所以要先运行 `ssh-paste --uninstall`，否则 ssh 连那些主机时还会去调用已经删掉的命令。开了 Scoop 的 `no_junction` 设置时，`--enable` 会拒绝，请用 wrapper 模式。
+
+上传的图片会一直留在服务器的 `/tmp` 里。要删掉你的图片：
+
+```powershell
+ssh myhost "rm -f /tmp/ssh-paste-*"
+```
+
+<details>
+<summary>ssh-paste 运行不了，或者想手动卸载</summary>
+
+Windows 上通过安装程序卸载（之后要在同一个窗口重新安装的话，先运行 `Remove-Item Env:SSH_PASTE_UNINSTALL`）：
+
+```powershell
+$env:SSH_PASTE_UNINSTALL = 1; irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
+& ([scriptblock]::Create((irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1))) -Uninstall
+```
+
+在仓库 clone 里：`powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall`。
+
+macOS：`sh ~/.local/share/ssh-paste/install.sh --uninstall`，或 `curl -fsSL https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.sh | sh -s -- --uninstall`。`SSH_PASTE_UNINSTALL=1` 的作用和 `--uninstall` 相同，重新安装前记得 unset。
+
+手动删除：删掉 `~/.ssh/config` 里 `# >>> ssh-paste` 开头的那段。Windows 上把 `%LOCALAPPDATA%\Programs\ssh-paste` 从 `Path` 里去掉（开始菜单 > `"编辑帐户的环境变量"`），再运行 `Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\ssh-paste"`。macOS 上删掉 profile 里 `# >>> ssh-paste PATH` 开头的那段，以及 `~/.local/share/ssh-paste`。
+
+</details>
 
 ## 运行要求
 
-- **Windows 10 或 11。** 系统自带的 Windows PowerShell 5.1（可与 PowerShell 7 共存）。
-- **Windows Terminal**（推荐）或传统控制台。
-- **OpenSSH client（`ssh.exe`）。** 安装脚本需要它；如果没有，请在**设置 > 系统 > 可选功能**里添加 `"OpenSSH Client"`。
-- **免提示密钥登录。** 上传走非交互式 `ssh`（`BatchMode=yes`），只支持密码登录时会失败。请用无口令密钥或 `ssh-agent`：
+- **Windows 10 或 11**，自带的 PowerShell 5.1 即可（和 PowerShell 7 共存没问题），配 Windows Terminal（推荐）或经典控制台。
+- **OpenSSH 客户端**（`ssh.exe` / `ssh`），安装程序会检查。Windows 上在 **设置 > 系统 > 可选功能** 里添加 `"OpenSSH Client"`，或以管理员身份运行 `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0`。
+- **免交互的密钥登录**：上传用的 `ssh` 带 `BatchMode=yes`，只能密码登录的主机会失败。请用没有 passphrase 的密钥，或者 `ssh-agent`：
 
   ```powershell
-  # 只需一次，在“以管理员身份运行”的 PowerShell 里：立即启动 agent，并设为开机自启
+  # once, in PowerShell as Administrator: start the agent now and at every boot
   Get-Service ssh-agent | Set-Service -StartupType Automatic -PassThru | Start-Service
-  # 然后用自己的身份添加密钥（只问一次口令）
+  # then, as yourself: add your key (asks the passphrase once)
   ssh-add
   ```
 
-- **服务器工具。** `sh`、`cat`、`wc`、`find`、`cmp`、`mv`、`mktemp`，可写的 `/tmp`（登录 shell 支持 `bash`、`zsh`、`fish` 或 `tcsh`）。
+- **服务器**：`sh`、`cat`、`wc`、`find`、`cmp`、`mv`、`mktemp`，以及可写的 `/tmp`（登录 shell 可以是 `bash`、`zsh`、`fish` 或 `tcsh`）。
+
+## macOS
+
+命令完全一样，粘贴键换成 Cmd+V。它由一个 zsh 启动脚本（`ssh-paste-mac`）和一个由 `osascript` 运行的 JavaScript 文件（`ssh-paste.js`）组成，除了 macOS 自带的东西（`ssh`、`nc`、`curl`、`shasum`）什么都不需要。安装改动了哪些东西，见[它会改动你电脑上的哪些东西](#它会改动你电脑上的哪些东西)。
+
+- **ssh 模式**：`ProxyCommand` 是 `'~/.local/share/ssh-paste/bin/ssh-paste' --proxy '%h' %p '%n'`（家目录会写成完整路径；Homebrew 安装的是 `'/opt/homebrew/opt/ssh-paste/libexec/bin/ssh-paste'`，`brew upgrade` 后不变），用 `nc` 转发连接。会话的 `ssh` 选项是从 `ps` 读的，所以选项值里带空格时（`-i "/path/with space"`）请用 wrapper 模式。上传连接的是转发时用的主机名；图片字节先放在 `$TMPDIR` 里一个权限为 700 的目录中。watcher 忽略 `SIGHUP`，这样终端关闭时它能把剪贴板恢复成纯图片。
+- **剪贴板条目**：图片、路径（上传途中按 Cmd+V 会等上传完成）、`com.github.xuing.ssh-paste.owner`，以及 `org.nspasteboard.TransientType` 和 `org.nspasteboard.AutoGeneratedType`，遵循 nspasteboard.org 约定的剪贴板管理器会跳过它。在 Finder 里复制的图片文件，会变成第一张图片加远程路径；粘到其他程序时仍然是文件。
+- **终端**：通过进程树找到，找不到时用 `__CFBundleIdentifier` 或 `TERM_PROGRAM`。如果 `ssh-paste --doctor` 认不出终端，把 `SSH_PASTE_TERMINAL` 设成它的 bundle id（比如 `com.googlecode.iterm2`）。
+- **已测试**：CI 上用 Terminal.app 在 macOS 15 和 26 上测试。**未测试**：真人日常用的 Mac、其他终端（iTerm2、Ghostty、WezTerm），以及剪贴板隐私提示（开了这个设置的 Mac 可能会弹）。
 
 ## 已知限制
 
-- **焦点按 Windows Terminal 窗口判断，不区分标签页。** 只要窗口里跑着会话，该窗口的所有标签页（包括本地标签页）都会粘贴路径；另一个 SSH 标签页也会上传，先写入的会话决定最终路径。请分窗口使用。
-- **ssh 模式下，退出后剪贴板可能留着路径。** 关闭时 `ssh` 会终止 `ProxyCommand`，`ssh-paste` 可能来不及还原成纯图片；下次复制时就会清掉。
-- **带 HTML 复制的图片会丢 HTML。** 比如 Chrome 的**复制图片**，经 `ssh-paste` 改写后只剩图片和路径。
-- **ssh 模式会给已启用主机的每次连接加上一次 PowerShell 启动耗时**（包括 `scp`、`sftp` 和 `git`）。
+- **焦点按窗口算，不按标签页算。** 会话运行期间，同一窗口里的每个标签页粘贴的都是路径，同一窗口里的另一个 SSH 标签页也可能先写入路径。请分开用不同的窗口。
+- **Windows 上的 ssh 模式退出后，剪贴板里可能还是路径**，因为 `ssh` 会直接结束 `ProxyCommand`；下次复制就恢复正常。
+- **带 HTML 的图片会丢掉 HTML**：Chrome 的 **复制图片** 只留下图片和路径。
+- **Windows 上的 ssh 模式会给每次连接已启用的主机增加 PowerShell 启动时间**（`scp`、`sftp`、`git` 也一样）。
 
 ## 问题排查
 
-1. 运行 `ssh-paste --doctor myhost`（不加 `myhost` 时只查本机）；`FAIL` 行会指出问题。
-2. 在 ssh 模式下，设置 `SSH_PASTE_DEBUG=1` 会在 stderr 输出 `ssh-paste debug:` 日志（连接地址、stdin/stdout、关闭连接的一端）：
+1. 运行 `ssh-paste --doctor myhost`（不带 `myhost` 只做本机检查），`FAIL` 开头的行会指出问题。
+2. ssh 模式下设置 `SSH_PASTE_DEBUG=1` 打开日志。Windows 上转发进程会往 stderr 写 `ssh-paste debug:` 开头的行（地址、stdin/stdout、哪一端先关闭）：
 
    ```powershell
    $env:SSH_PASTE_DEBUG = 1; ssh myhost
    Remove-Item Env:SSH_PASTE_DEBUG
    ```
 
-3. 运行 `ssh -v myhost`（卡在 `expecting SSH2_MSG_KEX_ECDH_REPLY` 说明转发停止了）。
+   macOS 上 `SSH_PASTE_DEBUG=1 ssh myhost` 会把 watcher 的每个判断记到 `$TMPDIR/ssh-paste-debug.log`。
+3. 运行 `ssh -v myhost`；卡在 `expecting SSH2_MSG_KEX_ECDH_REPLY` 说明转发停了。
 4. 带上输出提交 [bug report](https://github.com/xuing/ssh-please-paste-picture/issues/new?template=bug_report.yml)。
+
+## 细节
+
+- **其他终端**：经典控制台可以用；WezTerm 和 Alacritty 尽力支持（`ssh-paste --doctor` 会打印 `terminal: ...`）。
+- **其他 CLI**：Codex CLI、Gemini CLI 和 aider 也会收到 PNG 路径；能不能作为附件取决于程序本身（Claude Code 可以）。
+- **别的 `ssh`**：把 `SSH_PASTE_SSH` 设成它的完整路径，wrapper 模式、`--enable` 和 `--doctor` 都会用它（Windows 上 ssh 模式的上传用的是启动转发的那个 `ssh.exe`）。
+
+<details>
+<summary>会话识别、上传、重试、剪贴板</summary>
+
+- **会话识别**：只有交互式会话才会监视剪贴板（根据参数和 `ssh -G` 判断）；`scp`、`sftp`、`git` 和 VS Code Remote-SSH 直接放行。以下情况跳过：`-T`、`-N`、`-W`、`-f`、`-n`、`-s`、`-G`、`-V`、`-O`、`-Q`，不带 `-t` 的远程命令（`ssh myhost ls`、`git`、`RemoteCommand`），`RequestTTY no`，`SessionType` 不是 `default`，`StdinNull yes`；对已启用的主机用 wrapper 模式时直接运行 `ssh`。
+- **上传**：最大 64 MB，在会话窗口切到前台时上传（每 250 ms 检查一次），不是在粘贴时。上传途中粘贴最多等 30 秒。同一张图每个会话只传一次，6 小时后再传。失败时播放一次 Windows 错误提示音，窗口在前台时每 30 秒重试（最多 30 分钟），退出时汇总。缺少或被拦截的 API 会打印 `ssh-paste: screenshot paste is off: <reason>`，`ssh` 照常运行。
+- **剪贴板**：同时含图片和文本或文件的条目（Excel、Word、资源管理器）会跳过。原始截图仍在 Win+V 历史里，只有 `ssh-paste` 改写的内容被排除。
+
+</details>
 
 ## 安全
 
 ### 校验下载的文件
 
-每个 release 都附带 `SHA256SUMS` 和 GitHub build attestation，覆盖 `install.ps1`、`ssh-paste.ps1` 和 `ssh-paste.cmd`，以及 macOS 用的 `install.sh`、`ssh-paste-mac` 和 `ssh-paste.js`（`main` 分支两者都没有）。macOS 安装脚本会用 `SHA256SUMS` 校验它下载的文件。
+每个 release 都带 `SHA256SUMS`，以及 `install.ps1`、`ssh-paste.ps1`、`ssh-paste.cmd`、`install.sh`、`ssh-paste-mac`、`ssh-paste.js`、`SHA256SUMS` 的 GitHub build attestation（从 `main` 安装的两样都没有）。release 安装会按 `SHA256SUMS` 校验文件，Scoop 和 Homebrew 也一样。
 
 <details>
-<summary>运行前校验 install.ps1</summary>
+<summary>运行 install.ps1 之前先校验它</summary>
 
-校验 SHA-256（输出 `True` 表示一致）：
+SHA-256（输出 `True` 表示一致）：
 
 ```powershell
 $base = 'https://github.com/xuing/ssh-please-paste-picture/releases/latest/download'
@@ -192,108 +232,65 @@ $want = (Select-String -Path SHA256SUMS -Pattern ' install\.ps1$').Line.Split(' 
 (Get-FileHash install.ps1 -Algorithm SHA256).Hash -eq $want
 ```
 
-[GitHub CLI](https://cli.github.com/) attestation 校验：
+用 [GitHub CLI](https://cli.github.com/) 校验 attestation：
 
 ```powershell
 gh attestation verify install.ps1 -R xuing/ssh-please-paste-picture
 ```
 
-运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`（`-ExecutionPolicy Bypass` 只对该进程有效）。
+然后用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1` 运行（Bypass 只对这个进程生效）。
 
 </details>
 
 ### 它会改动你电脑上的哪些东西
 
-| 时机 | 改动 | 如何还原 |
+| 步骤 | 改动 | 由谁撤销 |
 |---|---|---|
-| 安装 | `%LOCALAPPDATA%\Programs\ssh-paste`（`ssh-paste.ps1`、`ssh-paste.cmd`；`%LOCALAPPDATA%\Programs` 不存在时会创建） | `--uninstall` 删除目录（`%LOCALAPPDATA%\Programs` 如果变空也一起删掉） |
-| 安装 | 用户 PATH 条目（`HKCU\Environment\Path`） | `--uninstall` 删除条目（`Path` 如果变空也一起删掉） |
-| `--enable` | `%USERPROFILE%\.ssh\config` 开头的一段配置（文件和 `.ssh` 不存在时会创建） | `--disable` 或 `--uninstall` 删除这段配置；如果 config 是 `ssh-paste` 建的且内容为空，则删除文件（`.ssh` 变空时也删掉） |
-| 会话期间 | 改写图片条目：图片、路径文本、私有 `SshPaste.Owner` 格式、`ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory=0`、`CanUploadToCloudClipboard=0`（不进 Win+V 历史和云剪贴板） | 切到其他应用或退出时还原为不带路径文本的图片（ssh 模式见[已知限制](#已知限制)）；`SshPaste.Owner` 和这三个标记保留到下次复制 |
+| `install.ps1` | `%LOCALAPPDATA%\Programs\ssh-paste`（`ssh-paste.ps1`、`ssh-paste.cmd`；`Programs` 不存在时会创建），以及 `HKCU\Environment\Path` 里的一条 | `--uninstall`，`Programs` 或 `Path` 变空时一并删除 |
+| Scoop | 它的应用目录和 shim | `scoop uninstall ssh-paste` |
+| `install.sh` | `~/.local/share/ssh-paste`（`bin/ssh-paste`、`ssh-paste.js`、`install.sh`），以及 `~/.zprofile` 开头一段带标记的 `PATH` 配置（登录 shell 是 bash 时还有 `~/.bash_profile`、`~/.bash_login` 或 `~/.profile`） | `--uninstall`，变空的 `~/.local/share`、`~/.local` 和它创建的 profile 一并删除 |
+| Homebrew | 它的 keg 和 `$(brew --prefix)/bin/ssh-paste` | `brew uninstall ssh-paste` |
+| `--enable` | `~/.ssh/config`（`%USERPROFILE%\.ssh\config`）开头的一段配置（文件和 `.ssh` 不存在时会创建） | `--disable` 或 `--uninstall`；如果 config 和 `.ssh` 是 `ssh-paste` 创建的且已变空，一并删除 |
+| Windows 剪贴板 | 图片、路径、`SshPaste.Owner`、`ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory=0`、`CanUploadToCloudClipboard=0` | 切走或退出时恢复成纯图片（见[已知限制](#已知限制)）；这些标记留到你下次复制 |
 
-除此之外没有服务、计划任务、启动项、profile 修改或配置文件改动。安装和卸载会临时写入并清除一个用户变量，让 Windows 在新窗口刷新 `PATH`。服务器端只写 `/tmp/ssh-paste-*.png`。
+除此之外没有任何改动：不需要管理员权限，没有服务、计划任务、launch agent、登录项、守护进程，不改 PowerShell profile，也没有配置文件。Windows 上安装和卸载会临时设置一个用户变量，让新开的窗口拿到新的 `Path`。不保存密码或密钥，不发送遥测；只从 `github.com` 和 `raw.githubusercontent.com` 下载。服务器上只写 `/tmp/ssh-paste-*.png`。
 
 ### 服务器上的文件
 
-- `/tmp/ssh-paste-<hash>.png`（PNG 的 SHA-256 前 128 位十六进制），权限 600；如果属于其他用户，则存为 `/tmp/ssh-paste-<hash>-<uid>.png`。
-- 已有相同文件会直接复用，并重置其时间。
-- 只有同一用户后续向同一台服务器上传时才会清理，删掉该用户超过一天的 `ssh-paste-<hash>.png` 和临时文件。
-- 上传间隙和卸载后没有任何任务运行；系统会按计划清理 `/tmp`（通常在重启时）。
-
-### 杀毒软件与策略
-
-- 运行时通过 `Add-Type` 编译的 C# 代码（剪贴板和窗口 API）可能触发安全软件误报；明文脚本放在 `%LOCALAPPDATA%\Programs\ssh-paste`。
-- Microsoft Defender 误报可提交到 <https://www.microsoft.com/en-us/wdsi/filesubmission>。
-- AppLocker 或 App Control 的 Constrained Language 模式会拦截剪贴板访问（`ssh-paste --doctor` 会报告）。
-- 安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
-
-## 卸载
-
-```powershell
-ssh-paste --uninstall
-```
-
-这会删掉 `--enable` 配置块、`PATH` 条目和安装目录。不会动服务器（图片留在 `/tmp` 等系统清理）；要删掉你的图片，运行：
-
-```powershell
-ssh myhost "rm -f /tmp/ssh-paste-*"
-```
+`/tmp/ssh-paste-<hash>.png`（PNG 的 SHA-256 前 128 位，十六进制），权限 600；这个名字被别的用户占用时改用 `/tmp/ssh-paste-<hash>-<uid>.png`。内容相同的文件会直接复用。每次上传会删掉你自己超过一天的这类文件。上传之间和卸载之后什么都不运行；`/tmp` 由系统清理（通常在重启时）。
 
 <details>
-<summary>如果 ssh-paste 跑不起来，或手动卸载</summary>
+<summary>杀毒软件与策略限制</summary>
 
-通过安装脚本卸载（如果用了第一行，在同一窗口重装前先执行 `Remove-Item Env:SSH_PASTE_UNINSTALL`）：
-
-```powershell
-$env:SSH_PASTE_UNINSTALL = 1; irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1 | iex
-& ([scriptblock]::Create((irm https://github.com/xuing/ssh-please-paste-picture/releases/latest/download/install.ps1))) -Uninstall
-```
-
-手动卸载：
-
-1. 删除 `%USERPROFILE%\.ssh\config` 里从 `# >>> ssh-paste` 到 `# <<< ssh-paste <<<` 的内容。
-2. 开始 > `"Edit environment variables for your account"` > `Path` > **编辑** > 去掉 `%LOCALAPPDATA%\Programs\ssh-paste`。
-3. `Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\ssh-paste"`。
+- 在组策略（`AllSigned` 或 `Restricted`）和 Constrained Language 模式（AppLocker 或 App Control）下无法运行；`ssh-paste --doctor` 会报告。
+- 运行时由 `Add-Type` 编译的 C# 代码可能触发扫描；纯文本脚本在 `%LOCALAPPDATA%\Programs\ssh-paste`。
+- Defender 误报可以提交到：<https://www.microsoft.com/en-us/wdsi/filesubmission>。
 
 </details>
 
-## 细节
-
-- **其他终端。** 传统控制台可用；WezTerm 和 Alacritty 为尽力支持（`ssh-paste --doctor` 会打印 `terminal: ...`）。
-- **其他 CLI 程序。** 同样能把服务器 PNG 路径粘贴给 Codex CLI、Gemini CLI 和 aider；能否自动附加图片取决于程序本身（Claude Code 支持）。
-- **换用其他 `ssh.exe`。** 把 `SSH_PASTE_SSH` 设为它的完整路径，wrapper 模式、`--enable` 和 `--doctor` 会用它（ssh 模式上传用的是启动转发的那个 `ssh.exe`）。
-
-<details>
-<summary>会话过滤、上传时机、重试与剪贴板实现细节</summary>
-
-- **会话过滤：** 只有交互式会话会监视剪贴板（通过命令行参数和 `ssh -G` 判断；`scp`、`sftp`、`git` 和 VS Code Remote-SSH 都是纯转发）。会跳过 `-T`、`-N`、`-W`、`-f`、`-n`、`-s`、`-G`、`-V`、`-O`、`-Q`、没加 `-t` 的远程命令（`ssh myhost ls`、`git`、`RemoteCommand`）、`RequestTTY no`、非 `default` 的 `SessionType`、`StdinNull yes`。wrapper 模式遇到已启用 ssh 模式的主机时，会直接运行 `ssh`。
-- **上传与重试：** 每 250 ms 看一次剪贴板；会话窗口在前台时上传不超过 64 MB 的图片（不是按 Ctrl+V 时才传）。上传期间按 Ctrl+V 最多等 30 秒（失败则什么也不粘贴）。同一张图每会话只传一次（超过 6 小时会重传）。失败时每张图响一次 Windows 错误提示音，窗口在前台时重试，退出时输出汇总（`ssh` 可能会先终止 `ProxyCommand`）。缺少或被拦截相关 API 时会输出 `ssh-paste: screenshot paste is off: <reason>`，并按普通 `ssh` 或纯转发运行。
-- **剪贴板：** 会跳过同时包含图片和文本或文件的条目（Excel、Word、资源管理器）。原截图留在 Win+V 历史里，只有 `ssh-paste` 改写的内容不进历史。
-
-</details>
+安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## 同类工具对比
 
-| 工具 | Windows 端 | 服务器端 | 后台常驻 | 粘贴方式 |
-|---|---|---|---|---|
-| ssh-please-paste-picture | 一个 PowerShell 脚本 | 无 | 无，只在会话期间运行 | Ctrl+V |
-| [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control)（`/rc`） | 无，用 claude.ai/code 或 Claude app | 无需额外安装 | Claude Code 会话本身 | 在浏览器或 app 里附加图片 |
-| [clipaste](https://github.com/hqhq1025/clipaste) | Rust daemon | xclip / wl-paste shim、`clipaste-paste`（需要 curl）；ssh config 里加 `RemoteForward` | 本地 daemon | Ctrl+V |
-| [cc-clip](https://github.com/ShunmeiCho/cc-clip) | Go 程序（Windows 为 experimental） | Windows 快捷键方式不需要（用 scp）；Ctrl+V shim 和 tunnel 在 Windows 上为 experimental | 快捷键进程（可选开机自启） | Alt+Shift+V |
-| [img2ssh](https://github.com/bulletsrip/img2ssh) | Go 程序 | 无 | 登录后由计划任务启动的 daemon，复制的每张图片都会上传 | Ctrl+V |
-| AutoHotkey 脚本，例如 [claude-ssh-image-paste](https://github.com/devonjones/claude-ssh-image-paste) | AutoHotkey v2 和脚本 | 无 | AutoHotkey，拦截 Ctrl+V | Ctrl+V |
+| 工具 | 需要什么 | 粘贴方式 |
+|---|---|---|
+| ssh-please-paste-picture | 一个脚本，只在会话期间工作；服务器上什么都不装 | Ctrl+V / Cmd+V，切换窗口时上传 |
+| [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control)（`/rc`） | Claude Code，需要 Pro、Max、Ultra、Team 或 Enterprise（不支持 API key）；在浏览器或 Claude app 里用 | 在浏览器或 app 里添加附件 |
+| [clipaste](https://github.com/hqhq1025/clipaste) | Rust 守护进程；服务器上要有 xclip / wl-paste shim、`clipaste-paste` 和 curl；`RemoteForward` | Ctrl+V |
+| [cc-clip](https://github.com/ShunmeiCho/cc-clip) | Go 热键进程（Windows 支持为实验性） | Alt+Shift+V（scp） |
+| [img2ssh](https://github.com/bulletsrip/img2ssh) | 登录时启动的 Go 守护进程，复制的每张图都会上传 | Ctrl+V |
+| [claude-ssh-image-paste](https://github.com/devonjones/claude-ssh-image-paste) | AutoHotkey v2，拦截 Ctrl+V | Ctrl+V，粘贴时上传 |
 
-Remote Control 只支持 Claude Code，需要 Pro、Max、Ultra、Team 或 Enterprise 订阅（不支持 API key），而且会让你从终端切到浏览器或 Claude app。AutoHotkey 脚本在按 Ctrl+V 时上传；`ssh-paste` 则在你切回会话窗口时就上传。
+<details>
+<summary>开发</summary>
 
-## 开发
-
-所有文件必须保持纯 ASCII，且能在 Windows PowerShell 5.1 和 PowerShell 7 上运行。提 pull request 前请先开 issue。macOS 客户端的逻辑有 node 测试（`node --test tests/mac/unit.test.js`）；`tests/mac` 里其余的测试在 CI 的 macOS runner 上跑。
-
-其他测试套件、pull request 检查项和 commit 规范见 [CONTRIBUTING.md](CONTRIBUTING.md)，发布流程见 [docs/RELEASING.md](docs/RELEASING.md)。每次 commit 前运行 lint 检查和单元测试：
+所有文件只用 ASCII，并且要在 PowerShell 5.1 和 7 上都能运行。提 pull request 之前请先开 issue。macOS 客户端的逻辑用 `node --test tests/mac/unit.test.js` 测试，`tests/mac` 里其余的测试在 macOS CI 上跑。详见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [docs/RELEASING.md](docs/RELEASING.md)。每次 commit 前运行：
 
 ```powershell
 pwsh ./check.ps1
 ```
+
+</details>
 
 ## 许可证
 
