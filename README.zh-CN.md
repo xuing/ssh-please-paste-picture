@@ -8,6 +8,8 @@
 
 在 Windows Terminal 里按 Ctrl+V，或在 macOS 的终端里按 Cmd+V，通过 SSH 把截图粘贴到远程 Claude Code。本机上就一个脚本（`ssh-paste`），服务器端什么都不用装。
 
+它怎么工作、哪些事它从不做、和同类工具有什么不同：[docs/how-it-works.zh-CN.md](docs/how-it-works.zh-CN.md)。
+
 ## 快速开始
 
 **1. 安装**。Windows 上打开 PowerShell（不是 cmd，不需要管理员权限）运行：
