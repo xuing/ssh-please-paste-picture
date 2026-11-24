@@ -11,7 +11,7 @@ times moves here.
 | --- | --- |
 | A commit has one goal. | Every change in behavior has a reason that belongs to the subject. A fix found on the way, a refactor or a new feature goes in a commit of its own, so a revert takes back one thing. |
 | A fix reaches every sibling of the bug. | Grep for the same pattern and fix every match in the same commit. That includes `install.ps1` and `src/ssh-paste.ps1`, which share code such as `Remove-UserPathEntry` and `Send-EnvironmentChange`. 43c21a2 fixed the registry leak in both files. |
-| A change re-derives what depends on it. | When a change alters a name, a format, a file layout or the order of steps, find every caller, test, README line and server-side command that assumed the old one, and run it. b1b0085 moved the clipboard write before the upload, so the failure path had to take the path back off the clipboard. |
+| A change re-derives what depends on it. | When a change alters a name, a format, a file layout or the order of steps, find every caller, test, README line and server-side command that assumed the old one, and run it. Grep the tests that run only in CI too. b1b0085 moved the clipboard write before the upload, so the failure path had to take the path back off the clipboard. 365340f made `--enable` log in to turn `--dir ~/...` into a full path, and `tests/mac/footprint.sh`, which runs only on macOS CI and has no server, still enabled `--dir '~/...'`. |
 | A failed read means "unknown", not "empty". | A read or parse that fails is never taken as "no hosts" or "no config". Only a file that does not exist counts as empty, and the code checks for that case by itself. `Update-SshConfig` refuses to write when the file changed since it was read. Keep that behavior, and test with the file missing and with the file unreadable. |
 | A change holds on the whole path. | Follow it from the user's command to the end result: the launcher, `Invoke-Main`, the ssh config, the server and the clipboard. One correct function does not make the operation correct. |
 
@@ -87,6 +87,9 @@ A check that was not run is listed under "Not run:", never left out.
    the clipboard, the watcher, window detection or process handling. Unit
    tests replace the pipes and the clipboard, so they cannot show what
    Win32-OpenSSH and Windows Terminal do. Say what you ran and what you saw.
+   Three bugs passed every Linux test first: 70db0c0 (the relay hung),
+   07a4287 (uploads from ssh mode hung) and 34c1759 (a promise was withdrawn
+   by our own `EmptyClipboard`).
    For the macOS client, the macOS CI jobs (`tests/mac/*.sh` on macOS 15 and
    26) are the run; a Mac that a person uses and terminals other than
    Terminal.app go under "Not run:".

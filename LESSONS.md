@@ -1,4 +1,4 @@
-<!-- reviewed-through: 26ce38f (2026-11-23 20:57 +0900) -->
+<!-- reviewed-through: 9b3216d (2026-11-24 15:10 +0900) -->
 # Lessons from merged work
 
 This file keeps what went wrong in earlier work on ssh-paste and the rule that
@@ -11,7 +11,7 @@ times moves into [docs/code-standards.md](docs/code-standards.md) and leaves a
 short entry under [Moved to the code standards](#moved-to-the-code-standards).
 
 The marker on the first line names the last commit that was reviewed. Before
-each release, read every commit after it (`git log --stat 26ce38f..HEAD`, full
+each release, read every commit after it (`git log --stat 9b3216d..HEAD`, full
 messages). For each fix that needed a second try, a change that should not
 have shipped, or a check that was too thin, add a lesson or add a sighting to
 an existing one. Then move the marker.
@@ -20,6 +20,11 @@ On 2026-11-23 the first review read all 7 commits, from dab6eb1 to 26ce38f,
 and the review rounds before the first commit. Five commits fixed something
 an earlier one shipped. Two Windows bugs reached a commit because only Linux
 had run the code: the relay hang (70db0c0) and the registry leak (43c21a2).
+
+On 2026-11-24 the second review read the 32 commits from 22f35a3 to 9b3216d
+(the Windows watcher's promise, the TLA+ model, the macOS client, Homebrew,
+Scoop, `--keep` and `--dir`) and the CI runs of PR #4. The Windows-only rule
+reached three sightings and moved to the code standards.
 
 ## PowerShell
 
@@ -60,21 +65,6 @@ that becomes a shell script or a server command.
 - Seen 1x (2026-11-23).
 
 ## Verification
-
-**Code that only runs on Windows is not done until it ran on Windows with the
-real `ssh`.** Linux tests and Pester on Windows use .NET pipes and a local TCP
-server. Win32-OpenSSH behaves differently, and no unit test reaches it.
-- 70db0c0: `ssh HOST` in ssh mode hung at "expecting
-  SSH2_MSG_KEX_ECDH_REPLY". Win32-OpenSSH hands its ProxyCommand overlapped
-  pipes. A synchronous `ReadFile` on them can report a pending read as done
-  with 0 bytes, and `Invoke-Proxy` took that for the end of input and
-  stopped forwarding. All tests passed. The maintainer found it by hand on
-  Windows. The fix opens stdin and stdout with overlapped I/O when the handle
-  needs it, and adds `SSH_PASTE_DEBUG=1` so the relay can report its steps.
-- 07a4287: every upload from ssh mode hung on Windows (next lesson). The
-  Linux and Pester runs passed; the maintainer's `SSH_PASTE_DEBUG=1` log and a
-  0-byte temp file on the server showed it.
-- Seen 2x (2026-11-23, 2026-11-23).
 
 **What a parent process hands us is not ours to pass on.** In ssh mode
 ssh.exe starts our `--proxy` process, and everything it gives us goes on to
@@ -147,6 +137,36 @@ has.
   looks at the registry.
 - Seen 1x (2026-11-23).
 
+**A diagnostic switch gets one real run, because users turn it on when
+something already fails.** A debug flag that breaks the thing it diagnoses
+takes away the user's only way to report the bug.
+- 56c6999: `SSH_PASTE_DEBUG` (added in ac85169) removed `LogLevel=ERROR`
+  from the upload command but left its `-o`. The lone `-o` took the next
+  option as its value and ssh refused the command line, so every upload
+  failed exactly when a user turned debugging on. ac85169 listed only a parse
+  check. The macOS client already dropped the pair, and its test showed the
+  Windows copy was wrong; the fix adds a Pester test that fails without it.
+- Seen 1x (2026-11-24).
+
+**A rule verified for one client is not verified for its port: port the
+counterexamples as tests too.** The TLA+ model checks the Windows watcher
+only; the macOS watcher makes the same decisions in other code.
+- 9c44801 said that the rules of 6396fae hold on macOS. Codex reviews then
+  found two cases its tests did not reach: a paste that waited for the
+  upload got the path after the user switched windows (a27b62c; the test now
+  brings Calculator forward while the paste waits), and with ControlPersist
+  the watcher kept writing paths after logout (94e9171).
+- Seen 1x (2026-11-24).
+
+**A fixture takes machine facts (uid, home folder, host name) from the
+machine that runs it.** A literal that matches the author's computer passes
+there and fails on a runner.
+- 365340f, in the CI run of PR #4: two Pester fixtures named a per-user file
+  `ssh-paste-<hash>-1000.png`. The author's uid is 1000; the GitHub Linux
+  runner's is 1001, so once the server script deleted only files with the
+  real uid, the tests failed in CI and passed locally. The fix uses `id -u`.
+- Seen 1x (2026-11-24).
+
 **Test fixtures are as large as the real thing.** A check that passes on a
 one-line stand-in can fail on the real 80 KB file.
 - The first release (v0.1.0) stopped at its last check: `tr ... | grep -q`
@@ -171,4 +191,8 @@ first if it is known in advance, and take it back if the step fails.**
 
 ## Moved to the code standards
 
-None yet.
+- **Code that only runs on Windows is not done until it ran on Windows with
+  the real `ssh`.** Acceptance criterion 6. Seen 3x: 70db0c0 (the relay
+  hang), 07a4287 (uploads from ssh mode hung on the session's pipes),
+  34c1759 (a new promise withdrawn by our own `EmptyClipboard`; 601 Linux
+  tests had passed). Moved 2026-11-24.
