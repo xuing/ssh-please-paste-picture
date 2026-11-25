@@ -81,6 +81,8 @@
   "could not write the clipboard: the clipboard changed since it was read": "写不了剪贴板：读取之后剪贴板又变了",
   "could not write the clipboard: {0}": "写不了剪贴板：{0}",
   "could not write {0}": "写不了 {0}",
+  "focus per tab: this tab is {0}": "按标签页判断焦点：本标签页是 {0}",
+  "focus per window: {0}": "按窗口判断焦点：{0}",
   "images in {0} on the server, kept {1}": "图片放在服务器的 {0}，保留 {1}",
   "images in {0} on the server, never deleted": "图片放在服务器的 {0}，永不删除",
   "in ssh-agent (Get-Service ssh-agent; ssh-add). Password-only logins cannot work.": "ssh-agent 里的 key（Get-Service ssh-agent; ssh-add）。只能用密码登录的服务器不行。",

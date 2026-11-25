@@ -78,6 +78,11 @@ exec '$repo/src/ssh-paste-mac' --dir /tmp/ testhost"
 if wait_for 30 test -f "$work/session.pid"; then pass 'the session runs'; else fail 'the session did not start'; fi
 if wait_for 30 logged 'watching com.apple.Terminal'; then
     pass "the watcher found Terminal.app: $(grep 'watching' "$(debuglog)" | head -n 1 | sed 's/^.*watching //')"
+    if grep 'watching' "$(debuglog)" | head -n 1 | grep -q ' tab ttys[0-9]*$'; then
+        pass 'and the tab of the session'
+    else
+        fail 'the watcher did not find the tab of the session'
+    fi
 else
     fail 'the watcher did not report Terminal.app'; cat "$(debuglog)"
 fi
@@ -149,6 +154,25 @@ wait_for 10 entry_is "$want" || fail "the watcher did not write the path again: 
 paste_timed "$work/p9"
 check "$(cat "$work/p9")" "$want" 'back in Terminal, pbpaste gets the path'
 check "$(grep -c "$(sha16 "$work/fourth.png")" "$work/uploads")" 1 'uploaded once'
+
+section 'tabs: Terminal names the tab in front, at once and without a dialog'
+# The earlier sections ran with the watcher asking Terminal for its tab in front (an
+# Apple event from Terminal to itself) while an image was on the pasteboard. A
+# second tab cannot be made here: on the runners Cmd+T opens a window and Window >
+# Merge All Windows does nothing, so switching tabs is checked by the node tests and
+# by hand. A question takes about 10 ms; up to 362 ms was seen while Terminal came
+# forward. What must not happen is a failure or the 1 s timeout.
+grep 'took [0-9]* ms' "$(debuglog)" | sed 's/^/        slow: /'
+if grep -q 'cannot tell the tab\|took [0-9][0-9][0-9][0-9][0-9]* ms' "$(debuglog)"; then
+    fail "asking Terminal for its tab failed or timed out: $(grep 'cannot tell the tab\|took [0-9][0-9][0-9][0-9][0-9]* ms' "$(debuglog)")"
+else
+    pass 'Terminal answered every question about its tab, none near the 1 s timeout'
+fi
+if grep -q 'tick: foreground=[0-9]*:ttys[0-9]* terminal=true' "$(debuglog)"; then
+    pass 'the watcher saw the session tab in front by its tty'
+else
+    fail 'no tick saw the session tab by its tty'
+fi
 
 section 'a TIFF-only image is uploaded as PNG'
 activate Terminal com.apple.Terminal

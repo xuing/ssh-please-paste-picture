@@ -603,11 +603,18 @@ function newWorld() {
     const w = {
         fg: 0, seq: 1, entry: null, writes: [], uploads: [], reads: 0, failNext: 0, duringUpload: null, afterRead: null,
         beforeWrite: null, readFails: 0, prefix: {}, clock: 1700000000000, hold: false, beeps: 0, logs: [],
-        muxReady: false, muxChecks: [], muxHomeError: null
+        muxReady: false, muxChecks: [], muxHomeError: null, tabs: {}, tabFails: 0, locates: 0
     };
     w.P = {
         now: () => w.clock,
         foreground: () => w.fg,
+        // The tab in front of each window (w.tabs), as iTerm2 and Terminal.app name it;
+        // a window without one, or a failed query (w.tabFails), gives the window alone.
+        locate: (win) => {
+            w.locates++;
+            if (w.tabFails > 0) { w.tabFails--; return win; }
+            return w.tabs[win] ? win + ':' + w.tabs[win] : win;
+        },
         changeCount: () => w.seq,
         readState: () => {
             if (w.readFails > 0) { w.readFails--; throw new Error('the clipboard is busy'); }
@@ -1359,6 +1366,122 @@ test('the watcher: two watchers in the same terminal window (two tabs)', async (
     });
 });
 
+test('spots: a window, or a tab of a window (iTerm2, Terminal.app)', () => {
+    assert.equal(m.tabSpot(1001, 'ttys004'), '1001:ttys004');
+    assert.equal(m.tabSpot(1001, null), 1001);
+    assert.equal(m.spotWindow('1001:ttys004'), '1001');
+    assert.equal(m.spotWindow(1001), '1001');
+    assert.equal(m.sameSpot('1001:ttys004', '1001:ttys004'), true);
+    assert.equal(m.sameSpot('1001:ttys004', '1001:ttys000'), false, 'two tabs of one window');
+    assert.equal(m.sameSpot('1001:ttys004', '3003:ttys004'), false);
+    // A spot without a tab stands for the whole window: the terminal could not be asked.
+    assert.equal(m.sameSpot(1001, '1001:ttys004'), true);
+    assert.equal(m.sameSpot('1001:ttys004', 1001), true);
+    assert.equal(m.sameSpot(1001, 3003), false);
+    assert.equal(m.sameSpot(10, '1001:ttys004'), false, 'the window number is compared whole');
+    assert.equal(m.ttyName('/dev/ttys004\n'), 'ttys004');
+    assert.equal(m.ttyName(' ttys012 '), 'ttys012');
+    assert.equal(m.ttyName('??'), null);
+    assert.equal(m.ttyName('/dev/../etc/ttys0'), null);
+    assert.equal(m.ttyName(''), null);
+    assert.deepEqual(Object.keys(m.TAB_QUERIES).sort(), ['com.apple.Terminal', 'com.googlecode.iterm2']);
+    const tok = '0123456789abcdef';
+    assert.equal(m.parseMarker(m.makeMarker('1001:ttys004', tok, '/tmp/x.png')).owner, '1001:ttys004');
+    assert.equal(m.parseMarker(m.makeMarker(1001, tok, '/tmp/x.png')).owner, 1001, 'a marker of an older version');
+    for (const bad of ['ttys004', '0:ttys004', '1001:', '1001:ttys004:x', '1001:pts/3', '1001 ']) {
+        assert.equal(m.parseMarker(m.makeMarker(bad, tok, '')), null, bad);
+    }
+});
+
+test('the watcher: tabs of one terminal window (iTerm2, Terminal.app)', async (t) => {
+    // The session runs in tab ttys000 of TerminalA; ttys004 is a local shell in the same window.
+    const Session = TerminalA + ':ttys000', Local = 'ttys004';
+    await t.test('a paste in a local tab of the session\'s window gets the plain image (2026-11-24, iTerm2)', () => {
+        const w = newWorld(), png = fakePng(1), W = w.watcher(Session);
+        w.focus(TerminalA);
+        w.tabs[TerminalA] = Local;
+        w.copy(png);
+        w.ticks(W, 5);
+        assert.equal(w.writes.length, 0);
+        assert.equal(w.uploads.length, 0);
+        assert.equal(w.entry.Text, null);
+    });
+    await t.test('the session\'s own tab gets the path, written for that tab', () => {
+        const w = newWorld(), png = fakePng(1), W = w.watcher(Session);
+        w.focus(TerminalA);
+        w.tabs[TerminalA] = 'ttys000';
+        w.copy(png);
+        w.ticks(W, 3);
+        assert.equal(w.entry.Text, pathFor(png, '/tmp'));
+        assert.equal(w.entry.Owner, Session);
+    });
+    await t.test('a switch to another tab and back takes the path off and puts it back, with one upload', () => {
+        const w = newWorld(), png = fakePng(1), W = w.watcher(Session);
+        w.focus(TerminalA);
+        w.tabs[TerminalA] = 'ttys000';
+        w.copy(png);
+        w.ticks(W, 3);
+        for (let round = 0; round < 3; round++) {
+            w.tabs[TerminalA] = Local;   // Cmd+} : no window and no change count moves
+            w.ticks(W, 3);
+            assert.equal(w.entry.Text, null, 'local tab, round ' + round);
+            w.tabs[TerminalA] = 'ttys000';
+            w.ticks(W, 3);
+            assert.equal(w.entry.Text, pathFor(png, '/tmp'), 'session tab, round ' + round);
+        }
+        assert.equal(w.uploads.length, 1);
+        assert.equal(w.writes.length, 7);
+    });
+    await t.test('when the terminal cannot be asked, it decides per window', () => {
+        const w = newWorld(), png = fakePng(1), W = w.watcher(Session);
+        w.focus(TerminalA);
+        w.tabs[TerminalA] = Local;
+        w.tabFails = 1000;
+        w.copy(png);
+        w.ticks(W, 3);
+        assert.equal(w.entry.Text, pathFor(png, '/tmp'));
+        assert.equal(w.entry.Owner, Session, 'the entry names the session\'s tab all the same');
+        // It answers again: the local tab in front gets the plain image back.
+        w.tabFails = 0;
+        w.ticks(W, 3);
+        assert.equal(w.entry.Text, null);
+    });
+    await t.test('two sessions in two tabs of one window: each tab gets its own path, a local tab none', () => {
+        const w = newWorld(), png = fakePng(1);
+        const a = w.watcher(TerminalA + ':ttys000', 'ssh-a', '/srv-a'), b = w.watcher(TerminalA + ':ttys001', 'ssh-b', '/srv-b');
+        w.focus(TerminalA);
+        w.copy(png);
+        const order = ['ttys000', 'ttys001', Local, 'ttys001', 'ttys000', Local, 'ttys000'];
+        for (let round = 0; round < 2; round++) {
+            for (const tab of order) {
+                w.tabs[TerminalA] = tab;
+                for (let i = 0; i < 4; i++) {
+                    if ((i + round) % 2 === 0) { m.watcherTick(a); m.watcherTick(b); } else { m.watcherTick(b); m.watcherTick(a); }
+                }
+                if (tab === 'ttys000') assert.equal(w.entry.Text, pathFor(png, '/srv-a'), tab);
+                else if (tab === 'ttys001') assert.equal(w.entry.Text, pathFor(png, '/srv-b'), tab);
+                else assert.equal(w.entry.Text, null, tab);
+            }
+        }
+        assert.equal(w.uploads.length, 2);
+    });
+    await t.test('asks the terminal only with an image on the pasteboard in the session\'s or the owner\'s window', () => {
+        const w = newWorld(), W = w.watcher(Session);
+        w.focus(TerminalA);
+        w.tabs[TerminalA] = 'ttys000';
+        w.copyText('some text');
+        w.ticks(W, 5);
+        assert.equal(w.locates, 0, 'text only');
+        w.focus(Other);
+        w.copy(fakePng(1));
+        w.ticks(W, 5);
+        assert.equal(w.locates, 0, 'an image, another window in front');
+        w.focus(TerminalA);
+        w.ticks(W, 1);
+        assert.ok(w.locates >= 1, 'an image, the session\'s window in front');
+    });
+});
+
 test('the watcher: the counterexamples of the model check (verify/watcher, commit 6396fae)', async (t) => {
     await t.test('leaves a copy made while it writes alone (NoLostCopy)', () => {
         const w = newWorld(), W = w.watcher(TerminalA);
@@ -1499,6 +1622,21 @@ test('repository guards', async (t) => {
         assert.match(ps, /^\$script:MaxImageBytes = 64MB\r?$/m);
         assert.equal(m.MAX_IMAGE_BYTES, 64 * 1024 * 1024);
         assert.match(ps, new RegExp('public int PromiseWaitMilliseconds = ' + m.PROMISE_WAIT_SECONDS * 1000 + ';'));
+    });
+    await t.test('focus per tab is the one decision that differs: macOS only, and both clients and READMEs say so', () => {
+        // The watcher decides alike in both clients, with one exception: the macOS client
+        // compares spots (window and tab, sameSpot) where Windows compares windows, since
+        // Windows Terminal names no tab in front. Every comparison of the macOS watcher goes
+        // through sameSpot, so a window-only spot keeps the Windows decisions.
+        const tick = js.slice(js.indexOf('function watcherTick('), js.indexOf('function spotNow('));
+        assert.ok(tick.length > 1000);
+        assert.ok(!/\b(fg|state\.Owner) [!=]== (fg|W\.Window)\b/.test(tick), 'a spot compared without sameSpot');
+        assert.ok(!/P\.foreground\(\) !== fg/.test(js), 'a recheck that drops the tab');
+        assert.ok(ps.includes('Focus is per window here: Windows Terminal names no tab in front.'));
+        assert.ok(!/sameSpot\s*\(|NSAppleScript/.test(ps), 'the Windows client compares windows only');
+        assert.ok(read('README.md').includes('**Focus is per tab in iTerm2 and Terminal.app, per window elsewhere.**'));
+        assert.ok(read('README.zh-CN.md').includes('**iTerm2 \u548c Terminal.app \u6309\u6807\u7b7e\u9875\u5224\u65ad\u7126\u70b9\uff0c\u5176\u4ed6\u7ec8\u7aef\u6309\u7a97\u53e3\u5224\u65ad\u3002**'));
+        assert.ok(read('SECURITY.md').includes('read-only Apple\n  events'));
     });
     await t.test('the ssh config markers are the same in both clients and in install.sh', () => {
         assert.equal(m.BLOCK_BEGIN, psSingleQuoted(ps, 'BlockBegin'));
