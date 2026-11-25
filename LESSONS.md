@@ -1,4 +1,4 @@
-<!-- reviewed-through: 9b3216d (2026-11-24 15:10 +0900) -->
+<!-- reviewed-through: 27c63c4 (2026-11-25 19:20 +0900) -->
 # Lessons from merged work
 
 This file keeps what went wrong in earlier work on ssh-paste and the rule that
@@ -11,7 +11,7 @@ times moves into [docs/code-standards.md](docs/code-standards.md) and leaves a
 short entry under [Moved to the code standards](#moved-to-the-code-standards).
 
 The marker on the first line names the last commit that was reviewed. Before
-each release, read every commit after it (`git log --stat 9b3216d..HEAD`, full
+each release, read every commit after it (`git log --stat 27c63c4..HEAD`, full
 messages). For each fix that needed a second try, a change that should not
 have shipped, or a check that was too thin, add a lesson or add a sighting to
 an existing one. Then move the marker.
@@ -25,6 +25,13 @@ On 2026-11-24 the second review read the 32 commits from 22f35a3 to 9b3216d
 (the Windows watcher's promise, the TLA+ model, the macOS client, Homebrew,
 Scoop, `--keep` and `--dir`) and the CI runs of PR #4. The Windows-only rule
 reached three sightings and moved to the code standards.
+
+On 2026-11-25 the third review read the 20 commits from a8fd14b to 27c63c4
+(the login checks of `--enable`, wrapper uploads over the session's
+connection, messages in Chinese, the Finder-copy tests, per-tab focus on
+macOS). Two fixes needed a second try (1d87154 after 1ebdc7a, 3e36fac after
+1ebdc7a), and CI ran three times on a test helper built on a recalled GUI
+behavior (27c63c4).
 
 ## PowerShell
 
@@ -126,7 +133,15 @@ empty string, without an error.
   `actions/checkout` fell back to `github.token`, and the push to the tap was
   denied (403). The fix passes the secret, marks it `required: true`, and a
   step fails when it is empty.
-- Seen 1x (2026-11-24).
+- 27c63c4: the Terminal.app tab test in `tests/mac/jxa.sh` pressed Cmd+T
+  through System Events, on the belief that it opens a tab. On the macOS 15
+  and 26 runners it opened a window (run 45588814487), and Window > Merge
+  All Windows left the windows apart (run 45589624520). The runner image's
+  TCC list had been read first (it grants the permissions); the behavior
+  itself had not been tried on a runner. The section now checks only what
+  the runners show, and tab switching is left to the node tests and a
+  person's Mac.
+- Seen 2x (2026-11-24, 2026-11-25).
 
 **Keep the install and uninstall footprint test in CI.** It compares the real
 user profile before and after a full install, enable, disable and uninstall
@@ -185,6 +200,28 @@ on it can pass once by luck and leave the real cause in place.
   stand-in writer was not tried there. The test now follows what it reads, as
   89aef10 had it.
 - Seen 1x (2026-11-24).
+
+**A model check describes the code as it is: a change to code the model
+covers updates the model in the same commit, or shows with a broken variant
+that the model already reaches the new state.** An argument that "the model
+already explores this" is not a check; the model passes just as well when it
+cannot reach the new state at all.
+- 1ebdc7a added `$W.Blocked` (a session stops uploading after a final
+  failure) and said the model was unchanged because it already explored a
+  failed image whose retry was not due. 3e36fac found that the path of a new
+  image in a stopped session was not reachable in the model, so every run had
+  passed on a stale description; it added the state and a broken variant
+  (`stopped_claims_path`) that the check catches.
+- Seen 1x (2026-11-25).
+
+**A test section sets up the state it counts from.** A count or an
+"unchanged" check that inherits the pasteboard, a file or a process from the
+section before it measures that section too.
+- 620c5b1: `tests/mac/e2e.sh` counted 5 logins for a wrapper session that
+  should make 4 (run 45382192477, macos-15). The last screenshot of the
+  session before was still on the pasteboard, and the new session uploaded
+  it, as it should. Each session now starts after `pb text`.
+- Seen 1x (2026-11-25).
 
 **A test that covers whatever it finds must fail when something it should
 cover is missing.** A loop over the shells, browsers or tools present passes
