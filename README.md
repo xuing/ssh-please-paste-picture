@@ -211,7 +211,7 @@ The same commands, with Cmd+V. A zsh launcher (`ssh-paste-mac`) and a JavaScript
 
 ## Known limitations
 
-- **Focus is per window, not per tab.** While a session runs, every tab in its window pastes the path, and another SSH tab there may set it first. Use separate windows.
+- **Focus is per tab in iTerm2 and Terminal.app, per window elsewhere.** In iTerm2 and Terminal.app only the session's own tab (in iTerm2, its own split pane) pastes the path; a local tab next to it pastes the image. To tell, ssh-paste asks the terminal which tab is in front, a read-only Apple event that the terminal sends to itself, so macOS shows no permission dialog. When the terminal does not answer, in other terminals, in Windows Terminal, and inside tmux or screen, focus is per window: every tab in the session's window pastes the path, and another SSH tab there may set it first. Use separate windows there.
 - **In ssh mode on Windows, the path may stay on the clipboard after exit**, because `ssh` ends the `ProxyCommand`; your next copy clears it.
 - **Servers that take only a password or a one-time code** (not a key) cannot take uploads.
 - **Images copied with HTML lose the HTML:** Chrome's **Copy image** keeps only the image and the path.
